@@ -242,6 +242,7 @@ class BareTubeHeatExchanger:
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o = outside_flow_from_mass_flow(
                 m_dot=m_dot_outside,
                 frontal_area=A_frontal,
+                frontal_area_per_tube=A_frontal / self.bundle.n_tubes_per_row,
                 tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
                 n_rows=self.bundle.n_rows,
                 props=outside_props,
