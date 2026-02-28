@@ -22,7 +22,7 @@
 # - m_dot [kg/s], D [m], A [m^2]
 # - rho [kg/m^3], mu [Pa*s], k [W/(m*K)], cp [J/(kg*K)]
 # Outputs:
-# - Re [-], Pr [-], Nu [-], h [W/(m^2*K)]
+# - Re [-], Pr [-], Nu [-], alfa [W/(m^2*K)]
 
 """
 Internal (tube-side) convective heat transfer and flow regime helpers
@@ -32,7 +32,7 @@ This module provides:
 - Reynolds and Prandtl numbers,
 - Darcy friction factor correlations for smooth tubes,
 - Nusselt number correlations for laminar and turbulent regimes,
-- a convenience function returning h (heat transfer coefficient).
+- a convenience function returning alfa (heat transfer coefficient).
 
 Theory references
 -----------------
@@ -185,7 +185,7 @@ def heat_transfer_coefficient_internal(
     props: FluidProps,
 ) -> tuple[float, float, float, float]:
     """
-    Convenience function returning tube-side h and key dimensionless groups.
+    Convenience function returning tube-side alfa and key dimensionless groups.
 
     Parameters
     ----------
@@ -206,7 +206,7 @@ def heat_transfer_coefficient_internal(
         Reynolds number [-]
     Pr : float
         Prandtl number [-]
-    h : float
+    alfa : float
         Internal convective heat transfer coefficient [W/(m^2*K)]
     """
     if tube_inner_diameter <= 0.0:
@@ -217,6 +217,6 @@ def heat_transfer_coefficient_internal(
     Pr = prandtl_number(props.cp, props.mu, props.k)
 
     Nu = nusselt_internal(Re, Pr)
-    h = Nu * props.k / tube_inner_diameter
+    alfa = Nu * props.k / tube_inner_diameter
 
-    return v, Re, Pr, h
+    return v, Re, Pr, alfa

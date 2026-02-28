@@ -69,6 +69,7 @@ class BareTube(BaseTube):
     D_o: float
     length_total: float
     length_effective: float
+    wall_k: float
 
     def __post_init__(self) -> None:
         if self.D_i <= 0.0 or self.D_o <= 0.0:
@@ -81,6 +82,8 @@ class BareTube(BaseTube):
             raise ValueError("length_effective must be positive.")
         if self.length_effective > self.length_total:
             raise ValueError("length_effective must not exceed length_total.")
+        if self.wall_k <= 0.0:
+            raise ValueError("wall_k must be positive.")
 
     @property
     def flow_area(self) -> float:

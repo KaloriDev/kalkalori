@@ -6,7 +6,7 @@
 # SI units:
 # - m_dot [kg/s], A [m^2], D [m]
 # - rho [kg/m^3], mu [Pa*s], k [W/(m*K)], cp [J/(kg*K)]
-# - v [m/s], h [W/(m^2*K)], dp [Pa]
+# - v [m/s], alfa [W/(m^2*K)], dp [Pa]
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def outside_flow_from_mass_flow(
         Approach (characteristic) velocity [m/s]
     Re : float
     Pr : float
-    h_o : float
+    alfa_o : float
     dp_o : float
     """
     if m_dot <= 0.0:
@@ -92,8 +92,8 @@ def outside_flow_from_mass_flow(
     Pr = prandtl_number(props.cp, props.mu, props.k)
 
     Nu = nusselt_zukauskas(Re, Pr, n_rows)
-    h_o = Nu * props.k / tube_outer_diameter
+    alfa_o = Nu * props.k / tube_outer_diameter
 
     dp_o = zeta_dp * n_rows * (props.rho * v * v / 2.0)
 
-    return v, Re, Pr, h_o, dp_o
+    return v, Re, Pr, alfa_o, dp_o

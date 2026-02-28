@@ -53,7 +53,7 @@ class HXOutSideThermalResults:
     v: float
     Re: float
     Pr: float
-    h: float
+    alfa: float
 
 
 @dataclass(frozen=True)
@@ -101,12 +101,16 @@ class BareTubeHeatExchanger:
     """
     Bare (smooth) tube heat exchanger model (MVP).
 
+    The thermal conductivity of the tube wall is no longer passed to the
+    exchanger; it is expected to be supplied on the ``bundle.tube``
+    geometry object (``BareTube.wall_k``).
+
     Implemented features (current stage)
     ------------------------------------
-    - Tube-side: internal convection correlation -> h_i
+    - Tube-side: internal convection correlation -> alfa_i
     - Tube-side: component-based pressure drop:
         dp_total = dp_tubes + dp_inlet + dp_outlet + dp_turns
-    - Outside side: forced flow from mass flow rate -> h_o and dp_o (MVP)
+    - Outside side: forced flow from mass flow rate -> alfa_o and dp_o (MVP)
     - Overall thermal duty: ε–NTU with flow_arrangement:
         "counterflow", "cocurrentflow", "crossflow"
 
@@ -116,9 +120,9 @@ class BareTubeHeatExchanger:
     - Darcy–Weisbach & K-loss decomposition: White; Idelchik; Crane TP-410
     """
 
-    def __init__(self, bundle: TubeBundle, wall_k: float | None = None):
+    def __init__(self, bundle: TubeBundle):
+        # conductivity is stored on the tube geometry itself
         self.bundle = bundle
-        self.wall_k = wall_k
 
     def _tube_wall_resistance(self) -> float:
         """
@@ -128,15 +132,18 @@ class BareTubeHeatExchanger:
 
         Ref: standard conduction through cylindrical wall (heat transfer textbooks).
         """
-        if self.wall_k is None:
+        # conductivity should be defined on the tube object; if absent we
+        # assume a negligible wall resistance.
+        tube = self.bundle.tube
+        k = getattr(tube, "wall_k", None)
+        if k is None:
             return 0.0
-        if self.wall_k <= 0.0:
+        if k <= 0.0:
             raise ValueError("wall_k must be positive.")
 
-        tube = self.bundle.tube
-        if not all(hasattr(tube, a) for a in ("D_i", "D_o", "length_effective")):
-            raise ValueError("Tube must provide D_i, D_o, length_effective for wall resistance.")
-
+        # tube geometry validation is handled by the BareTube class, but we
+        # keep a couple of defensive checks in case a different implementation
+        # is used.
         Di = float(getattr(tube, "D_i"))
         Do = float(getattr(tube, "D_o"))
         L_eff = float(getattr(tube, "length_effective"))
@@ -144,7 +151,7 @@ class BareTubeHeatExchanger:
             raise ValueError("Tube outer diameter must exceed inner diameter.")
 
         N = self.bundle.n_tubes_total
-        return math.log(Do / Di) / (2.0 * math.pi * self.wall_k * L_eff * N)
+        return math.log(Do / Di) / (2.0 * math.pi * k * L_eff * N)
 
     def solve(
         self,
@@ -165,8 +172,8 @@ class BareTubeHeatExchanger:
         K_outlet: float = 1.0,
         K_turn: float = 1.5,
 
-        # Outside h override (validation / calibration):
-        h_o: float | None = None,
+        # Outside alfa override (validation / calibration):
+        alfa_o: float | None = None,
 
         # Thermal flow arrangement:
         flow_arrangement: str | None = None,
@@ -192,13 +199,13 @@ class BareTubeHeatExchanger:
         flow_area_pass = self.bundle.internal_flow_area_per_pass
         D_h = self.bundle.internal_hydraulic_diameter
 
-        v_i, Re_i, Pr_i, h_i = heat_transfer_coefficient_internal(
+        v_i, Re_i, Pr_i, alfa_i = heat_transfer_coefficient_internal(
             m_dot=m_dot_tube_side,
             tube_inner_diameter=D_h,
             flow_area=flow_area_pass,
             props=tube_side_props,
         )
-        tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, h=h_i)
+        tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, alfa=alfa_i)
 
         # --------------------------------------------------------------
         # Tube-side: hydraulic (component-based, includes passes)
@@ -232,7 +239,7 @@ class BareTubeHeatExchanger:
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
 
         if have_outside:
-            v_o, Re_o, Pr_o, h_o_calc, dp_o = outside_flow_from_mass_flow(
+            v_o, Re_o, Pr_o, alfa_o_calc, dp_o = outside_flow_from_mass_flow(
                 m_dot=m_dot_outside,
                 frontal_area=A_frontal,
                 tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
@@ -241,29 +248,29 @@ class BareTubeHeatExchanger:
                 zeta_dp=zeta_dp_outside,
             )
         else:
-            v_o, Re_o, Pr_o, h_o_calc, dp_o = float("nan"), float("nan"), float("nan"), None, float("nan")
+            v_o, Re_o, Pr_o, alfa_o_calc, dp_o = float("nan"), float("nan"), float("nan"), None, float("nan")
 
-        if h_o is not None:
-            if h_o <= 0.0:
-                raise ValueError("h_o must be positive when provided.")
-            h_o_used = h_o
+        if alfa_o is not None:
+            if alfa_o <= 0.0:
+                raise ValueError("alfa_o must be positive when provided.")
+            alfa_o_used = alfa_o
         else:
-            if h_o_calc is None:
+            if alfa_o_calc is None:
                 raise ValueError(
                     "Outside side not specified. Provide either:\n"
-                    "- (m_dot_outside and outside_props) to compute h_o, or\n"
-                    "- h_o directly as an override."
+                    "- (m_dot_outside and outside_props) to compute alfa_o, or\n"
+                    "- alfa_o directly as an override."
                 )
-            h_o_used = h_o_calc
+            alfa_o_used = alfa_o_calc
 
-        outside_thermal = HXOutSideThermalResults(v=v_o, Re=Re_o, Pr=Pr_o, h=h_o_used)
+        outside_thermal = HXOutSideThermalResults(v=v_o, Re=Re_o, Pr=Pr_o, alfa=alfa_o_used)
         outside_hyd = HXOutSideHydraulicResults(dp_total=dp_o, Re=Re_o, v=v_o)
 
         # --------------------------------------------------------------
         # Overall UA
         # --------------------------------------------------------------
-        R_i = 1.0 / (h_i * A_i)
-        R_o = 1.0 / (h_o_used * A_o)
+        R_i = 1.0 / (alfa_i * A_i)
+        R_o = 1.0 / (alfa_o_used * A_o)
         R_w = self._tube_wall_resistance()
 
         R_tot = R_i + R_w + R_o
