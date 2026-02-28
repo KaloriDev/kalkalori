@@ -165,7 +165,6 @@ class BareTubeHeatExchanger:
         # Outside-side (preferred path):
         m_dot_outside: float | None = None,
         outside_props: OutsideFlowFluidProps | None = None,
-        zeta_dp_outside: float = 1.2,
 
         # Tube-side DP coefficients (MVP defaults exist in DP module; caller may override):
         K_inlet: float = 0.5,
@@ -242,11 +241,13 @@ class BareTubeHeatExchanger:
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o = outside_flow_from_mass_flow(
                 m_dot=m_dot_outside,
                 frontal_area=A_frontal,
-                frontal_area_per_tube=A_frontal / self.bundle.n_tubes_per_row,
+                n_tubes_per_row=self.bundle.n_tubes_per_row,
                 tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
+                tube_pitch_transverse=self.bundle.pitch_transverse,
+                tube_pitch_longitudinal=self.bundle.pitch_longitudinal,
+                layout=self.bundle.flow_arrangement,
                 n_rows=self.bundle.n_rows,
                 props=outside_props,
-                zeta_dp=zeta_dp_outside,
             )
         else:
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o = float("nan"), float("nan"), float("nan"), None, float("nan")

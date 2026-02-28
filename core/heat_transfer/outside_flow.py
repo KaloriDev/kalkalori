@@ -1,17 +1,64 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
-
-# NOTE ON UNITS
-# -------------
-# SI units:
-# - m_dot [kg/s], A [m^2], D [m]
-# - rho [kg/m^3], mu [Pa*s], k [W/(m*K)], cp [J/(kg*K)]
-# - v [m/s], alfa [W/(m^2*K)], dp [Pa]
+#
+# -------------------------------------------------------------------------
+# OUTSIDE FLOW – CROSSFLOW OVER TUBE BANK (0D CORE MODEL)
+# -------------------------------------------------------------------------
+#
+# This module implements engineering correlations for:
+#   • Heat transfer coefficient: Zukauskas-type Nu(Re,Pr) with:
+#       - Re-range constants (C,m)
+#       - finite-row correction C2(N_L)
+#       - optional (Pr/Pr_s)^0.25 correction
+#   • Pressure drop: Euler number formulation:
+#       Δp = Eu * (1/2) * rho * V_ref^2,
+#       with Eu structured as Eu = f(Re, ST/D, SL/D, layout, N_L)
+#       (currently a transparent placeholder awaiting a chosen open correlation/data fit)
+#   • Geometry-consistent velocity definitions:
+#       V_inf (approach) and V_max based on minimum free-flow area concept.
+#
+# All correlations used here are taken from OPEN LITERATURE sources:
+#
+# Heat transfer (tube banks in crossflow):
+#   - Zukauskas, A. (1972), "Heat Transfer from Tubes in Crossflow"
+#   - Incropera et al., Fundamentals of Heat and Mass Transfer
+#   - VDI Heat Atlas (Tube Banks in Crossflow)
+#   - Khan, W.A. (2004), PhD Thesis, Univ. Waterloo (finite row correction)
+#
+# Pressure drop formulation:
+#   - Euler number definition from:
+#       VDI Heat Atlas
+#       Kays & London, Compact Heat Exchangers
+#       Idelchik, Handbook of Hydraulic Resistance
+#
+# NOTE:
+#   This file contains no proprietary or reverse-engineered content.
+#   Any future Eu correlation should be sourced from open literature (VDI/HEDH/Kays&London/Idelchik)
+#   or from openly published datasets/plots digitized and fit with documented methodology.
+#
+# -------------------------------------------------------------------------
+# UNITS (SI ONLY)
+# -------------------------------------------------------------------------
+# m_dot [kg/s]
+# frontal_area [m^2]
+# D, tube pitches [m]
+# rho [kg/m^3]
+# mu [Pa*s]
+# k [W/(m*K)]
+# cp [J/(kg*K)]
+# v [m/s]
+# alfa [W/(m^2*K)]
+# dp [Pa]
+# -------------------------------------------------------------------------
 
 from __future__ import annotations
-
 from dataclasses import dataclass
+import math
 
+
+# -------------------------------------------------------------------------
+# Fluid properties container
+# -------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class FluidProps:
@@ -21,24 +68,160 @@ class FluidProps:
     cp: float   # [J/(kg*K)]
 
 
+# -------------------------------------------------------------------------
+# Dimensionless numbers
+# -------------------------------------------------------------------------
+
 def reynolds_number(rho: float, v: float, D: float, mu: float) -> float:
+    """
+    Reynolds number definition (external flow over cylinder):
+
+        Re_D = rho * v * D / mu
+
+    Reference:
+        Incropera et al., Fundamentals of Heat and Mass Transfer
+    """
     if rho <= 0.0 or mu <= 0.0 or D <= 0.0 or v <= 0.0:
         raise ValueError("rho, mu, D, v must be positive.")
     return rho * v * D / mu
 
 
 def prandtl_number(cp: float, mu: float, k: float) -> float:
+    """
+    Prandtl number:
+
+        Pr = cp * mu / k
+
+    Reference:
+        Standard thermophysical definition (all heat transfer textbooks)
+    """
     if cp <= 0.0 or mu <= 0.0 or k <= 0.0:
         raise ValueError("cp, mu, k must be positive.")
     return cp * mu / k
 
+# -------------------------------------------------------------------------
+# Geometry-consistent velocities (minimum free-flow area concept)
+# -------------------------------------------------------------------------
 
-def nusselt_zukauskas(Re: float, Pr: float, n_rows: int) -> float:
+def vmax_ratio_min_freeflow(
+    tube_outer_diameter: float,
+    S_T: float,
+    S_L: float,
+    layout: str,
+) -> float:
+    """
+    Returns ratio (V_max / V_inf) based on minimum free-flow area concept.
+
+    Inline (aligned):
+        V_max / V_inf = S_T / (S_T - D)
+
+    Staggered:
+        Consider two candidate "gaps" per common tube-bank treatments:
+          A_T = (S_T - D)             transverse gap
+          A_D = 2*(S_D - D)           diagonal gap, where S_D = sqrt(S_L^2 + (S_T/2)^2)
+        Use the minimum gap to represent minimum free-flow area (per unit depth),
+        leading to:
+          V_max / V_inf = S_T / min(A_T, A_D)
+
+    This ratio is widely used in tube-bank crossflow formulations (VDI/Incropera summaries).
+
+    NOTE:
+      This is a 0D geometric velocity model. For higher-fidelity layouts, corrections may apply.
+    """
+    if tube_outer_diameter <= 0.0 or S_T <= 0.0 or S_L <= 0.0:
+        raise ValueError("tube_outer_diameter, S_T, S_L must be positive.")
+    if S_T <= tube_outer_diameter:
+        raise ValueError("S_T must be > D to have a valid transverse flow gap.")
+
+    A_T = S_T - tube_outer_diameter
+
+    if layout == "inline":
+        A_min = A_T
+    else:
+        # staggered: check diagonal passage as well
+        S_D = math.sqrt(S_L * S_L + (S_T * 0.5) ** 2)
+        if S_D <= tube_outer_diameter:
+            raise ValueError("Invalid geometry: diagonal pitch S_D must be > D.")
+        A_D = 2.0 * (S_D - tube_outer_diameter)
+        A_min = min(A_T, A_D)
+
+    # Vmax / Vinf ratio
+    return S_T / A_min
+
+
+# -------------------------------------------------------------------------
+# Finite row correction (Zukauskas method)
+# -------------------------------------------------------------------------
+
+def _interp_1d(x: float, xs: list[float], ys: list[float]) -> float:
+    """Clamped linear interpolation."""
+    if len(xs) != len(ys) or len(xs) < 2:
+        raise ValueError("xs and ys must have same length >= 2.")
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    for i in range(len(xs) - 1):
+        if xs[i] <= x <= xs[i + 1]:
+            x0, x1 = xs[i], xs[i + 1]
+            y0, y1 = ys[i], ys[i + 1]
+            t = (x - x0) / (x1 - x0)
+            return y0 + t * (y1 - y0)
+    return ys[-1]
+
+
+def finite_row_correction_c2(n_rows: int) -> float:
+    """
+    Finite row correction factor C2(N_L).
+
+    Tabulated anchor values based on:
+        Khan (2004), PhD Thesis, Univ. Waterloo
+        Zukauskas method summaries in literature
+
+    For N_L >= 20 → C2 ≈ 1.0
+    """
+    if n_rows <= 0:
+        raise ValueError("n_rows must be positive.")
+
+    xs = [1, 2, 3, 4, 5, 7, 10, 13, 16, 20]
+    ys = [0.64, 0.76, 0.84, 0.89, 0.92, 0.95, 0.97, 0.98, 0.99, 1.00]
+
+    return _interp_1d(float(n_rows), [float(v) for v in xs], ys)
+
+
+# -------------------------------------------------------------------------
+# Zukauskas heat transfer correlation
+# -------------------------------------------------------------------------
+
+def nusselt_zukauskas(
+    Re: float,
+    Pr: float,
+    n_rows: int,
+    *,
+    Pr_s: float | None = None,
+    apply_finite_row_correction: bool = True,
+) -> float:
+    """
+    Zukauskas-type correlation for tube banks in crossflow:
+
+        Nu = C * Re^m * Pr^0.36
+
+    with:
+        - Re-range dependent C, m
+        - optional finite-row correction C2(N_L)
+        - optional (Pr/Pr_s)^0.25 correction
+
+    References:
+        Zukauskas (1972)
+        Incropera et al.
+        VDI Heat Atlas
+    """
     if Re <= 0.0 or Pr <= 0.0:
         raise ValueError("Re and Pr must be positive.")
     if n_rows <= 0:
         raise ValueError("n_rows must be positive.")
 
+    # Classical piecewise constants
     if Re < 1e2:
         C, m = 0.90, 0.40
     elif Re < 1e3:
@@ -50,50 +233,162 @@ def nusselt_zukauskas(Re: float, Pr: float, n_rows: int) -> float:
 
     Nu = C * (Re ** m) * (Pr ** 0.36)
 
-    if n_rows < 20:
-        Nu *= (n_rows / 20.0) ** 0.20
+    if apply_finite_row_correction:
+        Nu *= finite_row_correction_c2(n_rows)
+
+    if Pr_s is not None:
+        if Pr_s <= 0.0:
+            raise ValueError("Pr_s must be positive.")
+        Nu *= (Pr / Pr_s) ** 0.25
 
     return Nu
 
+
+# -------------------------------------------------------------------------
+# Pressure drop (Euler number form)
+# -------------------------------------------------------------------------
+
+def euler_number(
+    Re: float,
+    ST_over_D: float,
+    SL_over_D: float,
+    layout: str,
+    n_rows: int,
+    *,
+    eu_per_row: float = 1.2,
+) -> float:
+    """
+    MVP Euler number model:
+
+        Eu = Δp / (0.5 * rho * V_ref^2)
+
+
+    Pressure drop definition:
+
+        Δp = Eu * (1/2) * rho * v^2
+
+    Reference:
+        Euler number definition from VDI Heat Atlas,
+        Kays & London, Idelchik.
+    """
+    if n_rows <= 0:
+        raise ValueError("n_rows must be positive.")
+    if eu_per_row <= 0.0:
+        raise ValueError("eu_per_row must be positive.")
+    return eu_per_row * float(n_rows)
+
+
+# -------------------------------------------------------------------------
+# Main 0D solver (per tube approach velocity)
+# -------------------------------------------------------------------------
 
 def outside_flow_from_mass_flow(
     m_dot: float,
     frontal_area: float,
     tube_outer_diameter: float,
+    tube_pitch_transverse: float,
+    tube_pitch_longitudinal: float,
+    layout: str,
     n_rows: int,
+    n_tubes_per_row: int,
     props: FluidProps,
     *,
-    zeta_dp: float = 1.2,
-) -> tuple[float, float, float, float, float]:
+    Pr_s: float | None = None,
+    apply_finite_row_correction: bool = True,
+    # Pressure drop options (fallback Eu-per-row until real correlation is plugged in)
+    eu_per_row_fallback: float = 1.2,
+    # Reference velocity selection (kept explicit for transparency)
+    use_vmax_for_ht: bool = True,
+    use_vmax_for_dp: bool = True,
+) -> dict:
     """
-    Compute outside forced convection from mass flow rate.
+    Outside forced convection for tube bank (0D core).
 
-    Returns
-    -------
-    v : float
-        Approach (characteristic) velocity [m/s]
-    Re : float
-    Pr : float
-    alfa_o : float
-    dp_o : float
+    Flow split:
+        m_dot_tube = m_dot / n_tubes_per_row
+
+    Approach velocity per tube:
+        V_inf = m_dot_tube / (rho * frontal_area_per_tube)
+
+    Maximum velocity via minimum free-flow area ratio (tube bank geometry):
+        V_max = V_inf * (V_max/V_inf)(D, ST, SL, layout)
+
+    Heat transfer and dp are computed using either V_inf or V_max depending on flags.
+    Default: use V_max for both (recommended for tube banks when geometry is available).
+
+    Returns a dict for forward compatibility (segmenting, reporting, validation).
     """
+
     if m_dot <= 0.0:
         raise ValueError("m_dot must be positive.")
-    if frontal_area <= 0.0:
-        raise ValueError("frontal_area must be positive.")
     if tube_outer_diameter <= 0.0:
         raise ValueError("tube_outer_diameter must be positive.")
-    if zeta_dp <= 0.0:
-        raise ValueError("zeta_dp must be positive.")
+    if n_rows <= 0:
+        raise ValueError("n_rows must be positive.")
+    if n_tubes_per_row <= 0:
+        raise ValueError("n_tubes_per_row must be positive.")
 
-    v = m_dot / (props.rho * frontal_area)
+    # Mass flow per tube in row
+    m_dot_tube = m_dot / float(n_tubes_per_row)
+    # Frontal area per tube in row
+    frontal_area_per_tube = frontal_area / float(n_tubes_per_row)
 
-    Re = reynolds_number(props.rho, v, tube_outer_diameter, props.mu)
+    # Approach velocity (per tube)
+    v = m_dot_tube / (props.rho * frontal_area_per_tube)
+
+    # Geometry-consistent Vmax
+    ratio = vmax_ratio_min_freeflow(tube_outer_diameter, tube_pitch_transverse, tube_pitch_longitudinal, layout)
+    V_max = v * ratio
+
+    # Choose reference velocities
+    V_ref_ht = V_max if use_vmax_for_ht else v
+    V_ref_dp = V_max if use_vmax_for_dp else v
+
+    # Dimensionless groups for heat transfer
+    Re = reynolds_number(props.rho, V_ref_ht, tube_outer_diameter, props.mu)
     Pr = prandtl_number(props.cp, props.mu, props.k)
 
-    Nu = nusselt_zukauskas(Re, Pr, n_rows)
+    Nu = nusselt_zukauskas(
+        Re,
+        Pr,
+        n_rows,
+        Pr_s=Pr_s,
+        apply_finite_row_correction=apply_finite_row_correction,
+    )
+
     alfa_o = Nu * props.k / tube_outer_diameter
 
-    dp_o = zeta_dp * n_rows * (props.rho * v * v / 2.0)
+    # Pressure drop
+    ST_over_D = tube_pitch_transverse / tube_outer_diameter
+    SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
+    Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)  # allow dp to use its own ref velocity
+
+    Eu = euler_number(
+        Re_dp,
+        ST_over_D,
+        SL_over_D,
+        layout,
+        n_rows,
+        eu_per_row=eu_per_row_fallback,
+    )
+    dp_o = Eu * (props.rho * V_ref_dp * V_ref_dp / 2.0)
 
     return v, Re, Pr, alfa_o, dp_o
+    # return {
+    #     "m_dot_total": m_dot,
+    #     "n_tubes_per_row": n_tubes_per_row,
+    #     "V_max": V_max,
+    #     "V_ref_ht": V_ref_ht,
+    #     "V_ref_dp": V_ref_dp,
+    #     "Re_ht": Re,
+    #     "Re_dp": Re_dp,
+    #     "Pr": Pr,
+    #     "Nu": Nu,
+    #     "alpha_o": alfa_o,
+    #     "Eu": Eu,
+    #     "dp_o": dp_o,
+    #     "ST_over_D": ST_over_D,
+    #     "SL_over_D": SL_over_D,
+    #     "layout": layout,
+    #     "n_rows": n_rows,
+    # }
