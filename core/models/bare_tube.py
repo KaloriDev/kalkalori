@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import math
-import warnings
 from dataclasses import dataclass
 
 from core.geometry.bundle import TubeBundle
@@ -48,9 +47,9 @@ from core.heat_transfer.ntu import (
 
 from core.heat_transfer.streams import EnergyStream
 
-from core.heat_transfer.warnings import (
-    warn_flow_regime,
-    warn_extreme_ntu,
+from core.common.warnings import (
+    ModelWarning,
+    make_warning,
 )
 
 
@@ -103,7 +102,7 @@ class HXResult:
     outside_side_hydraulic: HXOutSideHydraulicResults
 
     # Warnings and applicability diagnostics
-    warnings: list[str] = None  # List of warning messages issued during calculation
+    warnings: list[ModelWarning] | None = None
 
 
 class BareTubeHeatExchanger:
@@ -309,32 +308,68 @@ class BareTubeHeatExchanger:
         # --------------------------------------------------------------
         # Collect warnings
         # --------------------------------------------------------------
-        warnings_list = []
-        
+        warnings_list: list[ModelWarning] = []
+
         # Add outside flow applicability warnings
         if have_outside:
             warnings_list.extend(outside_warnings)
-        
-        # Use warnings context to capture diagnostic warnings
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            
-            # Check tube-side flow regime (expect turbulent for most correlations)
-            warn_flow_regime(Re_i, expected_regime="turbulent", context="tube side")
-            
-            # Check outside-side flow regime if computed
-            if have_outside and not math.isnan(Re_o):
-                warn_flow_regime(Re_o, expected_regime="turbulent", context="outside side")
-            
-            # Check for extreme NTU values
-            C_min = min(hot_stream.capacity_rate(), cold_stream.capacity_rate())
-            if C_min > 0:
-                ntu = UA / C_min
-                warn_extreme_ntu(ntu, threshold=10.0, context="heat exchanger")
-            
-            # Collect warning messages
-            for warning in w:
-                warnings_list.append(str(warning.message))
+
+        # Tube-side regime diagnostics (most internal correlations assume turbulence).
+        if Re_i < 2300.0:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_laminar_regime",
+                    message="tube_ht: tube-side Reynolds number indicates laminar flow while turbulent behavior is expected by the selected model.",
+                    source="tube_ht",
+                    severity="warning",
+                )
+            )
+        elif 2300.0 <= Re_i <= 4000.0:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_transition_regime",
+                    message="tube_ht: tube-side Reynolds number is in the transition region; heat-transfer prediction uncertainty is increased.",
+                    source="tube_ht",
+                    severity="warning",
+                )
+            )
+
+        # Outside-side regime diagnostics when outside flow is computed.
+        if have_outside and not math.isnan(Re_o):
+            if Re_o < 2300.0:
+                warnings_list.append(
+                    make_warning(
+                        code="outside_ht_laminar_regime",
+                        message="outside_ht: outside-side Reynolds number indicates laminar flow while turbulent behavior is expected by the selected model.",
+                        source="outside_ht",
+                        severity="warning",
+                    )
+                )
+            elif 2300.0 <= Re_o <= 4000.0:
+                warnings_list.append(
+                    make_warning(
+                        code="outside_ht_transition_regime",
+                        message="outside_ht: outside-side Reynolds number is in the transition region; heat-transfer prediction uncertainty is increased.",
+                        source="outside_ht",
+                        severity="warning",
+                    )
+                )
+
+        # NTU diagnostic for very high NTU where effectiveness approaches unity.
+        C_hot = hot_stream.capacity_rate()
+        C_cold = cold_stream.capacity_rate()
+        C_min = min(C_hot, C_cold)
+        if C_min > 0.0:
+            ntu = UA / C_min
+            if ntu > 10.0:
+                warnings_list.append(
+                    make_warning(
+                        code="ntu_extreme_high",
+                        message="ntu: NTU is very high (>10), so effectiveness is near unity and additional area may provide diminishing returns.",
+                        source="ntu",
+                        severity="info",
+                    )
+                )
 
         return HXResult(
             A_i=A_i,

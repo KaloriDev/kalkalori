@@ -55,6 +55,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+from core.common.warnings import ModelWarning, make_warning
+
 
 # -------------------------------------------------------------------------
 # Fluid properties container
@@ -291,7 +293,7 @@ def check_outside_ht_applicability(
     n_rows: int,
     *,
     use_vmax_for_ht: bool = True,
-) -> list[str]:
+) -> list[ModelWarning]:
     """
     Applicability / diagnostic checks for the outside heat-transfer model.
 
@@ -311,26 +313,69 @@ def check_outside_ht_applicability(
 
     Returns
     -------
-    list[str]
-        Diagnostic warnings. Empty list means "no obvious applicability issue detected".
+    list[ModelWarning]
+        Structured diagnostic warnings. Empty list means
+        "no obvious applicability issue detected".
     """
-    warnings: list[str] = []
+    warnings: list[ModelWarning] = []
 
     # ------------------------------------------------------------------
     # Basic input sanity
     # ------------------------------------------------------------------
     if Re <= 0.0:
-        warnings.append("outside_ht: Reynolds number must be positive.")
+        warnings.append(
+            make_warning(
+                code="outside_ht_re_nonpositive",
+                message="outside_ht: Reynolds number must be positive.",
+                source="outside_ht",
+                severity="critical",
+            )
+        )
     if Pr <= 0.0:
-        warnings.append("outside_ht: Prandtl number must be positive.")
+        warnings.append(
+            make_warning(
+                code="outside_ht_pr_nonpositive",
+                message="outside_ht: Prandtl number must be positive.",
+                source="outside_ht",
+                severity="critical",
+            )
+        )
     if tube_outer_diameter <= 0.0:
-        warnings.append("outside_ht: tube_outer_diameter must be positive.")
+        warnings.append(
+            make_warning(
+                code="outside_ht_diameter_nonpositive",
+                message="outside_ht: tube_outer_diameter must be positive.",
+                source="outside_ht",
+                severity="critical",
+            )
+        )
     if tube_pitch_transverse <= 0.0:
-        warnings.append("outside_ht: tube_pitch_transverse must be positive.")
+        warnings.append(
+            make_warning(
+                code="outside_ht_pitch_transverse_nonpositive",
+                message="outside_ht: tube_pitch_transverse must be positive.",
+                source="outside_ht",
+                severity="critical",
+            )
+        )
     if tube_pitch_longitudinal <= 0.0:
-        warnings.append("outside_ht: tube_pitch_longitudinal must be positive.")
+        warnings.append(
+            make_warning(
+                code="outside_ht_pitch_longitudinal_nonpositive",
+                message="outside_ht: tube_pitch_longitudinal must be positive.",
+                source="outside_ht",
+                severity="critical",
+            )
+        )
     if n_rows <= 0:
-        warnings.append("outside_ht: n_rows must be positive.")
+        warnings.append(
+            make_warning(
+                code="outside_ht_n_rows_nonpositive",
+                message="outside_ht: n_rows must be positive.",
+                source="outside_ht",
+                severity="critical",
+            )
+        )
 
     # Stop early if geometry is fundamentally invalid
     if (
@@ -348,30 +393,60 @@ def check_outside_ht_applicability(
 
     if ST_over_D <= 1.0:
         warnings.append(
-            "outside_ht: ST/D <= 1.0 is geometrically invalid for crossflow tube banks."
+            make_warning(
+                code="outside_ht_st_over_d_invalid",
+                message="outside_ht: ST/D <= 1.0 is geometrically invalid for crossflow tube banks.",
+                source="outside_ht",
+                severity="critical",
+            )
         )
     elif ST_over_D < 1.1:
         warnings.append(
-            "outside_ht: ST/D is very close to blockage limit; results may be highly sensitive."
+            make_warning(
+                code="outside_ht_st_over_d_near_blockage",
+                message="outside_ht: ST/D is very close to blockage limit; results may be highly sensitive.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
 
     if SL_over_D <= 1.0:
         warnings.append(
-            "outside_ht: SL/D <= 1.0 is outside the intended geometry range."
+            make_warning(
+                code="outside_ht_sl_over_d_invalid",
+                message="outside_ht: SL/D <= 1.0 is outside the intended geometry range.",
+                source="outside_ht",
+                severity="critical",
+            )
         )
     elif SL_over_D < 1.1:
         warnings.append(
-            "outside_ht: SL/D is very small; wake interaction may be strong and correlation confidence is reduced."
+            make_warning(
+                code="outside_ht_sl_over_d_small",
+                message="outside_ht: SL/D is very small; wake interaction may be strong and correlation confidence is reduced.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
 
     if ST_over_D > 4.0:
         warnings.append(
-            "outside_ht: ST/D is unusually large for the current 0D tube-bank model; verify applicability."
+            make_warning(
+                code="outside_ht_st_over_d_large",
+                message="outside_ht: ST/D is unusually large for the current 0D tube-bank model; verify applicability.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
 
     if SL_over_D > 4.0:
         warnings.append(
-            "outside_ht: SL/D is unusually large for the current 0D tube-bank model; verify applicability."
+            make_warning(
+                code="outside_ht_sl_over_d_large",
+                message="outside_ht: SL/D is unusually large for the current 0D tube-bank model; verify applicability.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
 
     # ------------------------------------------------------------------
@@ -380,15 +455,30 @@ def check_outside_ht_applicability(
     if Re > 0.0:
         if Re < 30.0:
             warnings.append(
-                "outside_ht: Re is extremely low for tube-bank crossflow; current outside HT correlation is low-confidence."
+                make_warning(
+                    code="outside_ht_re_extremely_low",
+                    message="outside_ht: Re is extremely low for tube-bank crossflow; current outside HT correlation is low-confidence.",
+                    source="outside_ht",
+                    severity="critical",
+                )
             )
         elif Re < 1.0e2:
             warnings.append(
-                "outside_ht: Re is in a very low range; confirm that the selected outside HT correlation is appropriate."
+                make_warning(
+                    code="outside_ht_re_low",
+                    message="outside_ht: Re is in a very low range; confirm that the selected outside HT correlation is appropriate.",
+                    source="outside_ht",
+                    severity="warning",
+                )
             )
         elif Re > 2.0e5:
             warnings.append(
-                "outside_ht: Re exceeds the main mid-range branch of the current Zukauskas-style implementation; verify high-Re applicability."
+                make_warning(
+                    code="outside_ht_re_high",
+                    message="outside_ht: Re exceeds the main mid-range branch of the current Zukauskas-style implementation; verify high-Re applicability.",
+                    source="outside_ht",
+                    severity="warning",
+                )
             )
 
     # ------------------------------------------------------------------
@@ -397,11 +487,21 @@ def check_outside_ht_applicability(
     if Pr > 0.0:
         if Pr < 0.6:
             warnings.append(
-                "outside_ht: very low Pr may be outside the intended use of the current gas-side correlation."
+                make_warning(
+                    code="outside_ht_pr_low",
+                    message="outside_ht: very low Pr may be outside the intended use of the current gas-side correlation.",
+                    source="outside_ht",
+                    severity="warning",
+                )
             )
         elif Pr > 500.0:
             warnings.append(
-                "outside_ht: very high Pr is outside the usual gas-side engineering range; verify applicability."
+                make_warning(
+                    code="outside_ht_pr_high",
+                    message="outside_ht: very high Pr is outside the usual gas-side engineering range; verify applicability.",
+                    source="outside_ht",
+                    severity="warning",
+                )
             )
 
     # ------------------------------------------------------------------
@@ -409,11 +509,21 @@ def check_outside_ht_applicability(
     # ------------------------------------------------------------------
     if n_rows == 1:
         warnings.append(
-            "outside_ht: single-row bank; finite-row effects dominate and uncertainty is elevated."
+            make_warning(
+                code="outside_ht_single_row",
+                message="outside_ht: single-row bank; finite-row effects dominate and uncertainty is elevated.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
     elif n_rows < 5:
         warnings.append(
-            "outside_ht: very small number of rows; finite-row correction has strong influence on the result."
+            make_warning(
+                code="outside_ht_few_rows",
+                message="outside_ht: very small number of rows; finite-row correction has strong influence on the result.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
 
     # ------------------------------------------------------------------
@@ -421,12 +531,22 @@ def check_outside_ht_applicability(
     # ------------------------------------------------------------------
     if not use_vmax_for_ht:
         warnings.append(
-            "outside_ht: HT is not using V_max as reference velocity; literature tube-bank correlations are commonly referenced to maximum gap velocity."
+            make_warning(
+                code="outside_ht_velocity_reference_nonstandard",
+                message="outside_ht: HT is not using V_max as reference velocity; literature tube-bank correlations are commonly referenced to maximum gap velocity.",
+                source="outside_ht",
+                severity="info",
+            )
         )
 
     if layout == "staggered" and SL_over_D < 1.2:
         warnings.append(
-            "outside_ht: staggered layout with very tight longitudinal pitch may require more geometry-specific validation."
+            make_warning(
+                code="outside_ht_staggered_tight_sl",
+                message="outside_ht: staggered layout with very tight longitudinal pitch may require more geometry-specific validation.",
+                source="outside_ht",
+                severity="warning",
+            )
         )
 
     return warnings
@@ -453,7 +573,7 @@ def outside_flow_from_mass_flow(
     # Reference velocity selection (kept explicit for transparency)
     use_vmax_for_ht: bool = True,
     use_vmax_for_dp: bool = True,
-) -> tuple[float, float, float, float, float, list[str]]:
+) -> tuple[float, float, float, float, float, list[ModelWarning]]:
     """
     Outside forced convection for tube bank (0D core).
 
@@ -478,7 +598,7 @@ def outside_flow_from_mass_flow(
         - Pr: Prandtl number [-]
         - alfa_o: outside heat transfer coefficient [W/(m^2*K)]
         - dp_o: pressure drop [Pa]
-        - warnings_list: list of applicability warning strings
+        - warnings_list: list of structured applicability warnings
     """
 
     if m_dot <= 0.0:

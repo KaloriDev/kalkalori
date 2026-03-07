@@ -35,6 +35,15 @@ from .outside_flow import (
     outside_flow_from_mass_flow,
 )
 
+from core.common.warnings import (
+    ApplicabilityRange,
+    ModelWarning,
+    WarningSeverity,
+    check_range,
+    make_warning,
+    has_critical_warnings,
+)
+
 __all__ = [
     # NTU
     "effectiveness_ntu",
@@ -61,4 +70,12 @@ __all__ = [
     # Outside flow (mass-flow driven)
     "OutsideFlowFluidProps",
     "outside_flow_from_mass_flow",
+
+    # Warnings and applicability checks
+    "ApplicabilityRange",
+    "ModelWarning",
+    "WarningSeverity",
+    "check_range",
+    "make_warning",
+    "has_critical_warnings",
 ]
