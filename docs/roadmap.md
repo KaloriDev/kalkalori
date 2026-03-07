@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.3.0`  
+**Current version:** `v0.3.2`  
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, complete thermal and hydraulic balance.
 
@@ -49,35 +49,11 @@ Interpretation in KalKalori:
 Improve confidence in thermal results without changing the 0D model structure.
 
 **Focus areas:**
-- review and calibration of heat transfer correlations:
-  - tube-side convection
-  - outside (air/gas) convection
 - clear applicability ranges (Re, Pr, geometry)
-- correlation selection mechanisms
 - diagnostic warnings (e.g. laminar flow, extreme NTU)
 
 **Outcome:**  
 Thermal results (Q, UA, ε) that can be trusted for engineering use.
-
----
-
-### v0.4.x — Hydraulic Accuracy
-
-**Goal:**  
-Provide reliable pressure drop predictions for pump and fan selection.
-
-**Focus areas:**
-- verification and refinement of:
-  - tube-side friction losses
-  - inlet / outlet losses
-  - return (pass) losses
-- improved outside pressure drop models
-- distinction between:
-  - preliminary engineering estimates
-  - refined calculations
-
-**Outcome:**  
-Δp values suitable for real design decisions.
 
 ---
 
@@ -166,6 +142,22 @@ This release marks the **maturity of the 0D modelling approach**.
 - documented assumptions and limitations
 - validated correlations
 - suitable for academic, engineering, and commercial use
+
+---
+
+### v1.1.x — Tube side Hydraulic Accuracy
+
+**Goal:**  
+Provide reliable pressure drop predictions.
+
+**Focus areas:**
+- verification and refinement of:
+  - tube-side friction losses
+  - inlet / outlet losses
+  - return (pass) losses
+
+**Outcome:**  
+Δp values suitable for real design decisions.
 
 ---
 

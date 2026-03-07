@@ -277,6 +277,159 @@ def euler_number(
         raise ValueError("eu_per_row must be positive.")
     return eu_per_row * float(n_rows)
 
+# -------------------------------------------------------------------------
+# Applicability
+# -------------------------------------------------------------------------
+
+def check_outside_ht_applicability(
+    Re: float,
+    Pr: float,
+    tube_outer_diameter: float,
+    tube_pitch_transverse: float,
+    tube_pitch_longitudinal: float,
+    layout: str,
+    n_rows: int,
+    *,
+    use_vmax_for_ht: bool = True,
+) -> list[str]:
+    """
+    Applicability / diagnostic checks for the outside heat-transfer model.
+
+    This function is intentionally conservative:
+    - it does NOT block calculation,
+    - it returns human-readable warnings,
+    - it focuses on practical engineering confidence for the current
+      Zukauskas-type 0D outside model.
+
+    The checks reflect the current model assumptions:
+    - bare tube bank in crossflow,
+    - inline or staggered layout,
+    - Re-based piecewise Zukauskas-style Nu,
+    - optional finite-row correction,
+    - geometry represented by ST/D and SL/D,
+    - preferred HT reference velocity: V_max.
+
+    Returns
+    -------
+    list[str]
+        Diagnostic warnings. Empty list means "no obvious applicability issue detected".
+    """
+    warnings: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Basic input sanity
+    # ------------------------------------------------------------------
+    if Re <= 0.0:
+        warnings.append("outside_ht: Reynolds number must be positive.")
+    if Pr <= 0.0:
+        warnings.append("outside_ht: Prandtl number must be positive.")
+    if tube_outer_diameter <= 0.0:
+        warnings.append("outside_ht: tube_outer_diameter must be positive.")
+    if tube_pitch_transverse <= 0.0:
+        warnings.append("outside_ht: tube_pitch_transverse must be positive.")
+    if tube_pitch_longitudinal <= 0.0:
+        warnings.append("outside_ht: tube_pitch_longitudinal must be positive.")
+    if n_rows <= 0:
+        warnings.append("outside_ht: n_rows must be positive.")
+
+    # Stop early if geometry is fundamentally invalid
+    if (
+        tube_outer_diameter <= 0.0
+        or tube_pitch_transverse <= 0.0
+        or tube_pitch_longitudinal <= 0.0
+    ):
+        return warnings
+
+    # ------------------------------------------------------------------
+    # Geometry ratios
+    # ------------------------------------------------------------------
+    ST_over_D = tube_pitch_transverse / tube_outer_diameter
+    SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
+
+    if ST_over_D <= 1.0:
+        warnings.append(
+            "outside_ht: ST/D <= 1.0 is geometrically invalid for crossflow tube banks."
+        )
+    elif ST_over_D < 1.1:
+        warnings.append(
+            "outside_ht: ST/D is very close to blockage limit; results may be highly sensitive."
+        )
+
+    if SL_over_D <= 1.0:
+        warnings.append(
+            "outside_ht: SL/D <= 1.0 is outside the intended geometry range."
+        )
+    elif SL_over_D < 1.1:
+        warnings.append(
+            "outside_ht: SL/D is very small; wake interaction may be strong and correlation confidence is reduced."
+        )
+
+    if ST_over_D > 4.0:
+        warnings.append(
+            "outside_ht: ST/D is unusually large for the current 0D tube-bank model; verify applicability."
+        )
+
+    if SL_over_D > 4.0:
+        warnings.append(
+            "outside_ht: SL/D is unusually large for the current 0D tube-bank model; verify applicability."
+        )
+
+    # ------------------------------------------------------------------
+    # Reynolds number diagnostics
+    # ------------------------------------------------------------------
+    if Re > 0.0:
+        if Re < 30.0:
+            warnings.append(
+                "outside_ht: Re is extremely low for tube-bank crossflow; current outside HT correlation is low-confidence."
+            )
+        elif Re < 1.0e2:
+            warnings.append(
+                "outside_ht: Re is in a very low range; confirm that the selected outside HT correlation is appropriate."
+            )
+        elif Re > 2.0e5:
+            warnings.append(
+                "outside_ht: Re exceeds the main mid-range branch of the current Zukauskas-style implementation; verify high-Re applicability."
+            )
+
+    # ------------------------------------------------------------------
+    # Prandtl number diagnostics
+    # ------------------------------------------------------------------
+    if Pr > 0.0:
+        if Pr < 0.6:
+            warnings.append(
+                "outside_ht: very low Pr may be outside the intended use of the current gas-side correlation."
+            )
+        elif Pr > 500.0:
+            warnings.append(
+                "outside_ht: very high Pr is outside the usual gas-side engineering range; verify applicability."
+            )
+
+    # ------------------------------------------------------------------
+    # Finite-row / shallow-bank diagnostics
+    # ------------------------------------------------------------------
+    if n_rows == 1:
+        warnings.append(
+            "outside_ht: single-row bank; finite-row effects dominate and uncertainty is elevated."
+        )
+    elif n_rows < 5:
+        warnings.append(
+            "outside_ht: very small number of rows; finite-row correction has strong influence on the result."
+        )
+
+    # ------------------------------------------------------------------
+    # Layout / velocity-reference diagnostics
+    # ------------------------------------------------------------------
+    if not use_vmax_for_ht:
+        warnings.append(
+            "outside_ht: HT is not using V_max as reference velocity; literature tube-bank correlations are commonly referenced to maximum gap velocity."
+        )
+
+    if layout == "staggered" and SL_over_D < 1.2:
+        warnings.append(
+            "outside_ht: staggered layout with very tight longitudinal pitch may require more geometry-specific validation."
+        )
+
+    return warnings
 
 # -------------------------------------------------------------------------
 # Main 0D solver (per tube approach velocity)
@@ -300,7 +453,7 @@ def outside_flow_from_mass_flow(
     # Reference velocity selection (kept explicit for transparency)
     use_vmax_for_ht: bool = True,
     use_vmax_for_dp: bool = True,
-) -> dict:
+) -> tuple[float, float, float, float, float, list[str]]:
     """
     Outside forced convection for tube bank (0D core).
 
@@ -316,7 +469,16 @@ def outside_flow_from_mass_flow(
     Heat transfer and dp are computed using either V_inf or V_max depending on flags.
     Default: use V_max for both (recommended for tube banks when geometry is available).
 
-    Returns a dict for forward compatibility (segmenting, reporting, validation).
+    Returns
+    -------
+    tuple
+        (v, Re, Pr, alfa_o, dp_o, warnings_list)
+        - v: approach velocity [m/s]
+        - Re: Reynolds number [-]
+        - Pr: Prandtl number [-]
+        - alfa_o: outside heat transfer coefficient [W/(m^2*K)]
+        - dp_o: pressure drop [Pa]
+        - warnings_list: list of applicability warning strings
     """
 
     if m_dot <= 0.0:
@@ -371,24 +533,18 @@ def outside_flow_from_mass_flow(
         n_rows,
         eu_per_row=eu_per_row_fallback,
     )
-    dp_o = Eu * (props.rho * V_ref_dp * V_ref_dp / 2.0)
+    dp_o = Eu * (props.rho * V_ref_dp ** 2 / 2.0)
 
-    return v, Re, Pr, alfa_o, dp_o
-    # return {
-    #     "m_dot_total": m_dot,
-    #     "n_tubes_per_row": n_tubes_per_row,
-    #     "V_max": V_max,
-    #     "V_ref_ht": V_ref_ht,
-    #     "V_ref_dp": V_ref_dp,
-    #     "Re_ht": Re,
-    #     "Re_dp": Re_dp,
-    #     "Pr": Pr,
-    #     "Nu": Nu,
-    #     "alpha_o": alfa_o,
-    #     "Eu": Eu,
-    #     "dp_o": dp_o,
-    #     "ST_over_D": ST_over_D,
-    #     "SL_over_D": SL_over_D,
-    #     "layout": layout,
-    #     "n_rows": n_rows,
-    # }
+    # Collect applicability warnings
+    warnings_list = check_outside_ht_applicability(
+        Re,
+        Pr,
+        tube_outer_diameter,
+        tube_pitch_transverse,
+        tube_pitch_longitudinal,
+        layout,
+        n_rows,
+        use_vmax_for_ht=use_vmax_for_ht,
+    )
+
+    return v, Re, Pr, alfa_o, dp_o, warnings_list

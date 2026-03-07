@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 
 from core.geometry.bundle import TubeBundle
@@ -46,6 +47,11 @@ from core.heat_transfer.ntu import (
 )
 
 from core.heat_transfer.streams import EnergyStream
+
+from core.heat_transfer.warnings import (
+    warn_flow_regime,
+    warn_extreme_ntu,
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +101,9 @@ class HXResult:
 
     outside_side_thermal: HXOutSideThermalResults
     outside_side_hydraulic: HXOutSideHydraulicResults
+
+    # Warnings and applicability diagnostics
+    warnings: list[str] = None  # List of warning messages issued during calculation
 
 
 class BareTubeHeatExchanger:
@@ -238,7 +247,7 @@ class BareTubeHeatExchanger:
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
 
         if have_outside:
-            v_o, Re_o, Pr_o, alfa_o_calc, dp_o = outside_flow_from_mass_flow(
+            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings = outside_flow_from_mass_flow(
                 m_dot=m_dot_outside,
                 frontal_area=A_frontal,
                 n_tubes_per_row=self.bundle.n_tubes_per_row,
@@ -250,7 +259,7 @@ class BareTubeHeatExchanger:
                 props=outside_props,
             )
         else:
-            v_o, Re_o, Pr_o, alfa_o_calc, dp_o = float("nan"), float("nan"), float("nan"), None, float("nan")
+            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings = float("nan"), float("nan"), float("nan"), None, float("nan"), []
 
         if alfa_o is not None:
             if alfa_o <= 0.0:
@@ -297,6 +306,36 @@ class BareTubeHeatExchanger:
             cold_stream=cold_stream,
         )
 
+        # --------------------------------------------------------------
+        # Collect warnings
+        # --------------------------------------------------------------
+        warnings_list = []
+        
+        # Add outside flow applicability warnings
+        if have_outside:
+            warnings_list.extend(outside_warnings)
+        
+        # Use warnings context to capture diagnostic warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            
+            # Check tube-side flow regime (expect turbulent for most correlations)
+            warn_flow_regime(Re_i, expected_regime="turbulent", context="tube side")
+            
+            # Check outside-side flow regime if computed
+            if have_outside and not math.isnan(Re_o):
+                warn_flow_regime(Re_o, expected_regime="turbulent", context="outside side")
+            
+            # Check for extreme NTU values
+            C_min = min(hot_stream.capacity_rate(), cold_stream.capacity_rate())
+            if C_min > 0:
+                ntu = UA / C_min
+                warn_extreme_ntu(ntu, threshold=10.0, context="heat exchanger")
+            
+            # Collect warning messages
+            for warning in w:
+                warnings_list.append(str(warning.message))
+
         return HXResult(
             A_i=A_i,
             A_o=A_o,
@@ -310,4 +349,5 @@ class BareTubeHeatExchanger:
             tube_side_hydraulic=tube_hyd,
             outside_side_thermal=outside_thermal,
             outside_side_hydraulic=outside_hyd,
+            warnings=warnings_list if warnings_list else None,
         )
