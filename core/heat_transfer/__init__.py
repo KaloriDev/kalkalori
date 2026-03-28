@@ -35,6 +35,19 @@ from .outside_flow import (
     outside_flow_from_mass_flow,
 )
 
+from .outside_pressure_drop import (
+    EulerProvider,
+    EulerRequest,
+    EulerResult,
+    evaluate_euler,
+    pressure_drop_from_euler,
+    check_outside_dp_applicability,
+)
+
+from .outside_pressure_drop_external import (
+    ExternalCliEulerProvider,
+)
+
 from core.common.warnings import (
     ApplicabilityRange,
     ModelWarning,
@@ -70,6 +83,17 @@ __all__ = [
     # Outside flow (mass-flow driven)
     "OutsideFlowFluidProps",
     "outside_flow_from_mass_flow",
+
+    # Outside pressure drop
+    "EulerProvider",
+    "EulerRequest",
+    "EulerResult",
+    "evaluate_euler",
+    "pressure_drop_from_euler",
+    "check_outside_dp_applicability",
+
+    # Outside pressure drop external adapter
+    "ExternalCliEulerProvider",
 
     # Warnings and applicability checks
     "ApplicabilityRange",

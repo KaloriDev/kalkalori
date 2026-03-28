@@ -1,4 +1,4 @@
-# KalKalori — Heat Exchanger Open Engine
+﻿# KalKalori â€” Heat Exchanger Open Engine
 # Copyright (C) 2025  KalKalori Project Authors
 #
 # This program is free software: you can redistribute it and/or modify
@@ -38,6 +38,10 @@ from core.heat_transfer.internal_pressure_drop import (
 from core.heat_transfer.outside_flow import (
     FluidProps as OutsideFlowFluidProps,
     outside_flow_from_mass_flow,
+)
+
+from core.heat_transfer.outside_pressure_drop import (
+    EulerProvider,
 )
 
 from core.heat_transfer.ntu import (
@@ -119,13 +123,13 @@ class BareTubeHeatExchanger:
     - Tube-side: component-based pressure drop:
         dp_total = dp_tubes + dp_inlet + dp_outlet + dp_turns
     - Outside side: forced flow from mass flow rate -> alfa_o and dp_o (MVP)
-    - Overall thermal duty: ε–NTU with flow_arrangement:
+    - Overall thermal duty: Îµâ€“NTU with flow_arrangement:
         "counterflow", "cocurrentflow", "crossflow"
 
     Literature anchors in code
     --------------------------
-    - ε–NTU: Incropera et al., Heat Exchangers chapter
-    - Darcy–Weisbach & K-loss decomposition: White; Idelchik; Crane TP-410
+    - Îµâ€“NTU: Incropera et al., Heat Exchangers chapter
+    - Darcyâ€“Weisbach & K-loss decomposition: White; Idelchik; Crane TP-410
     """
 
     def __init__(self, bundle: TubeBundle):
@@ -184,6 +188,9 @@ class BareTubeHeatExchanger:
 
         # Thermal flow arrangement:
         flow_arrangement: str | None = None,
+
+        # Outside pressure-drop provider selection:
+        euler_provider: str | EulerProvider = "kern",
 
     ) -> HXResult:
         # Use bundle's flow_arrangement if not provided
@@ -246,19 +253,28 @@ class BareTubeHeatExchanger:
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
 
         if have_outside:
-            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings = outside_flow_from_mass_flow(
+            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = outside_flow_from_mass_flow(
                 m_dot=m_dot_outside,
                 frontal_area=A_frontal,
                 n_tubes_per_row=self.bundle.n_tubes_per_row,
                 tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
                 tube_pitch_transverse=self.bundle.pitch_transverse,
                 tube_pitch_longitudinal=self.bundle.pitch_longitudinal,
-                layout=self.bundle.flow_arrangement,
+                layout=self.bundle.layout,
                 n_rows=self.bundle.n_rows,
                 props=outside_props,
-            )
+                euler_provider=euler_provider,
+)
         else:
-            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings = float("nan"), float("nan"), float("nan"), None, float("nan"), []
+            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = (
+                float("nan"),
+                float("nan"),
+                float("nan"),
+                None,
+                float("nan"),
+                [],
+                None,
+            )
 
         if alfa_o is not None:
             if alfa_o <= 0.0:
@@ -290,7 +306,7 @@ class BareTubeHeatExchanger:
         UA = 1.0 / R_tot
 
         # --------------------------------------------------------------
-        # ε–NTU thermal duty
+        # Îµâ€“NTU thermal duty
         # --------------------------------------------------------------
         eps = effectiveness_ntu(
             C_hot=hot_stream.capacity_rate(),
@@ -386,3 +402,5 @@ class BareTubeHeatExchanger:
             outside_side_hydraulic=outside_hyd,
             warnings=warnings_list if warnings_list else None,
         )
+
+

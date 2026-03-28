@@ -10,12 +10,10 @@
 #       - Re-range constants (C,m)
 #       - finite-row correction C2(N_L)
 #       - optional (Pr/Pr_s)^0.25 correction
-#   • Pressure drop: Euler number formulation:
-#       Δp = Eu * (1/2) * rho * V_ref^2,
-#       with Eu structured as Eu = f(Re, ST/D, SL/D, layout, N_L)
-#       (currently a transparent placeholder awaiting a chosen open correlation/data fit)
 #   • Geometry-consistent velocity definitions:
-#       V_inf (approach) and V_max based on minimum free-flow area concept.
+#       V_inf (approach) and V_max based on minimum free-flow area concept
+#   • Pressure-drop integration through outside_pressure_drop dispatcher:
+#       selectable euler_provider = "zukauskas" | "kern" | "esdu" | custom provider
 #
 # All correlations used here are taken from OPEN LITERATURE sources:
 #
@@ -25,16 +23,13 @@
 #   - VDI Heat Atlas (Tube Banks in Crossflow)
 #   - Khan, W.A. (2004), PhD Thesis, Univ. Waterloo (finite row correction)
 #
-# Pressure drop formulation:
-#   - Euler number definition from:
-#       VDI Heat Atlas
-#       Kays & London, Compact Heat Exchangers
-#       Idelchik, Handbook of Hydraulic Resistance
+# Pressure drop architecture:
+#   - delegated to outside_pressure_drop.py
 #
 # NOTE:
 #   This file contains no proprietary or reverse-engineered content.
-#   Any future Eu correlation should be sourced from open literature (VDI/HEDH/Kays&London/Idelchik)
-#   or from openly published datasets/plots digitized and fit with documented methodology.
+#   External closed-data providers may be attached only through the
+#   euler_provider interface, without importing proprietary code here.
 #
 # -------------------------------------------------------------------------
 # UNITS (SI ONLY)
@@ -52,10 +47,19 @@
 # -------------------------------------------------------------------------
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 import math
 
 from core.common.warnings import ModelWarning, make_warning
+from .outside_pressure_drop import (
+    EulerProvider,
+    EulerRequest,
+    EulerResult,
+    check_outside_dp_applicability,
+    evaluate_euler,
+    pressure_drop_from_euler,
+)
 
 
 # -------------------------------------------------------------------------
@@ -101,6 +105,7 @@ def prandtl_number(cp: float, mu: float, k: float) -> float:
         raise ValueError("cp, mu, k must be positive.")
     return cp * mu / k
 
+
 # -------------------------------------------------------------------------
 # Geometry-consistent velocities (minimum free-flow area concept)
 # -------------------------------------------------------------------------
@@ -125,10 +130,9 @@ def vmax_ratio_min_freeflow(
         leading to:
           V_max / V_inf = S_T / min(A_T, A_D)
 
-    This ratio is widely used in tube-bank crossflow formulations (VDI/Incropera summaries).
-
     NOTE:
-      This is a 0D geometric velocity model. For higher-fidelity layouts, corrections may apply.
+      This is a 0D geometric velocity model. For higher-fidelity layouts,
+      additional corrections may apply.
     """
     if tube_outer_diameter <= 0.0 or S_T <= 0.0 or S_L <= 0.0:
         raise ValueError("tube_outer_diameter, S_T, S_L must be positive.")
@@ -139,15 +143,15 @@ def vmax_ratio_min_freeflow(
 
     if layout == "inline":
         A_min = A_T
-    else:
-        # staggered: check diagonal passage as well
+    elif layout == "staggered":
         S_D = math.sqrt(S_L * S_L + (S_T * 0.5) ** 2)
         if S_D <= tube_outer_diameter:
             raise ValueError("Invalid geometry: diagonal pitch S_D must be > D.")
         A_D = 2.0 * (S_D - tube_outer_diameter)
         A_min = min(A_T, A_D)
+    else:
+        raise ValueError("layout must be 'inline' or 'staggered'.")
 
-    # Vmax / Vinf ratio
     return S_T / A_min
 
 
@@ -223,7 +227,6 @@ def nusselt_zukauskas(
     if n_rows <= 0:
         raise ValueError("n_rows must be positive.")
 
-    # Classical piecewise constants
     if Re < 1e2:
         C, m = 0.90, 0.40
     elif Re < 1e3:
@@ -247,40 +250,7 @@ def nusselt_zukauskas(
 
 
 # -------------------------------------------------------------------------
-# Pressure drop (Euler number form)
-# -------------------------------------------------------------------------
-
-def euler_number(
-    Re: float,
-    ST_over_D: float,
-    SL_over_D: float,
-    layout: str,
-    n_rows: int,
-    *,
-    eu_per_row: float = 1.2,
-) -> float:
-    """
-    MVP Euler number model:
-
-        Eu = Δp / (0.5 * rho * V_ref^2)
-
-
-    Pressure drop definition:
-
-        Δp = Eu * (1/2) * rho * v^2
-
-    Reference:
-        Euler number definition from VDI Heat Atlas,
-        Kays & London, Idelchik.
-    """
-    if n_rows <= 0:
-        raise ValueError("n_rows must be positive.")
-    if eu_per_row <= 0.0:
-        raise ValueError("eu_per_row must be positive.")
-    return eu_per_row * float(n_rows)
-
-# -------------------------------------------------------------------------
-# Applicability
+# Heat-transfer applicability
 # -------------------------------------------------------------------------
 
 def check_outside_ht_applicability(
@@ -296,32 +266,9 @@ def check_outside_ht_applicability(
 ) -> list[ModelWarning]:
     """
     Applicability / diagnostic checks for the outside heat-transfer model.
-
-    This function is intentionally conservative:
-    - it does NOT block calculation,
-    - it returns human-readable warnings,
-    - it focuses on practical engineering confidence for the current
-      Zukauskas-type 0D outside model.
-
-    The checks reflect the current model assumptions:
-    - bare tube bank in crossflow,
-    - inline or staggered layout,
-    - Re-based piecewise Zukauskas-style Nu,
-    - optional finite-row correction,
-    - geometry represented by ST/D and SL/D,
-    - preferred HT reference velocity: V_max.
-
-    Returns
-    -------
-    list[ModelWarning]
-        Structured diagnostic warnings. Empty list means
-        "no obvious applicability issue detected".
     """
     warnings: list[ModelWarning] = []
 
-    # ------------------------------------------------------------------
-    # Basic input sanity
-    # ------------------------------------------------------------------
     if Re <= 0.0:
         warnings.append(
             make_warning(
@@ -377,7 +324,6 @@ def check_outside_ht_applicability(
             )
         )
 
-    # Stop early if geometry is fundamentally invalid
     if (
         tube_outer_diameter <= 0.0
         or tube_pitch_transverse <= 0.0
@@ -385,9 +331,6 @@ def check_outside_ht_applicability(
     ):
         return warnings
 
-    # ------------------------------------------------------------------
-    # Geometry ratios
-    # ------------------------------------------------------------------
     ST_over_D = tube_pitch_transverse / tube_outer_diameter
     SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
 
@@ -449,9 +392,6 @@ def check_outside_ht_applicability(
             )
         )
 
-    # ------------------------------------------------------------------
-    # Reynolds number diagnostics
-    # ------------------------------------------------------------------
     if Re > 0.0:
         if Re < 30.0:
             warnings.append(
@@ -481,9 +421,6 @@ def check_outside_ht_applicability(
                 )
             )
 
-    # ------------------------------------------------------------------
-    # Prandtl number diagnostics
-    # ------------------------------------------------------------------
     if Pr > 0.0:
         if Pr < 0.6:
             warnings.append(
@@ -504,9 +441,6 @@ def check_outside_ht_applicability(
                 )
             )
 
-    # ------------------------------------------------------------------
-    # Finite-row / shallow-bank diagnostics
-    # ------------------------------------------------------------------
     if n_rows == 1:
         warnings.append(
             make_warning(
@@ -526,9 +460,6 @@ def check_outside_ht_applicability(
             )
         )
 
-    # ------------------------------------------------------------------
-    # Layout / velocity-reference diagnostics
-    # ------------------------------------------------------------------
     if not use_vmax_for_ht:
         warnings.append(
             make_warning(
@@ -551,8 +482,9 @@ def check_outside_ht_applicability(
 
     return warnings
 
+
 # -------------------------------------------------------------------------
-# Main 0D solver (per tube approach velocity)
+# Main 0D solver
 # -------------------------------------------------------------------------
 
 def outside_flow_from_mass_flow(
@@ -568,41 +500,39 @@ def outside_flow_from_mass_flow(
     *,
     Pr_s: float | None = None,
     apply_finite_row_correction: bool = True,
-    # Pressure drop options (fallback Eu-per-row until real correlation is plugged in)
-    eu_per_row_fallback: float = 1.2,
-    # Reference velocity selection (kept explicit for transparency)
+    euler_provider: str | EulerProvider = "zukauskas",
     use_vmax_for_ht: bool = True,
     use_vmax_for_dp: bool = True,
-) -> tuple[float, float, float, float, float, list[ModelWarning]]:
+    is_finned: bool = False,
+    pressure_drop_geometry_meta: dict | None = None,
+) -> tuple[float, float, float, float, float, list[ModelWarning], EulerResult]:
     """
     Outside forced convection for tube bank (0D core).
 
-    Flow split:
-        m_dot_tube = m_dot / n_tubes_per_row
-
-    Approach velocity per tube:
-        V_inf = m_dot_tube / (rho * frontal_area_per_tube)
-
-    Maximum velocity via minimum free-flow area ratio (tube bank geometry):
-        V_max = V_inf * (V_max/V_inf)(D, ST, SL, layout)
-
-    Heat transfer and dp are computed using either V_inf or V_max depending on flags.
-    Default: use V_max for both (recommended for tube banks when geometry is available).
+    Parameters
+    ----------
+    euler_provider:
+        Either:
+          - built-in provider name: "zukauskas", "kern", "esdu"
+          - custom provider object implementing EulerProvider
 
     Returns
     -------
     tuple
-        (v, Re, Pr, alfa_o, dp_o, warnings_list)
+        (v, Re, Pr, alfa_o, dp_o, warnings_list, euler_result)
         - v: approach velocity [m/s]
-        - Re: Reynolds number [-]
+        - Re: heat-transfer Reynolds number [-]
         - Pr: Prandtl number [-]
         - alfa_o: outside heat transfer coefficient [W/(m^2*K)]
         - dp_o: pressure drop [Pa]
         - warnings_list: list of structured applicability warnings
+        - euler_result: metadata about selected pressure-drop backend
     """
 
     if m_dot <= 0.0:
         raise ValueError("m_dot must be positive.")
+    if frontal_area <= 0.0:
+        raise ValueError("frontal_area must be positive.")
     if tube_outer_diameter <= 0.0:
         raise ValueError("tube_outer_diameter must be positive.")
     if n_rows <= 0:
@@ -612,6 +542,7 @@ def outside_flow_from_mass_flow(
 
     # Mass flow per tube in row
     m_dot_tube = m_dot / float(n_tubes_per_row)
+
     # Frontal area per tube in row
     frontal_area_per_tube = frontal_area / float(n_tubes_per_row)
 
@@ -619,14 +550,19 @@ def outside_flow_from_mass_flow(
     v = m_dot_tube / (props.rho * frontal_area_per_tube)
 
     # Geometry-consistent Vmax
-    ratio = vmax_ratio_min_freeflow(tube_outer_diameter, tube_pitch_transverse, tube_pitch_longitudinal, layout)
+    ratio = vmax_ratio_min_freeflow(
+        tube_outer_diameter,
+        tube_pitch_transverse,
+        tube_pitch_longitudinal,
+        layout,
+    )
     V_max = v * ratio
 
     # Choose reference velocities
     V_ref_ht = V_max if use_vmax_for_ht else v
     V_ref_dp = V_max if use_vmax_for_dp else v
 
-    # Dimensionless groups for heat transfer
+    # Heat transfer
     Re = reynolds_number(props.rho, V_ref_ht, tube_outer_diameter, props.mu)
     Pr = prandtl_number(props.cp, props.mu, props.k)
 
@@ -637,23 +573,28 @@ def outside_flow_from_mass_flow(
         Pr_s=Pr_s,
         apply_finite_row_correction=apply_finite_row_correction,
     )
-
     alfa_o = Nu * props.k / tube_outer_diameter
 
-    # Pressure drop
+    # Pressure drop request
     ST_over_D = tube_pitch_transverse / tube_outer_diameter
     SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
-    Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)  # allow dp to use its own ref velocity
+    Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)
 
-    Eu = euler_number(
-        Re_dp,
-        ST_over_D,
-        SL_over_D,
-        layout,
-        n_rows,
-        eu_per_row=eu_per_row_fallback,
+    request = EulerRequest(
+        Re=Re_dp,
+        ST_over_D=ST_over_D,
+        SL_over_D=SL_over_D,
+        layout=layout,
+        n_rows=n_rows,
+        is_finned=is_finned,
+        geometry_meta=pressure_drop_geometry_meta,
     )
-    dp_o = Eu * (props.rho * V_ref_dp ** 2 / 2.0)
+
+    euler_result = evaluate_euler(
+        request,
+        euler_provider=euler_provider,
+    )
+    dp_o = pressure_drop_from_euler(props.rho, V_ref_dp, euler_result.Eu)
 
     # Collect applicability warnings
     warnings_list = check_outside_ht_applicability(
@@ -667,4 +608,12 @@ def outside_flow_from_mass_flow(
         use_vmax_for_ht=use_vmax_for_ht,
     )
 
-    return v, Re, Pr, alfa_o, dp_o, warnings_list
+    warnings_list.extend(
+        check_outside_dp_applicability(
+            request,
+            euler_provider=euler_provider,
+            use_vmax_for_dp=use_vmax_for_dp,
+        )
+    )
+
+    return v, Re, Pr, alfa_o, dp_o, warnings_list, euler_result
