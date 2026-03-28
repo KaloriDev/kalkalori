@@ -35,25 +35,13 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.3.2`  
+**Current version:** `v0.3.4`  
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, complete thermal and hydraulic balance.
 
 ---
 
 ## Roadmap Overview
-
-### v0.3.x — Heat Transfer Accuracy (CURRENT PHASE)
-
-**Goal:**  
-Improve confidence in thermal results without changing the 0D model structure.
-
-**Focus areas:**
-- clear applicability ranges (Re, Pr, geometry)
-- diagnostic warnings (e.g. laminar flow, extreme NTU)
-
-**Outcome:**  
-Thermal results (Q, UA, ε) that can be trusted for engineering use.
 
 ---
 
