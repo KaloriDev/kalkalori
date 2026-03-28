@@ -27,7 +27,6 @@
 #   - delegated to outside_pressure_drop.py
 #
 # NOTE:
-#   This file contains no proprietary or reverse-engineered content.
 #   External closed-data providers may be attached only through the
 #   euler_provider interface, without importing proprietary code here.
 #
@@ -119,7 +118,7 @@ def vmax_ratio_min_freeflow(
     """
     Returns ratio (V_max / V_inf) based on minimum free-flow area concept.
 
-    Inline (aligned):
+    Inline:
         V_max / V_inf = S_T / (S_T - D)
 
     Staggered:
@@ -525,7 +524,7 @@ def outside_flow_from_mass_flow(
         - Pr: Prandtl number [-]
         - alfa_o: outside heat transfer coefficient [W/(m^2*K)]
         - dp_o: pressure drop [Pa]
-        - warnings_list: list of structured applicability warnings
+        - warnings_list: structured applicability warnings
         - euler_result: metadata about selected pressure-drop backend
     """
 
@@ -575,7 +574,7 @@ def outside_flow_from_mass_flow(
     )
     alfa_o = Nu * props.k / tube_outer_diameter
 
-    # Pressure drop request
+    # Pressure drop
     ST_over_D = tube_pitch_transverse / tube_outer_diameter
     SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
     Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)
@@ -596,7 +595,7 @@ def outside_flow_from_mass_flow(
     )
     dp_o = pressure_drop_from_euler(props.rho, V_ref_dp, euler_result.Eu)
 
-    # Collect applicability warnings
+    # Applicability warnings
     warnings_list = check_outside_ht_applicability(
         Re,
         Pr,

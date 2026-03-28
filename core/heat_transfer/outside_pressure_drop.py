@@ -15,32 +15,34 @@
 #     without importing proprietary code into the GPL codebase.
 #
 # Built-in providers currently supported:
-#   - "zukauskas" : open fallback placeholder with correct API shape
-#   - "kern"      : open fallback placeholder with correct API shape
+#   - "zukauskas" : implemented open Zhukauskas/Ulinskas-style provider
+#   - "kern"      : open fallback placeholder
 #   - "esdu"      : reserved for finned-tube-bank implementation
 #
 # External provider support:
 #   - pass an object implementing:
 #         evaluate(request: EulerRequest) -> EulerResult
 #
-# IMPORTANT:
-#   The built-in "zukauskas" / "kern" implementations below are intentionally
-#   conservative placeholders until full open correlations are wired in.
-#   They are here to stabilize architecture, not to claim final hydraulic
-#   fidelity.
+# Open references relevant to current implementation:
+#   - Zhukauskas, A. (1972), "Heat Transfer from Tubes in Crossflow",
+#     Advances in Heat Transfer, Vol. 8
+#   - Zhukauskas, A., Ulinskas, R. (1988), Heat Transfer in Tube Banks in Crossflow
+#   - Open implementation reference:
+#       TORCHE (FAST Research Group), dP_Zu / Zhukauskas pressure-drop model
 #
-# Open references relevant to future implementations:
-#   - Zukauskas, A. (1972), Heat Transfer from Tubes in Crossflow
-#   - Incropera et al., Fundamentals of Heat and Mass Transfer
-#   - VDI Heat Atlas (pressure drop / Euler number usage for tube banks)
-#   - Kays & London, Compact Heat Exchangers
-#   - Idelchik, Handbook of Hydraulic Resistance
+# IMPORTANT:
+#   - The current ZukauskasEulerProvider is implemented from openly published /
+#     openly distributed material and returns Euler number.
+#   - pressure_drop_from_euler() must use the SAME reference velocity that was
+#     used to build Reynolds number for the provider. For the current provider,
+#     this should be V_max.
 #
 # -------------------------------------------------------------------------
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from core.common.warnings import ModelWarning, make_warning
@@ -62,6 +64,7 @@ class EulerRequest:
     ----------
     Re:
         Reynolds number based on selected reference velocity.
+        For the current Zukauskas implementation this should be based on V_max.
     ST_over_D:
         Transverse pitch ratio, S_T / D_o.
     SL_over_D:
@@ -69,12 +72,16 @@ class EulerRequest:
     layout:
         "inline" or "staggered".
     n_rows:
-        Number of rows in flow direction.
+        Number of tube rows in flow direction.
     is_finned:
         Geometry flag reserved for models such as ESDU.
     geometry_meta:
-        Optional extensible payload for future models:
-        sigma, fin spacing, fin height, A_min, etc.
+        Optional extensible payload for future models and advanced corrections.
+        Currently recognized optional keys for Zukauskas provider:
+          - "mu_wall": dynamic viscosity at wall / surface condition
+          - "mu_bulk": dynamic viscosity at bulk condition
+          - "alpha_deg": rotated-crossflow correction angle
+          - "beta_deg": incidence-angle correction
     """
     Re: float
     ST_over_D: float
@@ -100,14 +107,6 @@ class EulerResult:
 class EulerProvider(Protocol):
     """
     Provider protocol for outside pressure-drop / Euler models.
-
-    This protocol can be implemented by:
-      - built-in open providers,
-      - external CLI adapters,
-      - external HTTP adapters,
-      - internal project-specific wrappers.
-
-    The GPL core only depends on this protocol, not on closed implementations.
     """
     def evaluate(self, request: EulerRequest) -> EulerResult:
         ...
@@ -130,60 +129,274 @@ def _validate_request(request: EulerRequest) -> None:
         raise ValueError("layout must be 'inline' or 'staggered'.")
 
 
+def _lin_interp(x: float, x0: float, x1: float, y0: float, y1: float) -> float:
+    if x1 == x0:
+        return y0
+    t = (x - x0) / (x1 - x0)
+    return y0 + t * (y1 - y0)
+
+
+def _interp_over_grid(x: float, x_grid: list[float], y_grid: list[float]) -> float:
+    """
+    Clamped linear interpolation over a small monotonic grid.
+    """
+    if len(x_grid) != len(y_grid) or len(x_grid) < 2:
+        raise ValueError("x_grid and y_grid must have same length >= 2.")
+
+    if x <= x_grid[0]:
+        return y_grid[0]
+    if x >= x_grid[-1]:
+        return y_grid[-1]
+
+    for i in range(len(x_grid) - 1):
+        x0 = x_grid[i]
+        x1 = x_grid[i + 1]
+        if x0 <= x <= x1:
+            return _lin_interp(x, x0, x1, y_grid[i], y_grid[i + 1])
+
+    return y_grid[-1]
+
+
 # -------------------------------------------------------------------------
 # Built-in open providers
 # -------------------------------------------------------------------------
 
 class ZukauskasEulerProvider:
     """
-    Open fallback provider with Zukauskas-style intent.
+    Open Zhukauskas/Ulinskas-style Euler-number provider.
 
-    Current status:
-      - API-stable placeholder
-      - trend-aware vs Re
-      - includes weak geometry sensitivity
-      - NOT a final literature-grade hydraulic implementation
+    Implementation basis
+    --------------------
+    This provider follows the open TORCHE implementation of the Zhukauskas
+    pressure-drop method for crossflow tube bundles, which cites:
+      - Zhukauskas, A., Ulinskas, R. (1988), Heat Transfer in Tube Banks in Crossflow
+      - Zhukauskas, A. (1972), Advances in Heat Transfer, Vol. 8
 
-    Behaviour:
-      Eu_total = Eu_per_row(Re, geometry, layout) * n_rows
+    Model structure
+    ---------------
+      Eu_total = Eu_per_row * k1 * k2 * k3 * k4 * k5 * N_L
+
+    where:
+      - Eu_per_row is evaluated from:
+            c0 + c1/Re + c2/Re^2 + c3/Re^3 + c4/Re^4
+      - coefficient set depends on:
+            layout, Re regime, and b = SL/D
+      - k1: non-rectangular inline correction (a != b)
+      - k2: viscosity correction, optional
+      - k3: entry / finite-row correction
+      - k4: rotated-crossflow correction
+      - k5: incidence-angle correction
+
+    Important notes
+    ---------------
+      - Re should be based on V_max and D_o.
+      - pressure_drop_from_euler() must then use the same V_max reference velocity.
+      - Validity is strongest near tabulated b values:
+            b in {1.25, 1.5, 2.0}
+        Here we linearly interpolate across b and clamp outside the grid.
     """
+
+    _B_GRID = [1.25, 1.5, 2.0]
 
     def evaluate(self, request: EulerRequest) -> EulerResult:
         _validate_request(request)
+
+        if request.is_finned:
+            raise ValueError(
+                "ZukauskasEulerProvider is intended for bare tube banks, not finned tube banks."
+            )
 
         Re = request.Re
         a = request.ST_over_D
         b = request.SL_over_D
         n_rows = request.n_rows
         layout = request.layout
+        meta = request.geometry_meta or {}
 
-        if Re < 1.0e2:
-            eu_per_row_base = 2.00
-        elif Re < 1.0e3:
-            eu_per_row_base = 1.40
-        elif Re < 1.0e4:
-            eu_per_row_base = 0.95
-        elif Re < 1.0e5:
-            eu_per_row_base = 0.70
+        mu_wall = meta.get("mu_wall")
+        mu_bulk = meta.get("mu_bulk")
+        alpha_deg = float(meta.get("alpha_deg", 0.0))
+        beta_deg = float(meta.get("beta_deg", 90.0))
+
+        if layout == "inline":
+            eu_per_row = self._eu_per_row_inline(Re, b)
+            k1 = self._k1_inline_nonrectangular(Re, a, b)
+            k3 = self._k3_inline(Re, n_rows)
         else:
-            eu_per_row_base = 0.55
+            eu_per_row = self._eu_per_row_staggered(Re, b)
+            k1 = 1.0
+            k3 = self._k3_staggered(Re, n_rows)
 
-        geom_factor_t = max(0.70, min(1.80, 1.25 / (a - 1.0)))
-        geom_factor_l = max(0.80, min(1.40, 1.15 / max(b - 1.0, 0.20)))
-        layout_factor = 1.10 if layout == "staggered" else 1.00
+        k2 = self._k2_viscosity(Re, mu_wall=mu_wall, mu_bulk=mu_bulk)
+        k4 = math.cos(math.radians(alpha_deg))
+        k5 = self._k5_incidence(beta_deg)
 
-        eu_per_row = eu_per_row_base * geom_factor_t * geom_factor_l * layout_factor
-        eu_total = eu_per_row * float(n_rows)
+        eu_total = eu_per_row * k1 * k2 * k3 * k4 * k5 * float(n_rows)
+
+        # numerical guardrail
+        if eu_total < 0.0:
+            eu_total = 0.0
 
         return EulerResult(
             Eu=eu_total,
             source="open_gpl_builtin",
             model="zukauskas",
             validity_note=(
-                "Open placeholder provider with correct Eu(Re, geometry, layout, N_L) "
-                "structure; replace with validated literature correlation if higher "
-                "hydraulic fidelity is required."
+                "Open Zhukauskas/Ulinskas-style pressure-drop provider. "
+                "Best consistency is obtained when Re is based on V_max and "
+                "pressure drop is evaluated with the same V_max reference."
             ),
+        )
+
+    def _eu_per_row_inline(self, Re: float, b: float) -> float:
+        if Re > 2.0e3:
+            c0 = [0.267, 0.235, 0.247]
+            c1 = [0.249e4, 0.197e4, -0.595]
+            c2 = [-0.927e7, -0.124e8, 0.15]
+            c3 = [0.1e11, 0.312e11, -0.137]
+            c4 = [0.0, -0.274e14, 0.396]
+        elif Re > 800.0:
+            c0 = [0.272, 0.263, 0.247]
+            c1 = [0.207e3, 0.867e2, 56.6 - (4.766e-2 * Re)]
+            c2 = [0.102e3, -0.202, 0.15]
+            c3 = [-0.286e3, 0.0, -0.137]
+            c4 = [0.0, 0.0, 0.396]
+        else:
+            c0 = [0.272, 0.263, 0.188]
+            c1 = [0.207e3, 0.867e2, 56.6]
+            c2 = [0.102e3, -0.202, -646.0]
+            c3 = [-0.286e3, 0.0, 6010.0]
+            c4 = [0.0, 0.0, -18300.0]
+
+        coeffs = (
+            _interp_over_grid(b, self._B_GRID, c0),
+            _interp_over_grid(b, self._B_GRID, c1),
+            _interp_over_grid(b, self._B_GRID, c2),
+            _interp_over_grid(b, self._B_GRID, c3),
+            _interp_over_grid(b, self._B_GRID, c4),
+        )
+        return self._eu_poly(Re, coeffs)
+
+    def _eu_per_row_staggered(self, Re: float, b: float) -> float:
+        if Re < 1.0e3:
+            c0 = [0.795, 0.683, 0.343]
+            c1 = [0.247e3, 0.111e3, 0.303e3]
+            c2 = [0.335e3, -0.973e2, -0.717e5]
+            c3 = [-0.155e4, -0.426e3, 0.88e7]
+            c4 = [0.241e4, 0.574e3, -0.38e9]
+        elif Re < 1.0e4:
+            c0 = [0.245, 0.203, 0.343]
+            c1 = [0.339e4, 0.248e4, 0.303e3]
+            c2 = [-0.984e7, -0.758e7, -0.717e5]
+            c3 = [0.132e11, 0.104e11, 0.88e7]
+            c4 = [-0.599e13, -0.482e13, -0.38e9]
+        else:
+            c0 = [0.245, 0.203, 0.162]
+            c1 = [0.339e4, 0.248e4, 0.181e4]
+            c2 = [-0.984e7, -0.758e7, 0.792e8]
+            c3 = [0.132e11, 0.104e11, -0.165e13]
+            c4 = [-0.599e13, -0.482e13, 0.872e16]
+
+        coeffs = (
+            _interp_over_grid(b, self._B_GRID, c0),
+            _interp_over_grid(b, self._B_GRID, c1),
+            _interp_over_grid(b, self._B_GRID, c2),
+            _interp_over_grid(b, self._B_GRID, c3),
+            _interp_over_grid(b, self._B_GRID, c4),
+        )
+        return self._eu_poly(Re, coeffs)
+
+    @staticmethod
+    def _eu_poly(
+        Re: float,
+        coeffs: tuple[float, float, float, float, float],
+    ) -> float:
+        c0, c1, c2, c3, c4 = coeffs
+        inv = 1.0 / Re
+        inv2 = inv * inv
+        inv3 = inv2 * inv
+        inv4 = inv3 * inv
+        return c0 + c1 * inv + c2 * inv2 + c3 * inv3 + c4 * inv4
+
+    @staticmethod
+    def _k1_inline_nonrectangular(Re: float, a: float, b: float) -> float:
+        if b <= 1.0:
+            return 1.0
+
+        x = (a - 1.0) / (b - 1.0)
+        if abs(x - 1.0) < 1.0e-12:
+            return 1.0
+
+        if 1.0e3 <= Re < 1.0e4:
+            return 0.9849 * x ** (-0.8129)
+        if 1.0e4 <= Re < 7.0e4:
+            return 0.9802 * x ** (-0.7492)
+        if 7.0e4 <= Re < 1.5e5:
+            return 0.9880 * x ** (-0.6388)
+        return 1.0
+
+    @staticmethod
+    def _k2_viscosity(
+        Re: float,
+        *,
+        mu_wall: float | None,
+        mu_bulk: float | None,
+    ) -> float:
+        if mu_wall is None or mu_bulk is None:
+            return 1.0
+        if mu_wall <= 0.0 or mu_bulk <= 0.0:
+            return 1.0
+
+        ratio = mu_wall / mu_bulk
+        p = 1.0
+
+        if ratio > 1.0:
+            p = 0.776 * math.exp(-0.545 * Re ** 0.256)
+        elif ratio < 1.0 and Re < 1.0e4:
+            p = 0.968 * math.exp(-1.076 * Re ** 0.196)
+
+        return ratio ** p
+
+    @staticmethod
+    def _k3_inline(Re: float, n_rows: int) -> float:
+        if n_rows < 1:
+            return 1.0
+
+        el_1 = [1.9, 1.1, 1.0, 1.0, 1.0, 1.0, 1.0]
+        el_2 = [2.7, 1.8, 1.5, 1.4, 1.3, 1.2, 1.2]
+
+        if 0 < n_rows <= 7 and 1.0e2 < Re < 1.0e6:
+            return el_1[n_rows - 1]
+        if 0 < n_rows <= 7 and Re >= 1.0e6:
+            return el_2[n_rows - 1]
+        return 1.0
+
+    @staticmethod
+    def _k3_staggered(Re: float, n_rows: int) -> float:
+        if n_rows < 1:
+            return 1.0
+
+        el_1 = [1.4, 1.3, 1.2, 1.1, 1.0, 1.0, 1.0]
+        el_2 = [1.1, 1.05, 1.0, 1.0, 1.0, 1.0, 1.0]
+        el_3 = [0.25, 0.45, 0.6, 0.65, 0.7, 0.75, 0.8]
+
+        if 0 < n_rows <= 7 and 1.0e2 < Re < 1.0e4:
+            return el_1[n_rows - 1]
+        if 0 < n_rows <= 7 and 1.0e4 <= Re < 1.0e6:
+            return el_2[n_rows - 1]
+        if 0 < n_rows <= 7 and Re >= 1.0e6:
+            return el_3[n_rows - 1]
+        return 1.0
+
+    @staticmethod
+    def _k5_incidence(beta_deg: float) -> float:
+        if abs(beta_deg - 90.0) < 1.0e-9:
+            return 1.0
+        return (
+            -1.0e-6 * beta_deg ** 3
+            + 1.0e-4 * beta_deg ** 2
+            + 0.0132 * beta_deg
+            - 0.033
         )
 
 
@@ -382,7 +595,16 @@ def check_outside_dp_applicability(
             )
         )
 
-    if request.Re < 50.0:
+    if request.Re < 10.0:
+        warnings.append(
+            make_warning(
+                code="outside_dp_re_below_zukauskas_lower",
+                message="outside_dp: Re is below ~10, which is below the usual lower validity bound for Zhukauskas-style pressure-drop usage.",
+                source="outside_dp",
+                severity="critical",
+            )
+        )
+    elif request.Re < 100.0:
         warnings.append(
             make_warning(
                 code="outside_dp_re_very_low",
@@ -391,11 +613,11 @@ def check_outside_dp_applicability(
                 severity="warning",
             )
         )
-    elif request.Re > 2.0e5:
+    elif request.Re > 1.0e6:
         warnings.append(
             make_warning(
-                code="outside_dp_re_high",
-                message="outside_dp: high Re may exceed the intended range of simplified open pressure-drop models.",
+                code="outside_dp_re_above_open_reference",
+                message="outside_dp: Re exceeds ~1e6; verify applicability of selected open pressure-drop model and row-entry corrections.",
                 source="outside_dp",
                 severity="warning",
             )
@@ -462,9 +684,9 @@ def check_outside_dp_applicability(
         warnings.append(
             make_warning(
                 code="outside_dp_velocity_reference_nonstandard",
-                message="outside_dp: pressure drop is not using V_max as reference velocity; many tube-bank formulations are referenced to maximum gap velocity.",
+                message="outside_dp: pressure drop is not using V_max as reference velocity; the current Zukauskas provider expects Re referenced to V_max.",
                 source="outside_dp",
-                severity="info",
+                severity="critical",
             )
         )
 
@@ -472,15 +694,35 @@ def check_outside_dp_applicability(
         provider_name = euler_provider.strip().lower()
 
         if provider_name == "zukauskas":
-            warnings.append(
-                make_warning(
-                    code="outside_dp_zukauskas_placeholder",
-                    message="outside_dp: current built-in Zukauskas provider is an open placeholder with correct structure, not yet a fully validated hydraulic correlation.",
-                    source="outside_dp",
-                    severity="info",
-                )
-            )
-
+            if request.layout == "inline":
+                if request.ST_over_D not in (1.25, 1.5, 2.0):
+                    warnings.append(
+                        make_warning(
+                            code="outside_dp_zukauskas_inline_st_over_d_offgrid",
+                            message="outside_dp: current open Zukauskas provider uses tabulated b-grid interpolation and is most defensible near the published pitch-ratio grids; verify extrapolation for this geometry.",
+                            source="outside_dp",
+                            severity="info",
+                        )
+                    )
+                if request.SL_over_D not in (1.25, 1.5, 2.0):
+                    warnings.append(
+                        make_warning(
+                            code="outside_dp_zukauskas_inline_sl_over_d_offgrid",
+                            message="outside_dp: current open Zukauskas provider is strongest near SL/D = 1.25, 1.5, 2.0 and uses interpolation/clamping outside these points.",
+                            source="outside_dp",
+                            severity="info",
+                        )
+                    )
+            else:
+                if request.SL_over_D not in (1.25, 1.5, 2.0):
+                    warnings.append(
+                        make_warning(
+                            code="outside_dp_zukauskas_staggered_sl_over_d_offgrid",
+                            message="outside_dp: current open Zukauskas provider is strongest near staggered SL/D = 1.25, 1.5, 2.0 and uses interpolation/clamping outside these points.",
+                            source="outside_dp",
+                            severity="info",
+                        )
+                    )
         elif provider_name == "kern":
             warnings.append(
                 make_warning(
@@ -490,7 +732,6 @@ def check_outside_dp_applicability(
                     severity="info",
                 )
             )
-
         elif provider_name == "esdu":
             if not request.is_finned:
                 warnings.append(
