@@ -190,7 +190,7 @@ class BareTubeHeatExchanger:
         flow_arrangement: str | None = None,
 
         # Outside pressure-drop provider selection:
-        euler_provider: str | EulerProvider = "kern",
+        euler_provider: str | EulerProvider = "zukauskas",
 
     ) -> HXResult:
         # Use bundle's flow_arrangement if not provided
@@ -264,7 +264,7 @@ class BareTubeHeatExchanger:
                 n_rows=self.bundle.n_rows,
                 props=outside_props,
                 euler_provider=euler_provider,
-)
+            )
         else:
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = (
                 float("nan"),

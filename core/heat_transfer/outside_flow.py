@@ -13,7 +13,7 @@
 #   • Geometry-consistent velocity definitions:
 #       V_inf (approach) and V_max based on minimum free-flow area concept
 #   • Pressure-drop integration through outside_pressure_drop dispatcher:
-#       selectable euler_provider = "zukauskas" | "kern" | "esdu" | custom provider
+#       selectable euler_provider = "zukauskas" | "esdu" | custom provider
 #
 # All correlations used here are taken from OPEN LITERATURE sources:
 #
@@ -512,7 +512,7 @@ def outside_flow_from_mass_flow(
     ----------
     euler_provider:
         Either:
-          - built-in provider name: "zukauskas", "kern", "esdu"
+                    - built-in provider name: "zukauskas", "esdu"
           - custom provider object implementing EulerProvider
 
     Returns
@@ -578,6 +578,16 @@ def outside_flow_from_mass_flow(
     ST_over_D = tube_pitch_transverse / tube_outer_diameter
     SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
     Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)
+
+    pressure_drop_geometry_meta = dict(pressure_drop_geometry_meta or {})
+    pressure_drop_geometry_meta.setdefault("m_dot_total", m_dot)
+    pressure_drop_geometry_meta.setdefault("rho", props.rho)
+    pressure_drop_geometry_meta.setdefault("mu", props.mu)
+    pressure_drop_geometry_meta.setdefault("v_ref", V_ref_dp)
+    pressure_drop_geometry_meta.setdefault("tube_outer_diameter", tube_outer_diameter)
+    pressure_drop_geometry_meta.setdefault("tube_pitch_transverse", tube_pitch_transverse)
+    pressure_drop_geometry_meta.setdefault("tube_pitch_longitudinal", tube_pitch_longitudinal)
+    pressure_drop_geometry_meta.setdefault("mu_bulk", props.mu)
 
     request = EulerRequest(
         Re=Re_dp,

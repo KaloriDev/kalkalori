@@ -16,7 +16,6 @@
 #
 # Built-in providers currently supported:
 #   - "zukauskas" : implemented open Zhukauskas/Ulinskas-style provider
-#   - "kern"      : open fallback placeholder
 #   - "esdu"      : reserved for finned-tube-bank implementation
 #
 # External provider support:
@@ -78,10 +77,11 @@ class EulerRequest:
     geometry_meta:
         Optional extensible payload for future models and advanced corrections.
         Currently recognized optional keys for Zukauskas provider:
-          - "mu_wall": dynamic viscosity at wall / surface condition
-          - "mu_bulk": dynamic viscosity at bulk condition
-          - "alpha_deg": rotated-crossflow correction angle
-          - "beta_deg": incidence-angle correction
+        - "mu_wall": dynamic viscosity at wall / surface condition
+        - "mu_bulk": dynamic viscosity at bulk condition
+        - "alpha_deg": rotated-crossflow correction angle
+        - "beta_deg": incidence-angle correction
+
     """
     Re: float
     ST_over_D: float
@@ -400,48 +400,6 @@ class ZukauskasEulerProvider:
         )
 
 
-class KernEulerProvider:
-    """
-    Open fallback provider with Kern-style intent.
-
-    Current status:
-      - simplified engineering placeholder
-      - deliberately more conservative / lower-fidelity than target bare-bank model
-      - useful as alternative selectable backend and future comparison point
-    """
-
-    def evaluate(self, request: EulerRequest) -> EulerResult:
-        _validate_request(request)
-
-        Re = request.Re
-        a = request.ST_over_D
-        n_rows = request.n_rows
-
-        if Re < 1.0e2:
-            eu_per_row_base = 1.60
-        elif Re < 1.0e3:
-            eu_per_row_base = 1.15
-        elif Re < 1.0e4:
-            eu_per_row_base = 0.85
-        elif Re < 1.0e5:
-            eu_per_row_base = 0.68
-        else:
-            eu_per_row_base = 0.58
-
-        geom_factor = max(0.75, min(1.60, 1.15 / (a - 1.0)))
-        eu_total = eu_per_row_base * geom_factor * float(n_rows)
-
-        return EulerResult(
-            Eu=eu_total,
-            source="open_gpl_builtin",
-            model="kern",
-            validity_note=(
-                "Open placeholder provider with Kern-style role; treat as comparative "
-                "engineering estimate, not as validated final bare-tube-bank standard."
-            ),
-        )
-
-
 class EsduEulerProvider:
     """
     Reserved provider for future ESDU-based finned-tube-bank pressure drop.
@@ -475,14 +433,12 @@ def _resolve_builtin_provider(euler_provider: str) -> EulerProvider:
 
     if name == "zukauskas":
         return ZukauskasEulerProvider()
-    if name == "kern":
-        return KernEulerProvider()
     if name == "esdu":
         return EsduEulerProvider()
 
     raise ValueError(
         f"Unknown euler_provider='{euler_provider}'. "
-        "Supported built-in providers: 'zukauskas', 'kern', 'esdu', "
+        "Supported built-in providers: 'zukauskas', 'esdu', "
         "or pass a custom provider object implementing EulerProvider."
     )
 
@@ -723,15 +679,6 @@ def check_outside_dp_applicability(
                             severity="info",
                         )
                     )
-        elif provider_name == "kern":
-            warnings.append(
-                make_warning(
-                    code="outside_dp_kern_selected",
-                    message="outside_dp: Kern provider selected; treat as alternative engineering estimate, not final high-fidelity bare-bank standard.",
-                    source="outside_dp",
-                    severity="info",
-                )
-            )
         elif provider_name == "esdu":
             if not request.is_finned:
                 warnings.append(
