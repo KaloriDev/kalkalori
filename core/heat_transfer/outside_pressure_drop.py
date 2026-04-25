@@ -16,6 +16,7 @@
 #
 # Built-in providers currently supported:
 #   - "zukauskas" : implemented open Zhukauskas/Ulinskas-style provider
+#   - "gaddis_gnielinski" : implemented open Gaddis-Gnielinski provider
 #   - "esdu"      : reserved for finned-tube-bank implementation
 #
 # External provider support:
@@ -26,6 +27,9 @@
 #   - Zhukauskas, A. (1972), "Heat Transfer from Tubes in Crossflow",
 #     Advances in Heat Transfer, Vol. 8
 #   - Zhukauskas, A., Ulinskas, R. (1988), Heat Transfer in Tube Banks in Crossflow
+#   - Gaddis, E.S., Gnielinski, V. (1985),
+#     "Pressure drop in cross flow across tube bundles",
+#     Int. Chem. Eng., Vol. 25, No. 1, pp. 1-15.
 #   - Open implementation reference:
 #       TORCHE (FAST Research Group), dP_Zu / Zhukauskas pressure-drop model
 #
@@ -424,6 +428,186 @@ class EsduEulerProvider:
         )
 
 
+class GaddisGnielinskiEulerProvider:
+    """
+    Open Gaddis-Gnielinski pressure-drop provider for bare tube banks in crossflow.
+
+    Literature basis
+    ----------------
+    - Gaddis, E.S., Gnielinski, V. (1985),
+      "Pressure drop in cross flow across tube bundles",
+      International Chemical Engineering, Vol. 25, No. 1, pp. 1-15.
+    - VDI Heat Atlas, Chapter L1.
+    - Open implementation reference:
+      TORCHE, function dP_GG.
+
+    Model structure
+    ---------------
+    The original model computes pressure drop as:
+
+        Δp = 0.5 * D_tot * N_eff * rho * V_max^2
+
+    Therefore, when the core pressure-drop API is Euler-based and uses
+    the same V_max reference velocity:
+
+        Eu = Δp / (0.5 * rho * V_max^2)
+        Eu = D_tot * N_eff
+
+    Important
+    ---------
+    - Re must be based on V_max and tube outside diameter.
+    - pressure_drop_from_euler() must use the same V_max reference velocity.
+    - This provider is for bare tube banks, not finned tube banks.
+    """
+
+    def evaluate(self, request: EulerRequest) -> EulerResult:
+        _validate_request(request)
+
+        if request.is_finned:
+            raise ValueError(
+                "GaddisGnielinskiEulerProvider is intended for bare tube banks, not finned tube banks."
+            )
+
+        Re = request.Re
+        a = request.ST_over_D
+        b = request.SL_over_D
+        N = request.n_rows
+        layout = request.layout
+
+        if Re <= 0.0:
+            raise ValueError("Re must be positive.")
+        if a <= 1.0:
+            raise ValueError("ST_over_D must be > 1.0.")
+        if b <= 0.0:
+            raise ValueError("SL_over_D must be positive.")
+        if 4.0 * a * b <= math.pi:
+            raise ValueError(
+                "Invalid geometry for Gaddis-Gnielinski: 4*a*b must be greater than pi."
+            )
+
+        if layout == "inline":
+            d_tot = self._drag_total_inline(Re, a, b, N)
+            n_eff = float(N)
+
+        elif layout == "staggered":
+            # TORCHE reference implementation reduces the effective number
+            # of rows by one for staggered arrangements.
+            n_eff_int = N - 1
+            if n_eff_int <= 0:
+                raise ValueError(
+                    "Gaddis-Gnielinski staggered model requires at least 2 physical rows."
+                )
+            d_tot = self._drag_total_staggered(Re, a, b, n_eff_int)
+            n_eff = float(n_eff_int)
+
+        else:
+            raise ValueError("layout must be 'inline' or 'staggered'.")
+
+        eu_total = d_tot * n_eff
+
+        if eu_total < 0.0:
+            eu_total = 0.0
+
+        return EulerResult(
+            Eu=eu_total,
+            source="open_gpl_builtin",
+            model="gaddis_gnielinski",
+            validity_note=(
+                "Open Gaddis-Gnielinski pressure-drop provider for bare tube banks. "
+                "Use with Re and pressure-drop dynamic pressure both referenced to V_max."
+            ),
+        )
+
+    @staticmethod
+    def _f_nt_inline(a: float, n_rows: int) -> float:
+        if 5 < n_rows <= 10:
+            return (1.0 / (a * a)) * (1.0 / float(n_rows) - 0.1)
+        if n_rows > 10:
+            return 0.0
+        raise ValueError(
+            "Gaddis-Gnielinski inline model is intended for more than 5 rows."
+        )
+
+    @staticmethod
+    def _f_nt_staggered(a: float, c: float, n_eff: int) -> float:
+        if 5 < n_eff <= 10:
+            return (2.0 * (c - 1.0) / a * (a - 1.0) ** 2) * (
+                1.0 / float(n_eff) - 0.1
+            )
+        if n_eff > 10:
+            return 0.0
+        raise ValueError(
+            "Gaddis-Gnielinski staggered model is intended for more than 5 effective rows."
+        )
+
+    def _drag_total_inline(self, Re: float, a: float, b: float, n_rows: int) -> float:
+        d_lam = (
+            280.0
+            * math.pi
+            * ((math.sqrt(b) - 0.6) ** 2 + 0.75)
+            / ((a ** 1.6) * (4.0 * a * b - math.pi) * Re)
+        )
+
+        f_nt = self._f_nt_inline(a, n_rows)
+
+        f_ti = (
+            0.22
+            + 1.2
+            * (1.0 - (0.94 / b)) ** 0.6
+            / ((a - 0.85) ** 1.3)
+        ) * (10.0 ** (0.47 * (b / a - 1.5))) + 0.03 * (a - 1.0) * (b - 1.0)
+
+        d_turb = f_ti / (Re ** (0.1 * b / a))
+
+        d_tot = d_lam + (d_turb + f_nt) * (
+            1.0 - math.exp(-(Re + 1000.0) / 2000.0)
+        )
+
+        return d_tot
+
+    def _drag_total_staggered(self, Re: float, a: float, b: float, n_eff: int) -> float:
+        c = math.sqrt((a * 0.5) ** 2 + b * b)
+
+        # Same branch logic as open TORCHE dP_GG implementation:
+        # if b is tight enough, the diagonal passage controls; otherwise transverse passage controls.
+        if b < 0.5 * math.sqrt(2.0 * a + 1.0):
+            characteristic_spacing = c
+
+            d_lam = (
+                280.0
+                * math.pi
+                * ((math.sqrt(b) - 0.6) ** 2 + 0.75)
+                / ((characteristic_spacing ** 1.6) * (4.0 * a * b - math.pi) * Re)
+            )
+
+            f_nt = self._f_nt_staggered(a, c, n_eff)
+
+        else:
+            d_lam = (
+                280.0
+                * math.pi
+                * ((math.sqrt(b) - 0.6) ** 2 + 0.75)
+                / ((a ** 1.6) * (4.0 * a * b - math.pi) * Re)
+            )
+
+            f_nt = self._f_nt_inline(a, n_eff)
+
+        f_ts = (
+            2.5
+            + 1.2 / ((a - 0.85) ** 1.08)
+            + 0.4 * (b / a - 1.0) ** 3
+            - 0.01 * (a / b - 1.0) ** 3
+        )
+
+        d_turb = f_ts / (Re ** 0.25)
+
+        d_tot = d_lam + (d_turb + f_nt) * (
+            1.0 - math.exp(-(Re + 200.0) / 1000.0)
+        )
+
+        return d_tot
+
+
 # -------------------------------------------------------------------------
 # Provider factory / dispatcher
 # -------------------------------------------------------------------------
@@ -433,12 +617,14 @@ def _resolve_builtin_provider(euler_provider: str) -> EulerProvider:
 
     if name == "zukauskas":
         return ZukauskasEulerProvider()
+    if name in ("gaddis_gnielinski", "gaddis-gnielinski", "gg"):
+        return GaddisGnielinskiEulerProvider()
     if name == "esdu":
         return EsduEulerProvider()
 
     raise ValueError(
         f"Unknown euler_provider='{euler_provider}'. "
-        "Supported built-in providers: 'zukauskas', 'esdu', "
+        "Supported built-in providers: 'zukauskas', 'gaddis_gnielinski', 'esdu', "
         "or pass a custom provider object implementing EulerProvider."
     )
 
@@ -677,6 +863,80 @@ def check_outside_dp_applicability(
                             message="outside_dp: current open Zukauskas provider is strongest near staggered SL/D = 1.25, 1.5, 2.0 and uses interpolation/clamping outside these points.",
                             source="outside_dp",
                             severity="info",
+                        )
+                    )
+        elif provider_name in ("gaddis_gnielinski", "gaddis-gnielinski", "gg"):
+            if request.is_finned:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_gg_finned_not_supported",
+                        message="outside_dp: Gaddis-Gnielinski provider is intended for bare tube banks, not finned tube banks.",
+                        source="outside_dp",
+                        severity="critical",
+                    )
+                )
+
+            if request.Re < 1.0:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_gg_re_below_range",
+                        message="outside_dp: Gaddis-Gnielinski correlation is below its reported lower Reynolds range.",
+                        source="outside_dp",
+                        severity="critical",
+                    )
+                )
+            elif request.Re > 3.5e5:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_gg_re_above_nominal_range",
+                        message="outside_dp: Gaddis-Gnielinski nominal range is commonly reported up to about Re = 3.5e5; verify extrapolation.",
+                        source="outside_dp",
+                        severity="warning",
+                    )
+                )
+
+            if request.n_rows <= 5:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_gg_few_rows",
+                        message="outside_dp: Gaddis-Gnielinski implementation is intended for more than 5 rows; result may be invalid or provider may raise.",
+                        source="outside_dp",
+                        severity="critical",
+                    )
+                )
+
+            if not use_vmax_for_dp:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_gg_velocity_reference_nonstandard",
+                        message="outside_dp: Gaddis-Gnielinski provider expects Re and Eu dynamic pressure referenced to V_max.",
+                        source="outside_dp",
+                        severity="critical",
+                    )
+                )
+
+            if request.layout == "inline":
+                if request.Re < 1.0e4 and (
+                    request.ST_over_D not in (1.25, 1.5, 2.0)
+                    or request.SL_over_D not in (1.25, 1.5, 2.0)
+                ):
+                    warnings.append(
+                        make_warning(
+                            code="outside_dp_gg_inline_low_re_pitch_grid",
+                            message="outside_dp: for Re < 1e4, Gaddis-Gnielinski inline data are strongest near a*b = 1.25*1.25, 1.5*1.5, 2.0*2.0.",
+                            source="outside_dp",
+                            severity="info",
+                        )
+                    )
+            else:
+                c = (0.25 * request.ST_over_D * request.ST_over_D + request.SL_over_D * request.SL_over_D) ** 0.5
+                if request.Re >= 1.0e4 and c < 1.25:
+                    warnings.append(
+                        make_warning(
+                            code="outside_dp_gg_staggered_c_small",
+                            message="outside_dp: Gaddis-Gnielinski staggered high-Re range expects diagonal pitch ratio c >= 1.25.",
+                            source="outside_dp",
+                            severity="warning",
                         )
                     )
         elif provider_name == "esdu":

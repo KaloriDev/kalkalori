@@ -13,7 +13,7 @@
 #   • Geometry-consistent velocity definitions:
 #       V_inf (approach) and V_max based on minimum free-flow area concept
 #   • Pressure-drop integration through outside_pressure_drop dispatcher:
-#       selectable euler_provider = "zukauskas" | "esdu" | custom provider
+#       selectable euler_provider = "zukauskas" | "gaddis_gnielinski" | "esdu" | custom provider
 #
 # All correlations used here are taken from OPEN LITERATURE sources:
 #
@@ -512,7 +512,7 @@ def outside_flow_from_mass_flow(
     ----------
     euler_provider:
         Either:
-                    - built-in provider name: "zukauskas", "esdu"
+                    - built-in provider name: "zukauskas", "gaddis_gnielinski", "esdu"
           - custom provider object implementing EulerProvider
 
     Returns
