@@ -17,7 +17,23 @@ The project follows **Semantic Versioning (SemVer)**:
 - Preparation for wet economizer 0D model
 
 ---
+## [0.4.x] — Outside Flow Model Accuracy
 
+### Status
+Implemented in the current development line.
+
+### Fixed
+- Corrected moist-air enthalpy units in the PsychroLib adapter.
+
+### Changed
+- Added clearer psychrometric helper functions and SI unit docstrings.
+- Kept backward-compatible psychrometric wrappers.
+
+### Notes
+- Starts the v0.4.x property-layer line.
+- No wet economizer solver added yet.
+
+---
 ## [0.3.x] — Outside Flow Model Accuracy
 
 ### Status
@@ -108,88 +124,6 @@ Implemented in the current development line.
 
 ---
 
-## Planned Releases
-
-### 0.4.x — Reserved / Deferred Internal Hydraulic Refinement
-
-This version range is currently reserved.
-
-Possible future scope:
-- refined internal-side pressure drop
-- return-bend / header losses
-- detailed tube-side hydraulic modelling
-- internal-side applicability and warnings
-
-This stage is intentionally deferred because the current priority is wet economizer development.
-
----
-
-### 0.5.x — Property Layer for Wet Economizer
-
-Planned scope:
-- moist air property layer
-- PsychroLib adapter
-- water / condensate / tube-side media property adapter
-- CoolProp / IAPWS integration where appropriate
-- dew point and saturation checks
-- condensation onset utilities
-
----
-
-### 0.6.x — Phase Change / Wet Economizer 0D
-
-Planned scope:
-- moisture condensation from outside air
-- sensible + latent heat balance
-- condensate mass flow estimate
-- wet economizer 0D model
-- applicability and warnings for wet operation
-
----
-
-### 0.7.x — Finned Tubes
-
-Planned scope:
-- finned tube geometry
-- fin efficiency
-- corrected outside heat transfer area
-- outside-side heat transfer and pressure drop corrections for finned tubes
-
----
-
-### 0.8.x — Non-Standard Tube Geometries
-
-Planned scope:
-- elliptical tubes
-- flattened tubes
-- proprietary or manufacturer-specific tube profiles
-- empirical correction interface
-- possible commercial extension points for licensed datasets
-
----
-
-## Future Major Releases
-
-### 1.0.0 — Production-Ready 0D Engine
-
-Target:
-- stable public core API
-- validated 0D models
-- documented applicability limits
-- engineering-grade reliability within declared scope
-
----
-
-### 2.0.0 — Segmented / Distributed Solver
-
-Target:
-- segmented 1D solver
-- local property variation
-- local dry / wet regions
-- HTRI-like series, parallel, and longitudinal arrangements
-- iterative solution architecture
-
----
 
 ## Versioning Notes
 

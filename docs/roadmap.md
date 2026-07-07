@@ -45,7 +45,7 @@ Interpretation in KalKalori:
 
 ---
 
-### v0.5.x — Fluid Properties (CoolProp / IAPWS)
+### v0.4.x — Fluid Properties (CoolProp / IAPWS)
 
 **Goal:**  
 Move beyond constant-property assumptions.
@@ -62,7 +62,7 @@ Improved realism without introducing segmentation.
 
 ---
 
-### v0.6.x — Phase Change (0D)
+### v0.5.x — Phase Change (0D)
 
 **Goal:**  
 Support phase-change phenomena within a lumped-parameter framework.
@@ -78,7 +78,7 @@ This is a major functional extension, but **not** a new modelling paradigm.
 
 ---
 
-### v0.7.x — Finned Tubes
+### v0.6.x — Finned Tubes
 
 **Goal:**  
 Extend geometry support to real-world air coolers.
@@ -94,7 +94,7 @@ Support for common industrial air-cooled heat exchangers.
 
 ---
 
-### v0.8.x — Non-Standard Tube Geometries (Empirical)
+### v0.7.x — Non-Standard Tube Geometries (Empirical)
 
 **Goal:**  
 Enable modelling of geometries that cannot be described purely theoretically.
