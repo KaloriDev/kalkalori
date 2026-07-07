@@ -17,7 +17,17 @@ The project follows **Semantic Versioning (SemVer)**:
 - Preparation for wet economizer 0D model
 
 ---
-## [0.4.x] — Outside Flow Model Accuracy
+## v0.4.2 - IAPWS Water/Steam Provider
+
+### Added
+- Added IAPWS-IF97 based water/steam property provider.
+- Added `iapws` as a project dependency.
+
+### Notes
+- No wet economizer solver or phase-change heat balance added yet.
+
+---
+## [0.4.1] — Outside Flow Model Accuracy
 
 ### Status
 Implemented in the current development line.
