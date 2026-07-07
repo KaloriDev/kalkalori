@@ -22,16 +22,20 @@ The project follows **Semantic Versioning (SemVer)**:
 ### Status
 Implemented in the current development line.
 
-### Fixed
-- Corrected moist-air enthalpy units in the PsychroLib adapter.
+### Added
+- Added `MoistAirState` and saturated moist-air state helpers.
+- Added simple condensation onset check with `ModelWarning` support.
+- Added minimal single-phase fluid property structures and constant property provider.
 
 ### Changed
+- Corrected moist-air enthalpy units in the PsychroLib adapter.
 - Added clearer psychrometric helper functions and SI unit docstrings.
 - Kept backward-compatible psychrometric wrappers.
 
 ### Notes
 - Starts the v0.4.x property-layer line.
 - No wet economizer solver added yet.
+- No wet economizer solver or phase-change heat balance added yet.
 
 ---
 ## [0.3.x] — Outside Flow Model Accuracy
