@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.3.6`  
+**Current version:** `v0.4.3`  
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, complete thermal and hydraulic balance.
 
