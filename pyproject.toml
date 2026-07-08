@@ -1,9 +1,15 @@
 [project]
 name = "kalkalori"
-version = "0.4.3"
+version = "0.4.4"
 description = "KalKalori — Heat Exchanger Open Engine"
 requires-python = ">=3.10"
 
 dependencies = [
     "psychrolib>=2.5.0",
+    "iapws>=1.5.5",
+]
+
+[project.optional-dependencies]
+coolprop = [
+    "CoolProp>=7.0.0",
 ]

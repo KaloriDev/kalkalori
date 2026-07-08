@@ -9,3 +9,19 @@ This project uses the following third-party libraries:
 
 PsychroLib is used as an external dependency and is not modified or redistributed
 as part of the KalKalori source code.
+
+### iapws
+- License: MIT
+- Repository: https://github.com/jjgomera/iapws
+- Purpose: IAPWS-IF97 water/steam property calculations
+
+iapws is used as an external dependency and is not modified or redistributed
+as part of the KalKalori source code.
+
+### CoolProp
+- License: MIT
+- Repository: https://github.com/CoolProp/CoolProp
+- Purpose: Optional thermophysical property backend for pure fluids and mixtures
+
+CoolProp is used as an optional external dependency and is not modified or
+redistributed as part of the KalKalori source code.

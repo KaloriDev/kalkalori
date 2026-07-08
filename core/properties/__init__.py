@@ -30,6 +30,15 @@ from core.properties.moist_air_transport import (
     moist_air_transport_result_from_t_rh,
 )
 
+from core.properties.coolprop_backend import (
+    CoolPropFluidProvider,
+    CoolPropGasMixtureProvider,
+    CoolPropProperties,
+    build_coolprop_mixture_string,
+    coolprop_props,
+    normalize_mole_fractions,
+)
+
 __all__ = [
     "FluidTransportProperties",
     "PropertyProvider",
@@ -51,4 +60,10 @@ __all__ = [
     "moist_air_transport_props_from_t_rh",
     "moist_air_transport_result_from_state",
     "moist_air_transport_result_from_t_rh",
+    "CoolPropFluidProvider",
+    "CoolPropGasMixtureProvider",
+    "CoolPropProperties",
+    "build_coolprop_mixture_string",
+    "coolprop_props",
+    "normalize_mole_fractions",
 ]

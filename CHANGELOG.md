@@ -17,6 +17,24 @@ The project follows **Semantic Versioning (SemVer)**:
 - Preparation for wet economizer 0D model
 
 ---
+## v0.4.4 - Optional CoolProp Backend
+
+### Added
+- Added optional CoolProp backend for pure fluids, pseudo-pure fluids, and CoolProp fluid-string mixtures.
+- Added CoolProp fluid provider compatible with the existing property-provider interface.
+- Added CoolProp gas-mixture provider based on mole-fraction component definitions.
+- Added mixture-string builder and mole-fraction normalization helper for CoolProp mixtures.
+- Added functional CoolProp test notebook for pure fluids, water comparison, mixtures, and adapter usage.
+- Added optional `coolprop` dependency group in `pyproject.toml` and `requirements-coolprop.txt`.
+
+### Changed
+- Added `iapws` to `pyproject.toml` dependencies to match the existing water/steam provider requirements.
+
+### Notes
+- CoolProp remains an optional backend and is not required for the base property layer.
+- No wet economizer solver or phase-change heat balance added yet.
+
+---
 ## v0.4.3 - Property-Driven Fluid Inputs
 ### Added
 - Added adapters between common transport properties and existing heat-transfer FluidProps containers.

@@ -1,2 +1,3 @@
 psychrolib>=2.5.0
 iapws>=1.5.5
+CoolProp>=7.0.0
