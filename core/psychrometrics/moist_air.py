@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from core.psychrometrics.psychrolib_adapter import (
     dew_point_from_t_rh,
     dew_point_from_t_w,
+    humidity_ratio_from_g_per_kg_dry_air,
     humidity_ratio_from_t_rh,
     moist_air_density_from_t_w,
     moist_air_enthalpy_from_t_w,
@@ -127,3 +128,28 @@ def saturated_moist_air_state(T: float, p: float) -> MoistAirState:
         W=W_sat,
         p=p,
     )
+
+
+def moist_air_state_from_t_w_g_per_kg_da(
+    T: float,
+    W_g_per_kg_da: float,
+    p: float,
+) -> MoistAirState:
+    """Build moist-air state from dry-bulb temperature and humidity ratio in g/kg.
+
+    Args:
+        T: Dry-bulb temperature [K].
+        W_g_per_kg_da: Humidity ratio [g_water/kg_dry_air].
+        p: Total pressure [Pa].
+
+    Returns:
+        MoistAirState.
+
+    Notes:
+        This input form is often more practical for hot gas mixtures than RH,
+        especially above the water boiling temperature at the given pressure.
+
+    Ref: ASHRAE Fundamentals / PsychroLib.
+    """
+    W = humidity_ratio_from_g_per_kg_dry_air(W_g_per_kg_da)
+    return moist_air_state_from_t_w(T=T, W=W, p=p)

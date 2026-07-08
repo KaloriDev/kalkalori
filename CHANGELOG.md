@@ -17,6 +17,21 @@ The project follows **Semantic Versioning (SemVer)**:
 - Preparation for wet economizer 0D model
 
 ---
+## v0.4.3 - Property-Driven Fluid Inputs
+### Added
+- Added adapters between common transport properties and existing heat-transfer FluidProps containers.
+- Added mean-temperature property evaluation helper.
+- Added moist-air transport property helper for outside-flow calculations.
+- Added psychrometric wet-process helpers for surface saturation, condensable water, and enthalpy-drop limits.
+- Extended IAPWS-IF97 water/steam property access to support T+p, p+x, and T+x input modes.
+- Added high-temperature moist-air handling for cases where saturation state is not defined at given T and p.
+- Added humidity-ratio helpers for g_water/kg_dry_air input and display.
+
+### Notes
+- No heat-transfer solver refactor added yet.
+- No wet economizer solver or phase-change heat balance added yet.
+
+---
 ## v0.4.2 - IAPWS Water/Steam Provider
 
 ### Added
