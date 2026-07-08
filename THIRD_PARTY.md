@@ -11,7 +11,7 @@ PsychroLib is used as an external dependency and is not modified or redistribute
 as part of the KalKalori source code.
 
 ### iapws
-- License: MIT
+- License: GPLv3
 - Repository: https://github.com/jjgomera/iapws
 - Purpose: IAPWS-IF97 water/steam property calculations
 
