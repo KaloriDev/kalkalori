@@ -6,85 +6,41 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
-
-## [Unreleased]
-
-### Planned
-- Property layer required for wet economizer modelling
-- Psychrometric property adapter
-- Fluid property adapter for water / condensate / tube-side media
-- Condensation onset checks
-- Preparation for wet economizer 0D model
-
----
-## v0.4.4 - Optional CoolProp Backend
+## v0.4.x - Property Layer Foundation
 
 ### Added
-- Added optional CoolProp backend for pure fluids, pseudo-pure fluids, and CoolProp fluid-string mixtures.
-- Added CoolProp fluid provider compatible with the existing property-provider interface.
-- Added CoolProp gas-mixture provider based on mole-fraction component definitions.
-- Added mixture-string builder and mole-fraction normalization helper for CoolProp mixtures.
-- Added functional CoolProp test notebook for pure fluids, water comparison, mixtures, and adapter usage.
-- Added optional `coolprop` dependency group in `pyproject.toml` and `requirements-coolprop.txt`.
+
+- Added initial property layer for future wet economizer and gas-gas calculations.
+- Added PsychroLib-based moist-air helpers.
+- Added dew-point, saturation, and condensation-onset helpers for moist air.
+- Added IAPWS-IF97 water/steam property provider.
+- Added optional CoolProp backend for pure fluids and mixtures.
+- Added CoolProp backend availability checks for `HEOS` and optional `REFPROP`.
+- Added gas-mixture property provider with mole, volume, and mass composition bases.
+- Added gas-phase imposition for gas-mixture calculations.
+- Added dedicated dry-air property provider.
+- Added common mass-flow / actual-volume-flow helpers.
+- Added helper for converting dry gas composition plus water ratio to `GasMixtureSpec`.
+- Added property-model selection documentation.
+- Added functional test notebooks for moist air, water/steam, CoolProp, dry air, and gas mixtures.
 
 ### Changed
-- Added `iapws` to `pyproject.toml` dependencies to match the existing water/steam provider requirements.
+
+- Corrected moist-air enthalpy unit handling.
+- Clarified SI unit conventions across the property layer.
+- Clarified when to use dry air, moist air, gas mixtures, and water/steam property paths.
+- Clarified third-party dependency and licensing notes.
 
 ### Notes
-- CoolProp remains an optional backend and is not required for the base property layer.
-- No wet economizer solver or phase-change heat balance added yet.
 
----
-## v0.4.3 - Property-Driven Fluid Inputs
-### Added
-- Added adapters between common transport properties and existing heat-transfer FluidProps containers.
-- Added mean-temperature property evaluation helper.
-- Added moist-air transport property helper for outside-flow calculations.
-- Added psychrometric wet-process helpers for surface saturation, condensable water, and enthalpy-drop limits.
-- Extended IAPWS-IF97 water/steam property access to support T+p, p+x, and T+x input modes.
-- Added high-temperature moist-air handling for cases where saturation state is not defined at given T and p.
-- Added humidity-ratio helpers for g_water/kg_dry_air input and display.
+- `v0.4.x` focuses on the property foundation, not on full heat exchanger solver refactoring.
+- High-temperature humid gas should be represented explicitly as a gas mixture with `H2O` as a gas-phase component.
+- Gas-mixture calculations do not model condensation, latent heat, wet-surface heat transfer, or water removal.
+- Large-temperature-change gas-gas rating requires iterative mean-property calculation and is planned for `v0.5.x`.
 
-### Notes
-- No heat-transfer solver refactor added yet.
-- No wet economizer solver or phase-change heat balance added yet.
-
----
-## v0.4.2 - IAPWS Water/Steam Provider
-
-### Added
-- Added IAPWS-IF97 based water/steam property provider.
-- Added `iapws` as a project dependency.
-
-### Notes
-- No wet economizer solver or phase-change heat balance added yet.
-
----
-## [0.4.1] — Outside Flow Model Accuracy
-
-### Status
-Implemented in the current development line.
-
-### Added
-- Added `MoistAirState` and saturated moist-air state helpers.
-- Added simple condensation onset check with `ModelWarning` support.
-- Added minimal single-phase fluid property structures and constant property provider.
-
-### Changed
-- Corrected moist-air enthalpy units in the PsychroLib adapter.
-- Added clearer psychrometric helper functions and SI unit docstrings.
-- Kept backward-compatible psychrometric wrappers.
-
-### Notes
-- Starts the v0.4.x property-layer line.
-- No wet economizer solver added yet.
-- No wet economizer solver or phase-change heat balance added yet.
 
 ---
 ## [0.3.x] — Outside Flow Model Accuracy
-
-### Status
-Implemented in the current development line.
 
 ### Added
 - Improved outside-side forced-flow model for bare tube bundles

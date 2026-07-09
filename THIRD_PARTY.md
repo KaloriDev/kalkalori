@@ -25,3 +25,12 @@ as part of the KalKalori source code.
 
 CoolProp is used as an optional external dependency and is not modified or
 redistributed as part of the KalKalori source code.
+
+### REFPROP
+
+- License: proprietary / NIST
+- Purpose: Optional high-accuracy thermophysical property backend
+
+REFPROP is not a dependency of KalKalori and is not distributed with this
+project. If selected as a CoolProp backend, it must be installed, licensed,
+and configured locally by the user.

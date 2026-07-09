@@ -169,3 +169,10 @@ Results must always be validated against:
 - experimental or vendor data where required.
 
 The authors assume no liability for the use of results in real-world designs.
+
+
+## Property Model Selection
+
+Before selecting a property provider, see:
+
+[`docs/property_models.md`](docs/property_models.md)

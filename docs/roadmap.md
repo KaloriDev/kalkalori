@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.4.3`  
+**Current version:** `v0.4.5`  
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, complete thermal and hydraulic balance.
 
@@ -45,24 +45,17 @@ Interpretation in KalKalori:
 
 ---
 
-### v0.4.x — Fluid Properties (CoolProp / IAPWS)
+### v0.5.x - Iterative Mean-Property HX Rating
 
 **Goal:**  
-Move beyond constant-property assumptions.
+Add an iterative mean-property heat exchanger rating algorithm.
 
 **Focus areas:**
-- optional integration with:
-  - CoolProp (general fluids)
-  - IAPWS (water/steam)
-- temperature- and pressure-dependent properties
-- pointwise (lumped) property evaluation — still 0D
-
-**Outcome:**  
-Improved realism without introducing segmentation.
+- Replace inlet-property-only rating with mean-bulk-property iteration.
 
 ---
 
-### v0.5.x — Phase Change (0D)
+### v0.6.x — Phase Change (0D)
 
 **Goal:**  
 Support phase-change phenomena within a lumped-parameter framework.
@@ -78,7 +71,7 @@ This is a major functional extension, but **not** a new modelling paradigm.
 
 ---
 
-### v0.6.x — Finned Tubes
+### v0.7.x — Finned Tubes
 
 **Goal:**  
 Extend geometry support to real-world air coolers.
@@ -94,7 +87,7 @@ Support for common industrial air-cooled heat exchangers.
 
 ---
 
-### v0.7.x — Non-Standard Tube Geometries (Empirical)
+### v0.8.x — Non-Standard Tube Geometries (Empirical)
 
 **Goal:**  
 Enable modelling of geometries that cannot be described purely theoretically.
