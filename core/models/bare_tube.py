@@ -404,3 +404,52 @@ class BareTubeHeatExchanger:
         )
 
 
+
+    def rate(
+        self,
+        inside: "RatingSideInput",
+        outside: "RatingSideInput",
+        *,
+        iterate: bool = True,
+        flow_arrangement: str | None = None,
+        K_inlet: float = 0.5,
+        K_outlet: float = 1.0,
+        K_turn: float = 1.5,
+        euler_provider: str = "zukauskas",
+        max_iter: int = 30,
+        temperature_tolerance_K: float = 0.05,
+        relative_duty_tolerance: float = 1e-4,
+        relaxation_factor: float = 0.5,
+    ) -> "HXRatingResult":
+        """Rate this exchanger, iterating on mean-bulk properties by default.
+
+        This is the intended default entry point (v0.5.x). Properties on each
+        side are recomputed at the mean bulk temperature until duty and both
+        outlet temperatures converge.
+
+        Forced/averaged properties: if both ``inside.provider`` and
+        ``outside.provider`` are ``ConstantPropertyProvider`` (or
+        ``iterate=False``), the supplied properties are treated as already
+        averaged and a single ``solve`` pass is performed (``converged=True``,
+        ``iterations=1``).
+
+        See ``core.models.mean_property_rating.run_rating`` for the full
+        algorithm, arguments and result fields.
+        """
+        from core.models.mean_property_rating import run_rating
+
+        return run_rating(
+            self,
+            inside,
+            outside,
+            iterate=iterate,
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet,
+            K_outlet=K_outlet,
+            K_turn=K_turn,
+            euler_provider=euler_provider,
+            max_iter=max_iter,
+            temperature_tolerance_K=temperature_tolerance_K,
+            relative_duty_tolerance=relative_duty_tolerance,
+            relaxation_factor=relaxation_factor,
+        )

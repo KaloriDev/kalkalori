@@ -15,6 +15,11 @@ from .bare_tube import (
     HXTubeSideHydraulicResults,
     HXOutSideHydraulicResults,
 )
+from .mean_property_rating import (
+    RatingSideInput,
+    HXRatingResult,
+    run_rating,
+)
 
 __all__ = [
     "BareTubeHeatExchanger",
@@ -22,4 +27,7 @@ __all__ = [
     "HXOutSideThermalResults",
     "HXTubeSideHydraulicResults",
     "HXOutSideHydraulicResults",
+    "RatingSideInput",
+    "HXRatingResult",
+    "run_rating",
 ]
