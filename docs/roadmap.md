@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.4.5`  
+**Current version:** `v0.5.1`  
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, complete thermal and hydraulic balance.
 
@@ -45,13 +45,18 @@ Interpretation in KalKalori:
 
 ---
 
-### v0.5.x - Iterative Mean-Property HX Rating
+### v0.5.x - Iterative Mean-Property HX Simulation & Rating
 
 **Goal:**  
-Add an iterative mean-property heat exchanger rating algorithm.
+Add an iterative mean-property heat exchanger simulation, and split
+Simulation from Rating along design-practice lines.
 
 **Focus areas:**
-- Replace inlet-property-only rating with mean-bulk-property iteration.
+- Replace inlet-property-only evaluation with mean-bulk-property iteration
+  (`simulate()`, formerly named `rate()`).
+- (v0.5.1) Separate **Simulation** (known inlets -> achievable outlets) from
+  **Rating** (closed heat balance -> overdesign / surface margin), with a
+  heat-balance closure helper and an inverted eps-NTU relation.
 
 ---
 

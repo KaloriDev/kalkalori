@@ -405,11 +405,12 @@ class BareTubeHeatExchanger:
 
 
 
-    def rate(
+    def simulate(
         self,
-        inside: "RatingSideInput",
-        outside: "RatingSideInput",
+        inside: "HXSideInput",
+        outside: "HXSideInput",
         *,
+        surface_margin: float = 0.0,
         iterate: bool = True,
         flow_arrangement: str | None = None,
         K_inlet: float = 0.5,
@@ -420,12 +421,18 @@ class BareTubeHeatExchanger:
         temperature_tolerance_K: float = 0.05,
         relative_duty_tolerance: float = 1e-4,
         relaxation_factor: float = 0.5,
-    ) -> "HXRatingResult":
-        """Rate this exchanger, iterating on mean-bulk properties by default.
+    ) -> "HXSimulationResult":
+        """Simulate this exchanger, iterating on mean-bulk properties by default.
 
-        This is the intended default entry point (v0.5.x). Properties on each
+        This is the intended default entry point (v0.5.x) for Simulation:
+        given geometry, both inlet temperatures, and both flow rates, compute
+        the achievable outlet temperatures (and duty). Properties on each
         side are recomputed at the mean bulk temperature until duty and both
         outlet temperatures converge.
+
+        ``surface_margin`` (default ``0.0``, "on the nose") derates the
+        full-geometry ``UA`` before computing duty/outlet temperatures; see
+        ``core.models.simulation`` for the exact relation.
 
         Forced/averaged properties: if both ``inside.provider`` and
         ``outside.provider`` are ``ConstantPropertyProvider`` (or
@@ -433,15 +440,19 @@ class BareTubeHeatExchanger:
         averaged and a single ``solve`` pass is performed (``converged=True``,
         ``iterations=1``).
 
-        See ``core.models.mean_property_rating.run_rating`` for the full
-        algorithm, arguments and result fields.
-        """
-        from core.models.mean_property_rating import run_rating
+        For Rating (closing a known heat balance to get overdesign/margin),
+        see ``.rate(...)``.
 
-        return run_rating(
+        See ``core.models.simulation.run_simulation`` for the full algorithm,
+        arguments and result fields.
+        """
+        from core.models.simulation import run_simulation
+
+        return run_simulation(
             self,
             inside,
             outside,
+            surface_margin=surface_margin,
             iterate=iterate,
             flow_arrangement=flow_arrangement,
             K_inlet=K_inlet,
@@ -452,4 +463,59 @@ class BareTubeHeatExchanger:
             temperature_tolerance_K=temperature_tolerance_K,
             relative_duty_tolerance=relative_duty_tolerance,
             relaxation_factor=relaxation_factor,
+        )
+
+    def rate(
+        self,
+        inside: "BalanceSideSpec",
+        outside: "BalanceSideSpec",
+        *,
+        Q: float | None = None,
+        effectiveness: float | None = None,
+        flow_arrangement: str | None = None,
+        K_inlet: float = 0.5,
+        K_outlet: float = 1.0,
+        K_turn: float = 1.5,
+        euler_provider: str = "zukauskas",
+        include_simulation: bool = False,
+        over_specified_tolerance: float = 1e-3,
+    ) -> "HXRatingResult":
+        """Rate this exchanger against a closed heat balance (overdesign).
+
+        This is the Rating entry point (v0.5.1): given geometry and a
+        *closed* heat balance (duty, both temperature programs, both flow
+        rates -- with some fields optionally left for ``close_heat_balance``
+        to solve), report how much surface margin / overdesign the geometry
+        provides (``overdesign_factor``, ``ua_margin``).
+
+        ``inside``/``outside`` are ``BalanceSideSpec`` (fields may be left
+        ``None`` for the closure to solve); ``Q`` or ``effectiveness`` may be
+        supplied directly instead of implying duty from a fully specified
+        side. See ``core.models.heat_balance.close_heat_balance`` for the
+        closure algorithm and ``core.models.rating.run_rating`` for the
+        overdesign algorithm.
+
+        For Simulation (computing achievable outlet temperatures from known
+        inlets), see ``.simulate(...)``.
+        """
+        from core.models.heat_balance import close_heat_balance
+        from core.models.rating import run_rating
+
+        closed_balance = close_heat_balance(
+            inside,
+            outside,
+            Q=Q,
+            effectiveness=effectiveness,
+            over_specified_tolerance=over_specified_tolerance,
+        )
+
+        return run_rating(
+            self,
+            closed_balance,
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet,
+            K_outlet=K_outlet,
+            K_turn=K_turn,
+            euler_provider=euler_provider,
+            include_simulation=include_simulation,
         )

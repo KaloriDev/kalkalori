@@ -106,6 +106,73 @@ def effectiveness_ntu(
     return eps
 
 
+def ntu_from_effectiveness(
+    effectiveness: float,
+    C_hot: float,
+    C_cold: float,
+    *,
+    flow_arrangement: str = "counterflow",
+) -> float:
+    """
+    Invert eps-NTU: compute NTU required to achieve a target effectiveness.
+
+    This is the inverse of ``effectiveness_ntu`` and is used by Rating
+    (``core.models.rating``) to find the NTU/UA/area required to close a known
+    heat balance. Supports the same three arrangements.
+
+    Counterflow (Cr != 1):
+        NTU = 1/(Cr-1) * ln((eps-1)/(eps*Cr-1))
+    Counterflow (Cr == 1):
+        NTU = eps/(1-eps)
+    Cocurrent/crossflow (lumped, both mixed):
+        NTU = -ln(1 - eps*(1+Cr)) / (1+Cr), valid for eps < 1/(1+Cr)
+
+    Raises:
+        ValueError: if C_hot/C_cold are not positive, or if ``effectiveness``
+            is at or above the thermodynamic maximum achievable by the given
+            flow arrangement (unreachable regardless of area).
+    """
+    if C_hot <= 0.0 or C_cold <= 0.0:
+        raise ValueError("C_hot and C_cold must be positive.")
+    if not (0.0 <= effectiveness < 1.0):
+        raise ValueError("effectiveness must be in [0, 1).")
+
+    C_min = min(C_hot, C_cold)
+    C_max = max(C_hot, C_cold)
+    C_r = C_min / C_max
+
+    fa = flow_arrangement.lower()
+
+    if fa == "counterflow":
+        if abs(1.0 - C_r) < 1e-9:
+            NTU = effectiveness / (1.0 - effectiveness)
+        else:
+            arg = (effectiveness - 1.0) / (effectiveness * C_r - 1.0)
+            if arg <= 0.0:
+                raise ValueError(
+                    "ntu_from_effectiveness: requested effectiveness is "
+                    "unreachable for a counterflow arrangement with this "
+                    "capacity-rate ratio, regardless of area."
+                )
+            NTU = 1.0 / (C_r - 1.0) * math.log(arg)
+
+    elif fa in ("cocurrentflow", "crossflow"):
+        eps_max = 1.0 / (1.0 + C_r)
+        if effectiveness >= eps_max:
+            raise ValueError(
+                f"ntu_from_effectiveness: requested effectiveness "
+                f"{effectiveness:.6g} is unreachable for flow_arrangement="
+                f"{flow_arrangement!r} (thermodynamic maximum eps_max="
+                f"{eps_max:.6g} for C_r={C_r:.6g}), regardless of area."
+            )
+        NTU = -math.log(1.0 - effectiveness * (1.0 + C_r)) / (1.0 + C_r)
+
+    else:
+        raise ValueError(f"Unsupported flow_arrangement: {flow_arrangement}")
+
+    return NTU
+
+
 def heat_duty_from_effectiveness(
     eps: float,
     hot_stream: EnergyStream,

@@ -1,16 +1,16 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
 """
-Smoke test for BareTubeHeatExchanger.rate (v0.5.x mean-property rating).
+Smoke test for BareTubeHeatExchanger.simulate (v0.5.x mean-property simulation).
 
 Runs WITHOUT CoolProp / IAPWS / PsychroLib: it uses a tiny linear
 temperature-dependent provider plus ConstantPropertyProvider so the outer
 iteration loop, the forced-averaged single-pass short-circuit, convergence
-diagnostics and non-convergence handling can all be exercised in a bare
-Python environment.
+diagnostics, non-convergence handling, and surface-margin derating can all be
+exercised in a bare Python environment.
 
 Run:
-    python -m core.tests.mean_property_rating_smoke
+    python -m core.tests.simulation_smoke
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from core.geometry.bundle import TubeBundle
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider
 from core.models.bare_tube import BareTubeHeatExchanger
-from core.models.mean_property_rating import RatingSideInput
+from core.models.simulation import HXSideInput
 
 
 @dataclass(frozen=True)
@@ -85,19 +85,19 @@ def kgh_to_kgs(m: float) -> float:
 def main() -> None:
     hx = BareTubeHeatExchanger(build_bundle())
 
-    inside_var = RatingSideInput(
+    inside_var = HXSideInput(
         provider=LinearGasProvider(rho0=1.13, mu0=1.9e-5, k0=0.027, cp0=1007.0),
         m_dot=kgh_to_kgs(18_220.0), T_in=c_to_k(30.0), p=101_325.0,
     )
-    outside_var = RatingSideInput(
+    outside_var = HXSideInput(
         provider=LinearGasProvider(rho0=0.50, mu0=3.1e-5, k0=0.052, cp0=1180.0),
         m_dot=kgh_to_kgs(28_380.0), T_in=c_to_k(400.0), p=101_325.0,
     )
 
     print("=" * 70)
-    print("CASE 1 - default rate(): mean-property iteration (variable props)")
+    print("CASE 1 - default simulate(): mean-property iteration (variable props)")
     print("=" * 70)
-    res = hx.rate(inside_var, outside_var)
+    res = hx.simulate(inside_var, outside_var)
     print(f"converged / iterations : {res.converged} / {res.iterations}")
     print(f"residual_q_rel         : {res.residual_q_rel:.3e}")
     print(f"q [kW]                 : {res.q / 1e3:.2f}")
@@ -109,19 +109,19 @@ def main() -> None:
     print("=" * 70)
     print("CASE 2 - forced averaged props (ConstantPropertyProvider) -> 1 pass")
     print("=" * 70)
-    inside_c = RatingSideInput(
+    inside_c = HXSideInput(
         provider=ConstantPropertyProvider(
             FluidTransportProperties(rho=1.13, mu=1.9e-5, k=0.027, cp=1007.0)
         ),
         m_dot=kgh_to_kgs(18_220.0), T_in=c_to_k(30.0), p=101_325.0,
     )
-    outside_c = RatingSideInput(
+    outside_c = HXSideInput(
         provider=ConstantPropertyProvider(
             FluidTransportProperties(rho=0.50, mu=3.1e-5, k=0.052, cp=1180.0)
         ),
         m_dot=kgh_to_kgs(28_380.0), T_in=c_to_k(400.0), p=101_325.0,
     )
-    res2 = hx.rate(inside_c, outside_c)
+    res2 = hx.simulate(inside_c, outside_c)
     print(f"converged / iterations : {res2.converged} / {res2.iterations}")
     print(f"q [kW]                 : {res2.q / 1e3:.2f}")
     print(f"T_out in/out [degC]    : {res2.T_out_inside - 273.15:.2f} / {res2.T_out_outside - 273.15:.2f}")
@@ -130,7 +130,7 @@ def main() -> None:
     print("=" * 70)
     print("CASE 3 - iterate=False escape hatch (variable props -> inlet-only, 1 pass)")
     print("=" * 70)
-    res_inlet = hx.rate(inside_var, outside_var, iterate=False)
+    res_inlet = hx.simulate(inside_var, outside_var, iterate=False)
     print(f"converged / iterations : {res_inlet.converged} / {res_inlet.iterations}")
     print(f"q [kW]                 : {res_inlet.q / 1e3:.2f}")
     dq = (res.q - res_inlet.q) / res_inlet.q * 100.0
@@ -140,11 +140,27 @@ def main() -> None:
     print("=" * 70)
     print("CASE 4 - force non-convergence (max_iter=3) -> warning, no hang")
     print("=" * 70)
-    res4 = hx.rate(inside_var, outside_var, max_iter=3, relaxation_factor=0.2)
+    res4 = hx.simulate(inside_var, outside_var, max_iter=3, relaxation_factor=0.2)
     print(f"converged / iterations : {res4.converged} / {res4.iterations}")
     for w in (res4.warnings or []):
-        if w.source == "mean_property_rating":
+        if w.source == "simulation":
             print(f"warning[{w.severity}] {w.code}")
+
+    print()
+    print("=" * 70)
+    print("CASE 5 - surface_margin: 0.0 must reproduce case 2 bit-for-bit")
+    print("=" * 70)
+    res_margin0 = hx.simulate(inside_c, outside_c, surface_margin=0.0)
+    print(f"q [kW]                 : {res_margin0.q / 1e3:.2f}")
+    print(f"Q_full == Q_derated    : {res_margin0.Q_full == res_margin0.Q_derated}")
+
+    print()
+    print("=" * 70)
+    print("CASE 6 - surface_margin: 0.2 and 0.5 must derate Q monotonically")
+    print("=" * 70)
+    res_margin_low = hx.simulate(inside_c, outside_c, surface_margin=0.2)
+    res_margin_high = hx.simulate(inside_c, outside_c, surface_margin=0.5)
+    print(f"q [kW] margin=0.0/0.2/0.5 : {res_margin0.q / 1e3:.2f} / {res_margin_low.q / 1e3:.2f} / {res_margin_high.q / 1e3:.2f}")
 
     # ---- assertions --------------------------------------------------------
     assert res.converged and res.iterations > 1, "case 1 should iterate and converge"
@@ -159,6 +175,19 @@ def main() -> None:
     print(f"energy-balance: q_in={q_in/1e3:.2f} kW  q_out={q_out/1e3:.2f} kW  q={res.q/1e3:.2f} kW")
     assert abs(q_in - res.q) / res.q < 0.02
     assert abs(q_out - res.q) / res.q < 0.02
+
+    # surface_margin=0.0 regression: must be bit-for-bit identical to the
+    # margin-less single-pass case (case 2).
+    assert res_margin0.q == res2.q, "surface_margin=0.0 must reproduce q bit-for-bit"
+    assert res_margin0.T_out_inside == res2.T_out_inside
+    assert res_margin0.T_out_outside == res2.T_out_outside
+    assert res_margin0.Q_full == res_margin0.Q_derated == res_margin0.q
+
+    # surface_margin > 0 must strictly derate duty, monotonically with margin.
+    assert res_margin_low.q < res_margin0.q, "margin=0.2 must derate duty below margin=0"
+    assert res_margin_high.q < res_margin_low.q, "margin=0.5 must derate duty further than 0.2"
+    assert res_margin_high.Q_full > res_margin_high.Q_derated, "Q_full must exceed Q_derated when margin > 0"
+    assert res_margin_low.Q_full > res_margin_low.Q_derated
 
     print("\nALL SMOKE CHECKS PASSED")
 

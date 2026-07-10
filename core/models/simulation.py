@@ -21,7 +21,7 @@
 #   cp [J/(kg*K)], m_dot [kg/s], alfa [W/(m2*K)].
 
 """
-v0.5.x - Iterative Mean-Property Heat Exchanger Rating.
+v0.5.x - Iterative Mean-Property Heat Exchanger Simulation.
 
 Motivation
 ----------
@@ -44,20 +44,43 @@ untouched and adds an *outer* iteration that:
     5. relaxes the new outlet temperatures,
     6. repeats until duty and both outlet temperatures converge.
 
-Default rating and the "forced averaged properties" case
---------------------------------------------------------
-The intended default entry point is ``BareTubeHeatExchanger.rate(...)``, which
-runs the mean-property iteration. There is one deliberate exception:
+Design-practice terminology
+----------------------------
+Given known geometry, both inlet temperatures, and both flow rates, this is
+a **Simulation**: the result is the achievable outlet temperatures (and duty).
+This is distinct from **Rating** (``core.models.rating``), which starts from a
+*closed* heat balance (known outlet temperatures too) and reports how much
+surface margin / overdesign the geometry provides.
+
+Default entry point and the "forced averaged properties" case
+---------------------------------------------------------------
+The intended default entry point is ``BareTubeHeatExchanger.simulate(...)``,
+which runs the mean-property iteration. There is one deliberate exception:
 
     If both sides use a ``ConstantPropertyProvider`` (or the caller passes
     ``iterate=False``), the supplied properties are taken as *already averaged*
-    and the rating collapses to a single ``solve`` pass.
+    and the simulation collapses to a single ``solve`` pass.
 
 This is not a heuristic shortcut: with constant properties ``UA`` and the
 capacity rates ``C`` do not depend on the guessed outlet temperatures, so the
 epsilon-NTU balance is exact in one pass and iterating would only walk the
 relaxation on the outlet temperatures for no physical gain. The single pass
 returns ``converged=True`` and ``iterations=1``.
+
+Surface margin (derating)
+--------------------------
+``surface_margin`` is an *input* to Simulation (``0.0`` by default, meaning
+"on the nose" / no margin). When ``surface_margin > 0``, the full-geometry
+``UA`` from ``solve()`` is derated before the epsilon-NTU balance is redone:
+
+    UA_eff = UA_full / (1 + surface_margin)
+    eps_eff = effectiveness_ntu(C_hot, C_cold, UA_eff, flow_arrangement)
+    Q_eff, T_hot_out_eff, T_cold_out_eff = heat_duty_from_effectiveness(eps_eff, ...)
+
+The derated duty and outlet temperatures (not the full-UA ones) are what the
+outer relaxation loop tracks and what the result reports as ``q``/``T_out_*``.
+``surface_margin=0.0`` skips this recomputation entirely, so results are
+bit-for-bit identical to not having the parameter at all.
 
 Scope (first v0.5.x)
 --------------------
@@ -93,6 +116,7 @@ from core.properties.adapters import (
 )
 
 from core.heat_transfer.streams import SensibleHeatStream
+from core.heat_transfer.ntu import effectiveness_ntu, heat_duty_from_effectiveness
 
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
 
@@ -103,12 +127,16 @@ from core.common.warnings import ModelWarning, make_warning
 # Inputs
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
-class RatingSideInput:
-    """Per-side input for the mean-property rating.
+class HXSideInput:
+    """Per-side input for a heat-exchanger simulation.
 
     A "side" is one fluid stream flowing through the exchanger. Its transport
     properties are recomputed at the mean bulk temperature on every iteration
     via ``provider.at(T, p)``.
+
+    Also used as the bridge type from a closed heat balance
+    (``core.models.heat_balance.ClosedBalanceSide.to_hx_side_input()``) so a
+    Rating's closed balance can be re-run through Simulation for comparison.
 
     Attributes:
         provider: Point-property provider exposing ``at(T, p)`` and returning a
@@ -119,7 +147,7 @@ class RatingSideInput:
         m_dot: Total mass flow through this side [kg/s].
         T_in: Inlet bulk temperature [K].
         p: Bulk pressure used for property evaluation [Pa]. Constant along the
-            side in this 0D rating (pressure drop does not feed back into
+            side in this 0D simulation (pressure drop does not feed back into
             properties here).
     """
 
@@ -141,16 +169,17 @@ class RatingSideInput:
 # Result
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
-class HXRatingResult:
-    """Result of a heat-exchanger rating (mean-property or single-pass).
+class HXSimulationResult:
+    """Result of a heat-exchanger simulation (mean-property or single-pass).
 
     All ``*_mean`` diagnostics are reported at the converged mean bulk state of
     the respective side. Naming follows the tube/outside geometry role:
     ``inside`` is the tube side, ``outside`` is the bundle side.
 
-    For a single-pass rating (forced constant properties, or ``iterate=False``)
-    ``converged`` is True and ``iterations`` is 1; the reported ``T_mean_*`` are
-    the bulk means of the computed outlet temperatures.
+    For a single-pass simulation (forced constant properties, or
+    ``iterate=False``) ``converged`` is True and ``iterations`` is 1; the
+    reported ``T_mean_*`` are the bulk means of the computed outlet
+    temperatures.
     """
 
     # Convergence diagnostics
@@ -178,12 +207,19 @@ class HXRatingResult:
     inside_alfa_mean: float
     outside_alfa_mean: float
 
-    # Overall performance
+    # Overall performance (of the real, undegraded geometry)
     U_mean: float          # [W/(m2*K)] referenced to outer area A_o
     UA: float              # [W/K]
-    q: float               # [W]
-    T_out_inside: float    # [K]
-    T_out_outside: float   # [K]
+
+    # Achieved duty and outlet temperatures (after surface_margin derating)
+    q: float                # [W]
+    T_out_inside: float     # [K]
+    T_out_outside: float    # [K]
+
+    # Surface margin (input, echoed) and duty transparency
+    surface_margin: float   # [-] 0.0 = "on the nose"; input, not an output
+    Q_full: float            # [W] duty at the real geometry's full UA
+    Q_derated: float         # [W] duty after surface_margin derating (== q)
 
     # Full snapshot of the final MVP solve (areas, hydraulics, per-side blocks)
     final_result: HXResult
@@ -195,11 +231,12 @@ class HXRatingResult:
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
-def run_rating(
+def run_simulation(
     hx: BareTubeHeatExchanger,
-    inside: RatingSideInput,
-    outside: RatingSideInput,
+    inside: HXSideInput,
+    outside: HXSideInput,
     *,
+    surface_margin: float = 0.0,
     iterate: bool = True,
     flow_arrangement: str | None = None,
     # Tube-side pressure-drop loss coefficients (forwarded to the MVP solver):
@@ -213,14 +250,17 @@ def run_rating(
     temperature_tolerance_K: float = 0.05,
     relative_duty_tolerance: float = 1e-4,
     relaxation_factor: float = 0.5,
-) -> HXRatingResult:
-    """Rate a bare-tube exchanger. Backing implementation of ``.rate``.
+) -> HXSimulationResult:
+    """Simulate a bare-tube exchanger. Backing implementation of ``.simulate``.
 
     The default (``iterate=True`` with temperature-dependent providers) runs the
     mean-property iteration described in the module docstring. When both sides
     use a ``ConstantPropertyProvider`` or ``iterate=False`` is passed, a single
     ``solve`` pass is performed and the supplied properties are treated as the
     mean-bulk properties.
+
+    ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
+    before computing duty/outlet temperatures; see the module docstring.
     """
     if flow_arrangement is None:
         flow_arrangement = hx.bundle.flow_arrangement
@@ -229,6 +269,8 @@ def run_rating(
         raise ValueError("relaxation_factor must be in (0, 1].")
     if max_iter < 1:
         raise ValueError("max_iter must be >= 1.")
+    if not math.isfinite(surface_margin) or surface_margin < 0.0:
+        raise ValueError("surface_margin must be a non-negative finite value.")
 
     hot_is_inside = inside.T_in >= outside.T_in
 
@@ -237,7 +279,7 @@ def run_rating(
 
         Returns:
             (result, T_out_inside_calc, T_out_outside_calc,
-             props_inside, props_outside)
+             props_inside, props_outside, Q_eff, Q_full)
         """
         T_mean_inside = mean_temperature(inside.T_in, T_out_inside)
         T_mean_outside = mean_temperature(outside.T_in, T_out_outside)
@@ -269,14 +311,36 @@ def run_rating(
             euler_provider=euler_provider,
         )
 
-        if hot_is_inside:
-            T_out_inside_calc = result.T_hot_out
-            T_out_outside_calc = result.T_cold_out
-        else:
-            T_out_inside_calc = result.T_cold_out
-            T_out_outside_calc = result.T_hot_out
+        Q_full = result.Q
 
-        return result, T_out_inside_calc, T_out_outside_calc, props_in, props_out
+        if surface_margin > 0.0:
+            UA_eff = result.UA / (1.0 + surface_margin)
+            eps_eff = effectiveness_ntu(
+                C_hot=hot_stream.capacity_rate(),
+                C_cold=cold_stream.capacity_rate(),
+                UA=UA_eff,
+                flow_arrangement=flow_arrangement,
+            )
+            Q_eff, T_hot_out_eff, T_cold_out_eff = heat_duty_from_effectiveness(
+                eps=eps_eff,
+                hot_stream=hot_stream,
+                cold_stream=cold_stream,
+            )
+        else:
+            Q_eff, T_hot_out_eff, T_cold_out_eff = (
+                result.Q,
+                result.T_hot_out,
+                result.T_cold_out,
+            )
+
+        if hot_is_inside:
+            T_out_inside_calc = T_hot_out_eff
+            T_out_outside_calc = T_cold_out_eff
+        else:
+            T_out_inside_calc = T_cold_out_eff
+            T_out_outside_calc = T_hot_out_eff
+
+        return result, T_out_inside_calc, T_out_outside_calc, props_in, props_out, Q_eff, Q_full
 
     def _build_result(
         *,
@@ -285,12 +349,14 @@ def run_rating(
         props_out: FluidTransportProperties,
         T_out_inside: float,
         T_out_outside: float,
+        q: float,
+        Q_full: float,
         converged: bool,
         iterations: int,
         residual_q_rel: float,
         residual_T_inside_K: float,
         residual_T_outside_K: float,
-    ) -> HXRatingResult:
+    ) -> HXSimulationResult:
         A_o = final_result.A_o
         U_mean = final_result.UA / A_o if A_o > 0.0 else math.nan
 
@@ -298,21 +364,21 @@ def run_rating(
         if not converged:
             warnings_list.append(
                 make_warning(
-                    code="mean_property_rating_not_converged",
+                    code="simulation_not_converged",
                     message=(
-                        "mean_property_rating: iterative mean-property rating did "
+                        "simulation: iterative mean-property simulation did "
                         f"not converge within max_iter={iterations}. Last "
                         f"residuals: duty_rel={residual_q_rel:.3e}, "
                         f"dT_inside={residual_T_inside_K:.3e} K, "
                         f"dT_outside={residual_T_outside_K:.3e} K. "
                         "Returning the last iterate."
                     ),
-                    source="mean_property_rating",
+                    source="simulation",
                     severity="warning",
                 )
             )
 
-        return HXRatingResult(
+        return HXSimulationResult(
             converged=converged,
             iterations=iterations,
             residual_q_rel=residual_q_rel,
@@ -332,9 +398,12 @@ def run_rating(
             outside_alfa_mean=final_result.outside_side_thermal.alfa,
             U_mean=U_mean,
             UA=final_result.UA,
-            q=final_result.Q,
+            q=q,
             T_out_inside=T_out_inside,
             T_out_outside=T_out_outside,
+            surface_margin=surface_margin,
+            Q_full=Q_full,
+            Q_derated=q,
             final_result=final_result,
             warnings=warnings_list if warnings_list else None,
         )
@@ -348,7 +417,7 @@ def run_rating(
         # Properties are treated as already averaged. With constant providers the
         # outlet temperatures from a single pass are exact; with a variable
         # provider and iterate=False the properties are the inlet properties.
-        result, T_out_inside_calc, T_out_outside_calc, props_in, props_out = _evaluate(
+        result, T_out_inside_calc, T_out_outside_calc, props_in, props_out, Q_eff, Q_full = _evaluate(
             inside.T_in, outside.T_in
         )
         return _build_result(
@@ -357,6 +426,8 @@ def run_rating(
             props_out=props_out,
             T_out_inside=T_out_inside_calc,
             T_out_outside=T_out_outside_calc,
+            q=Q_eff,
+            Q_full=Q_full,
             converged=True,
             iterations=1,
             residual_q_rel=0.0,
@@ -379,10 +450,9 @@ def run_rating(
     for iteration in range(1, max_iter + 1):
         iterations = iteration
 
-        _result, T_out_inside_calc, T_out_outside_calc, _pin, _pout = _evaluate(
+        _result, T_out_inside_calc, T_out_outside_calc, _pin, _pout, Q_eff, _Q_full = _evaluate(
             T_out_inside, T_out_outside
         )
-        Q = _result.Q
 
         # Under-relaxed outlet-temperature update.
         T_out_inside_new = T_out_inside + relaxation_factor * (T_out_inside_calc - T_out_inside)
@@ -391,12 +461,12 @@ def run_rating(
         residual_T_inside_K = abs(T_out_inside_new - T_out_inside)
         residual_T_outside_K = abs(T_out_outside_new - T_out_outside)
         residual_q_rel = (
-            abs(Q - Q_prev) / max(abs(Q), 1e-12) if Q_prev is not None else math.inf
+            abs(Q_eff - Q_prev) / max(abs(Q_eff), 1e-12) if Q_prev is not None else math.inf
         )
 
         T_out_inside = T_out_inside_new
         T_out_outside = T_out_outside_new
-        Q_prev = Q
+        Q_prev = Q_eff
 
         if (
             iteration >= 2
@@ -410,7 +480,7 @@ def run_rating(
     # Final self-consistent evaluation at the converged mean state, so that all
     # reported means (velocity, Re, Pr, alfa, U, UA, q, T_out) are mutually
     # consistent with the converged outlet temperatures.
-    final_result, T_out_inside_final, T_out_outside_final, props_in, props_out = _evaluate(
+    final_result, T_out_inside_final, T_out_outside_final, props_in, props_out, Q_eff_final, Q_full_final = _evaluate(
         T_out_inside, T_out_outside
     )
 
@@ -420,6 +490,8 @@ def run_rating(
         props_out=props_out,
         T_out_inside=T_out_inside_final,
         T_out_outside=T_out_outside_final,
+        q=Q_eff_final,
+        Q_full=Q_full_final,
         converged=converged,
         iterations=iterations,
         residual_q_rel=residual_q_rel,

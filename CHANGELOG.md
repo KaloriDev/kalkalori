@@ -6,7 +6,92 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
-## v0.4.x - Property Layer Foundation
+## [0.5.1] - Simulation/Rating split, heat-balance closure, surface margin
+
+### Changed (breaking, internal API)
+
+- Renamed the previous mean-property "rating" feature to **Simulation**,
+  matching design-practice terminology (known geometry + both inlet
+  temperatures + flow rates -> achievable outlet temperatures):
+  - `BareTubeHeatExchanger.rate(...)` -> `BareTubeHeatExchanger.simulate(...)`
+  - `run_rating(...)` -> `run_simulation(...)`
+  - `HXRatingResult` -> `HXSimulationResult`
+  - `RatingSideInput` -> `HXSideInput`
+  - `core/models/mean_property_rating.py` -> `core/models/simulation.py`
+  - `core/tests/mean_property_rating_smoke.py` -> `core/tests/simulation_smoke.py`
+
+### Added
+
+- Added `surface_margin: float = 0.0` to `simulate(...)` (derating input):
+  `UA_eff = UA_full/(1+surface_margin)` -> `NTU_eff` -> `eps` -> `Q` -> `T_out`.
+  `surface_margin=0.0` reproduces the previous behavior bit-for-bit for
+  constant properties. Result gains `surface_margin`, `Q_full`, `Q_derated`.
+- Added **Rating** (overdesign / surface margin as an output), reclaiming the
+  `.rate(...)` / `run_rating(...)` / `HXRatingResult` names for their correct
+  meaning: given geometry and a *closed* heat balance, report
+  `overdesign_factor = A_o/A_required - 1` (and `ua_margin`, "for free").
+  `U` is evaluated once at the closed balance's working conditions and held
+  constant in the area-margin arithmetic (standard over-surface practice;
+  a property-iteration refinement of `U` itself is out of scope for v0.5.1).
+  New `core/models/rating.py`.
+- Added heat-balance closure (`core/models/heat_balance.py`):
+  `BalanceSideSpec` (partially known per-side flow/temperatures),
+  `close_heat_balance(...)` resolving `Q` (explicit, from a fully specified
+  side, or from `effectiveness`) and then each side's missing `m_dot`/`T_out`,
+  and `ClosedBalance`/`ClosedBalanceSide` (with a bridge back to
+  `HXSideInput` so a closed balance can be re-run through `simulate()` for
+  comparison via `rate(..., include_simulation=True)`). Under-specified
+  balances raise `ValueError`; over-specified (mismatched) balances emit a
+  `ModelWarning` (`heat_balance_over_specified`) rather than failing.
+- Added `ntu_from_effectiveness(...)` to `core/heat_transfer/ntu.py`, the
+  inverse of `effectiveness_ntu(...)`, for counterflow, cocurrentflow and
+  crossflow, with a guard raising `ValueError` when the requested
+  effectiveness exceeds the arrangement's thermodynamic maximum regardless
+  of area.
+- Added dependency-free smoke test
+  (`core/tests/heat_balance_rating_smoke.py`) covering closure variants,
+  the `ntu_from_effectiveness` round-trip + guard, and Rating (overdesign
+  ~= 0/greater/less, plus the `A_required == A_o` consistency check against
+  a `simulate()`-derived operating point).
+
+---
+## [0.5.x] - Iterative Mean-Property HX Rating
+
+### Added
+
+- Added `BareTubeHeatExchanger.rate(...)` as the default rating entry point,
+  running an iterative mean-property outer loop around the existing `solve()`
+  kernel.
+- Added `RatingSideInput` / `HXRatingResult` carrying per-side boundary
+  conditions and full rating diagnostics (convergence residuals, mean bulk
+  temperatures, mean transport properties, velocity, Re, Pr, alfa, U_mean,
+  UA, q, pressure drop).
+- Added `run_rating` driver (`core/models/mean_property_rating.py`);
+  `run_rating`, `RatingSideInput`, `HXRatingResult` exported from `core.models`.
+- Added single-pass shortcut: when both sides use `ConstantPropertyProvider`
+  (or `iterate=False` is passed), rating collapses to one `solve()` pass —
+  with constant properties UA and C do not depend on guessed outlet
+  temperatures, so one pass is exact.
+- Added dependency-free smoke test (`core/tests/mean_property_rating_smoke.py`).
+- Added demonstration notebook (`core/tests/dry_gas_gas_mean_property_test.ipynb`)
+  on real dry-air / gas-mixture providers, comparing mean-property vs
+  inlet-only rating and reporting velocity and pressure drop for both sides.
+
+### Notes
+
+- `solve()` remains the single-pass physics kernel; `rate()` is a driver and
+  does not duplicate any correlation.
+- Convergence defaults: `max_iter=30`, `temperature_tolerance_K=0.05`,
+  `relative_duty_tolerance=1e-4`, `relaxation_factor=0.5`.
+- Non-convergence returns the last iterate with `converged=False` and a
+  `ModelWarning` (`mean_property_rating_not_converged`) instead of raising
+  or hanging.
+- Out of scope for this stage: condensation, wet surface, latent heat, water
+  removal, acid dew point, full wet economizer, row-by-row/segmented models,
+  wall-temperature iteration.
+
+---
+## [0.4.x] - Property Layer Foundation
 
 ### Added
 

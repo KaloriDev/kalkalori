@@ -15,8 +15,18 @@ from .bare_tube import (
     HXTubeSideHydraulicResults,
     HXOutSideHydraulicResults,
 )
-from .mean_property_rating import (
-    RatingSideInput,
+from .simulation import (
+    HXSideInput,
+    HXSimulationResult,
+    run_simulation,
+)
+from .heat_balance import (
+    BalanceSideSpec,
+    ClosedBalanceSide,
+    ClosedBalance,
+    close_heat_balance,
+)
+from .rating import (
     HXRatingResult,
     run_rating,
 )
@@ -27,7 +37,13 @@ __all__ = [
     "HXOutSideThermalResults",
     "HXTubeSideHydraulicResults",
     "HXOutSideHydraulicResults",
-    "RatingSideInput",
+    "HXSideInput",
+    "HXSimulationResult",
+    "run_simulation",
+    "BalanceSideSpec",
+    "ClosedBalanceSide",
+    "ClosedBalance",
+    "close_heat_balance",
     "HXRatingResult",
     "run_rating",
 ]
