@@ -516,21 +516,32 @@ class BareTubeHeatExchanger:
         euler_provider: str = "zukauskas",
         include_simulation: bool = False,
         over_specified_tolerance: float = 1e-3,
+        max_iterations: int = 25,
+        wall_temperature_tolerance_K: float = 0.05,
+        relative_alfa_tolerance: float = 1e-3,
+        relaxation_factor: float = 0.5,
     ) -> "HXRatingResult":
         """Rate this exchanger against a closed heat balance (overdesign).
 
-        This is the Rating entry point (v0.5.1): given geometry and a
-        *closed* heat balance (duty, both temperature programs, both flow
-        rates -- with some fields optionally left for ``close_heat_balance``
-        to solve), report how much surface margin / overdesign the geometry
-        provides (``overdesign_factor``, ``ua_margin``).
+        This is the Rating entry point (v0.5.1, thermal state wiring since
+        v0.5.3): given geometry and a *closed* heat balance (duty, both
+        temperature programs, both flow rates -- with some fields optionally
+        left for ``close_heat_balance`` to solve), report how much surface
+        margin / overdesign the geometry provides (``overdesign_factor``,
+        ``ua_margin``).
 
         ``inside``/``outside`` are ``BalanceSideSpec`` (fields may be left
         ``None`` for the closure to solve); ``Q`` or ``effectiveness`` may be
         supplied directly instead of implying duty from a fully specified
         side. See ``core.models.heat_balance.close_heat_balance`` for the
         closure algorithm and ``core.models.rating.run_rating`` for the
-        overdesign algorithm.
+        overdesign algorithm and the wall/length-corrected ``U``/``UA_actual``
+        source.
+
+        ``max_iterations``/``wall_temperature_tolerance_K``/
+        ``relative_alfa_tolerance``/``relaxation_factor`` control the
+        underlying wall-temperature iteration (same meaning as
+        ``.solve_thermal_state(...)``).
 
         For Simulation (computing achievable outlet temperatures from known
         inlets), see ``.simulate(...)``.
@@ -555,6 +566,10 @@ class BareTubeHeatExchanger:
             K_turn=K_turn,
             euler_provider=euler_provider,
             include_simulation=include_simulation,
+            max_iterations=max_iterations,
+            wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            relaxation_factor=relaxation_factor,
         )
 
     def solve_thermal_state(

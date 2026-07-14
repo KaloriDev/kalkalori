@@ -19,7 +19,10 @@ from .streams import (
 from .internal_flow import (
     FluidProps as InternalFlowFluidProps,
     heat_transfer_coefficient_internal,
+    heat_transfer_coefficient_internal_diagnostics,
+    InternalHeatTransferDiagnostics,
     gas_wall_temperature_correction,
+    internal_length_correction,
 )
 
 from .internal_pressure_drop import (
@@ -77,7 +80,10 @@ __all__ = [
     # Internal flow
     "InternalFlowFluidProps",
     "heat_transfer_coefficient_internal",
+    "heat_transfer_coefficient_internal_diagnostics",
+    "InternalHeatTransferDiagnostics",
     "gas_wall_temperature_correction",
+    "internal_length_correction",
 
     # Internal pressure drop (component-based)
     "InternalPressureDropFluidProps",

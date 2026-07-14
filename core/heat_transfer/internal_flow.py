@@ -56,10 +56,22 @@ Notes
 - Turbulent Nusselt: Gnielinski correlation is used with a smooth-tube
   friction factor.
 - Transitional regime is handled by linear blending in Re between 2300 and 4000.
-- Optional turbulent-gas wall-property correction (Petukhov 1970, see
+- Optional turbulent-gas wall-property correction (see
   ``gas_wall_temperature_correction``) is applied only when the caller
   supplies bulk/wall temperatures; it is independent of the outside
   Zukauskas (Pr/Pr_s) wall correction in ``outside_flow.py``.
+- Optional finite heated-length (entrance-region) correction (see
+  ``internal_length_correction``) is applied only when the caller supplies
+  a heated length; it is independent of the gas wall-temperature correction
+  and of the outside-side model.
+
+v0.5.3 correction
+------------------
+The turbulent-gas wall-temperature correction now uses the constant-exponent
+form (``n = 0.45`` for gas heating, ``n = 0`` for gas cooling) rather than the
+Re/ratio-dependent exponent used in v0.5.2, which understated the correction
+for typical heated-gas bulk/wall ratios. See ``gas_wall_temperature_correction``
+for the exact formula and references.
 """
 
 from __future__ import annotations
@@ -195,11 +207,19 @@ def nusselt_internal(Re: float, Pr: float) -> float:
 
 # Applicability bounds for the turbulent-gas wall-property correction below.
 _GAS_WALL_CORR_TW_TB_LOWER_GUARD = 0.5  # gas-cooling extrapolation guard
-_GAS_WALL_CORR_TW_TB_UPPER = 2.4        # gas-heating upper bound (Petukhov 1970)
+_GAS_WALL_CORR_TW_TB_UPPER = 2.4        # gas-heating extrapolation guard
 
 # Regime above which the Gnielinski correlation (and this wall correction,
 # which is only documented for turbulent flow) applies.
 _GAS_WALL_CORR_RE_MIN = 4000.0
+
+# Constant exponent for the gas-heating branch (T_wall > T_bulk). This is the
+# absolute-temperature-ratio correction commonly reported for internal
+# turbulent *gas* flow (as opposed to the viscosity/Pr-ratio correction used
+# for liquids), e.g. VDI Heat Atlas, Section G1; Kays, Crawford, Weigand,
+# Convective Heat and Mass Transfer. Gas cooling (T_wall < T_bulk) uses n=0
+# (no correction) per the same references.
+_GAS_HEATING_EXPONENT = 0.45
 
 
 def gas_wall_temperature_correction(
@@ -213,14 +233,23 @@ def gas_wall_temperature_correction(
 
         Nu / Nu_cp = (T_bulk / T_wall)^n      (T in absolute units, K)
 
-            n = 0                              for T_wall/T_bulk < 1 (gas cooling)
-            n = -log10(T_wall/T_bulk)/4 + 0.3   for 1 <= T_wall/T_bulk <= 2.4 (gas heating)
+            n = 0     for T_wall <= T_bulk (gas cooling, or no bulk/wall
+                      difference)
+            n = 0.45  for T_wall > T_bulk (gas heating)
+
+    "Heating"/"cooling" are defined from the gas (tube-side) perspective by
+    comparing ``T_wall`` (inside tube-wall surface temperature) directly to
+    ``T_bulk`` (tube-side bulk temperature) -- never inferred from generic
+    hot-stream/cold-stream identity, so the result is correct regardless of
+    which physical side of the exchanger happens to run hot overall.
 
     Reference:
-        Petukhov, B. S. (1970). Heat transfer and friction in turbulent pipe
-        flow with variable physical properties. Advances in Heat Transfer,
-        Vol. 6. Also reported in Kays, Crawford, Weigand, Convective Heat
-        and Mass Transfer, and VDI Heat Atlas, Section G1.
+        VDI Heat Atlas, Section G1 (gas property-variation correction);
+        Kays, Crawford, Weigand, Convective Heat and Mass Transfer. Both
+        report the constant exponent n=0.45 for gas heating and n=0 (no
+        correction) for gas cooling, distinct from the Re/ratio-dependent
+        exponent sometimes quoted for the general Petukhov (1970) variable-
+        property treatment.
 
     This is independent of the outside crossflow (Pr/Pr_s)^0.25 wall
     correction used in ``outside_flow.nusselt_zukauskas`` -- that correction
@@ -258,9 +287,9 @@ def gas_wall_temperature_correction(
 
     ratio = T_wall / T_bulk
 
-    if ratio < 1.0:
-        # Gas cooling (wall colder than bulk): Petukhov (1970) reports no
-        # reduction is needed for this side.
+    if ratio <= 1.0:
+        # Gas cooling (wall at or below bulk): no reduction is needed for
+        # this side.
         n = 0.0
         if ratio < _GAS_WALL_CORR_TW_TB_LOWER_GUARD:
             warnings_list.append(
@@ -278,16 +307,16 @@ def gas_wall_temperature_correction(
             )
     else:
         # Gas heating (wall hotter than bulk).
-        n = -math.log10(ratio) / 4.0 + 0.3
+        n = _GAS_HEATING_EXPONENT
         if ratio > _GAS_WALL_CORR_TW_TB_UPPER:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_gas_wall_correction_applicability_exceeded",
                     message=(
                         f"tube_ht: T_wall/T_bulk={ratio:.3g} exceeds the "
-                        f"Petukhov (1970) gas-heating correction's reported "
-                        f"range (<= {_GAS_WALL_CORR_TW_TB_UPPER:g}); result is "
-                        "an extrapolation."
+                        f"gas-heating correction's reported range "
+                        f"(<= {_GAS_WALL_CORR_TW_TB_UPPER:g}); result is an "
+                        "extrapolation."
                     ),
                     source="tube_ht",
                     severity="warning",
@@ -295,10 +324,155 @@ def gas_wall_temperature_correction(
             )
 
     factor = (T_bulk / T_wall) ** n
+
+    if not math.isfinite(factor) or factor <= 0.0:
+        warnings_list.append(
+            make_warning(
+                code="tube_ht_non_finite_correction_factor",
+                message=(
+                    f"tube_ht: computed gas wall-temperature correction "
+                    f"factor={factor!r} is non-finite or non-positive; "
+                    "falling back to factor=1 (no correction)."
+                ),
+                source="tube_ht",
+                severity="critical",
+            )
+        )
+        return 1.0, warnings_list
+
     return factor, warnings_list
 
 
-def heat_transfer_coefficient_internal(
+def internal_length_correction(
+    tube_inner_diameter: float,
+    L_heated: float | None,
+) -> tuple[float, list[ModelWarning]]:
+    """
+    Finite heated-length (entrance-region) correction for the turbulent
+    internal Gnielinski Nusselt number, applied multiplicatively:
+
+        Nu / Nu_fully_developed = 1 + (D_i / L_heated)^(2/3)
+
+    Reference:
+        Gnielinski, V. (1976), New equations for heat and mass transfer in
+        turbulent pipe and channel flow. International Chemical Engineering,
+        16(2), 359-368 (entrance-region term of the full correlation, also
+        reproduced in VDI Heat Atlas, Section G1).
+
+    ``L_heated`` must be the thermally active straight length of *one* tube
+    pass (e.g. ``BareTube.length_effective``) -- not the total length of all
+    tubes in the bundle, and not the multi-pass hydraulic path length. As
+    ``L_heated / D_i -> inf`` the correction tends to 1 (fully developed,
+    no entrance effect); for small ``L_heated / D_i`` the correction is > 1
+    (enhanced heat transfer in the developing region).
+
+    Parameters
+    ----------
+    tube_inner_diameter : float
+        Inner diameter D_i [m].
+    L_heated : float | None
+        Thermally active straight length of one tube pass [m], or None if
+        unavailable (the correction is then skipped with an info warning).
+
+    Returns
+    -------
+    (factor, warnings) : tuple[float, list[ModelWarning]]
+        Multiplicative correction factor for Nu (>= 1), and any
+        applicability warnings.
+    """
+    if tube_inner_diameter <= 0.0:
+        raise ValueError("tube_inner_diameter must be positive.")
+
+    warnings_list: list[ModelWarning] = []
+
+    if L_heated is None:
+        warnings_list.append(
+            make_warning(
+                code="tube_ht_length_correction_unavailable",
+                message=(
+                    "tube_ht: no heated length (L_heated) was supplied; "
+                    "finite-length entrance-region correction skipped "
+                    "(factor=1)."
+                ),
+                source="tube_ht",
+                severity="info",
+            )
+        )
+        return 1.0, warnings_list
+
+    if not math.isfinite(L_heated) or L_heated <= 0.0:
+        warnings_list.append(
+            make_warning(
+                code="tube_ht_length_correction_invalid",
+                message=(
+                    f"tube_ht: L_heated={L_heated!r} must be a finite, "
+                    "positive length [m]; finite-length entrance-region "
+                    "correction skipped (factor=1)."
+                ),
+                source="tube_ht",
+                severity="warning",
+            )
+        )
+        return 1.0, warnings_list
+
+    factor = 1.0 + (tube_inner_diameter / L_heated) ** (2.0 / 3.0)
+
+    if not math.isfinite(factor) or factor < 1.0:
+        warnings_list.append(
+            make_warning(
+                code="tube_ht_non_finite_correction_factor",
+                message=(
+                    f"tube_ht: computed finite-length correction "
+                    f"factor={factor!r} is non-finite or below 1; falling "
+                    "back to factor=1 (no correction)."
+                ),
+                source="tube_ht",
+                severity="critical",
+            )
+        )
+        return 1.0, warnings_list
+
+    return factor, warnings_list
+
+
+@dataclass(frozen=True)
+class InternalHeatTransferDiagnostics:
+    """Full diagnostic breakdown of the internal (tube-side) alfa build-up.
+
+    ``Nu_base``/``alfa_base`` are the constant-property Gnielinski (or
+    laminar/transitional) result with no correction applied. ``Nu_corrected``/
+    ``alfa_corrected`` include whichever of the length and gas
+    wall-temperature corrections were requested (each defaults to a
+    no-op factor of 1.0 when its required input is not supplied), applied
+    exactly once each:
+
+        Nu_corrected = Nu_base * length_correction * wall_temperature_correction
+        combined_correction = length_correction * wall_temperature_correction
+        alfa_corrected = Nu_corrected * k / D_i   (k = bulk conductivity)
+
+    All values are the raw evaluated quantities at the given inputs -- no
+    relaxation/averaging is performed here (that is the responsibility of an
+    outer iteration, e.g. ``core.heat_transfer.thermal_iteration``).
+    """
+
+    v: float
+    Re: float
+    Pr: float
+
+    Nu_base: float
+    Nu_corrected: float
+
+    length_correction: float
+    wall_temperature_correction: float
+    combined_correction: float
+
+    alfa_base: float
+    alfa_corrected: float
+
+    warnings: list[ModelWarning]
+
+
+def heat_transfer_coefficient_internal_diagnostics(
     m_dot: float,
     tube_inner_diameter: float,
     flow_area: float,
@@ -306,41 +480,26 @@ def heat_transfer_coefficient_internal(
     *,
     T_bulk: float | None = None,
     T_wall: float | None = None,
-) -> tuple[float, float, float, float, list[ModelWarning]]:
+    L_heated: float | None = None,
+) -> InternalHeatTransferDiagnostics:
     """
-    Convenience function returning tube-side alfa and key dimensionless groups.
+    Full diagnostic version of ``heat_transfer_coefficient_internal``: same
+    physics, but returns every intermediate Nu/alfa/correction value instead
+    of only the final alfa. See ``InternalHeatTransferDiagnostics`` for the
+    exact combination formula.
 
     Parameters
     ----------
-    m_dot : float
-        Mass flow rate [kg/s].
-    tube_inner_diameter : float
-        Inner diameter D_i [m].
-    flow_area : float
-        Flow cross-sectional area [m^2] (e.g., N_tubes * pi*D_i^2/4).
-    props : FluidProps
-        Thermophysical properties at representative bulk conditions.
     T_bulk, T_wall : float, optional
         Bulk and tube-wall (inside surface) temperatures [K]. When both are
         supplied and the regime is turbulent (Re > 4000), the turbulent-gas
         wall-property correction (``gas_wall_temperature_correction``) is
-        applied to Nu. When omitted (the default), the base Gnielinski
-        result is returned unchanged -- this preserves backward
-        compatibility for callers that do not supply wall state.
-
-    Returns
-    -------
-    v : float
-        Mean velocity [m/s]
-    Re : float
-        Reynolds number [-]
-    Pr : float
-        Prandtl number [-]
-    alfa : float
-        Internal convective heat transfer coefficient [W/(m^2*K)]
-    warnings : list[ModelWarning]
-        Applicability warnings for the wall-property correction (empty when
-        no wall state is supplied or the correction is within range).
+        applied to Nu.
+    L_heated : float, optional
+        Thermally active straight length of one tube pass [m] (e.g.
+        ``BareTube.length_effective``). When supplied and the regime is
+        turbulent (Re > 4000), the finite-length entrance-region correction
+        (``internal_length_correction``) is applied to Nu.
     """
     if tube_inner_diameter <= 0.0:
         raise ValueError("tube_inner_diameter must be positive.")
@@ -349,12 +508,37 @@ def heat_transfer_coefficient_internal(
     Re = reynolds_number(props.rho, v, tube_inner_diameter, props.mu)
     Pr = prandtl_number(props.cp, props.mu, props.k)
 
-    Nu = nusselt_internal(Re, Pr)
+    Nu_base = nusselt_internal(Re, Pr)
+    alfa_base = Nu_base * props.k / tube_inner_diameter
 
     warnings_list: list[ModelWarning] = []
+    is_turbulent = Re > _GAS_WALL_CORR_RE_MIN
 
+    length_correction = 1.0
+    if L_heated is not None:
+        if not is_turbulent:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_length_correction_not_applicable_regime",
+                    message=(
+                        "tube_ht: finite-length entrance-region correction is "
+                        f"only defined for Re > {_GAS_WALL_CORR_RE_MIN:g}; "
+                        "current regime is laminar/transitional, so the "
+                        "correction is skipped."
+                    ),
+                    source="tube_ht",
+                    severity="info",
+                )
+            )
+        else:
+            length_correction, length_warnings = internal_length_correction(
+                tube_inner_diameter, L_heated
+            )
+            warnings_list.extend(length_warnings)
+
+    wall_temperature_correction = 1.0
     if T_wall is not None:
-        if Re <= _GAS_WALL_CORR_RE_MIN:
+        if not is_turbulent:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_gas_wall_correction_not_applicable_regime",
@@ -382,10 +566,99 @@ def heat_transfer_coefficient_internal(
                 )
             )
         else:
-            factor, corr_warnings = gas_wall_temperature_correction(T_bulk, T_wall)
-            Nu = Nu * factor
+            wall_temperature_correction, corr_warnings = gas_wall_temperature_correction(
+                T_bulk, T_wall
+            )
             warnings_list.extend(corr_warnings)
 
-    alfa = Nu * props.k / tube_inner_diameter
+    combined_correction = length_correction * wall_temperature_correction
+    Nu_corrected = Nu_base * combined_correction
+    alfa_corrected = Nu_corrected * props.k / tube_inner_diameter
 
-    return v, Re, Pr, alfa, warnings_list
+    return InternalHeatTransferDiagnostics(
+        v=v,
+        Re=Re,
+        Pr=Pr,
+        Nu_base=Nu_base,
+        Nu_corrected=Nu_corrected,
+        length_correction=length_correction,
+        wall_temperature_correction=wall_temperature_correction,
+        combined_correction=combined_correction,
+        alfa_base=alfa_base,
+        alfa_corrected=alfa_corrected,
+        warnings=warnings_list,
+    )
+
+
+def heat_transfer_coefficient_internal(
+    m_dot: float,
+    tube_inner_diameter: float,
+    flow_area: float,
+    props: FluidProps,
+    *,
+    T_bulk: float | None = None,
+    T_wall: float | None = None,
+    L_heated: float | None = None,
+) -> tuple[float, float, float, float, list[ModelWarning]]:
+    """
+    Convenience function returning tube-side alfa and key dimensionless groups.
+
+    Parameters
+    ----------
+    m_dot : float
+        Mass flow rate [kg/s].
+    tube_inner_diameter : float
+        Inner diameter D_i [m].
+    flow_area : float
+        Flow cross-sectional area [m^2] (e.g., N_tubes * pi*D_i^2/4).
+    props : FluidProps
+        Thermophysical properties at representative bulk conditions.
+    T_bulk, T_wall : float, optional
+        Bulk and tube-wall (inside surface) temperatures [K]. When both are
+        supplied and the regime is turbulent (Re > 4000), the turbulent-gas
+        wall-property correction (``gas_wall_temperature_correction``) is
+        applied to Nu. When omitted (the default), the base Gnielinski
+        result is returned unchanged -- this preserves backward
+        compatibility for callers that do not supply wall state.
+    L_heated : float, optional
+        Thermally active straight length of one tube pass [m]. When
+        supplied and the regime is turbulent, the finite-length
+        entrance-region correction (``internal_length_correction``) is
+        applied to Nu. Omitted by default -- preserves backward
+        compatibility for callers that do not supply a heated length.
+
+    Returns
+    -------
+    v : float
+        Mean velocity [m/s]
+    Re : float
+        Reynolds number [-]
+    Pr : float
+        Prandtl number [-]
+    alfa : float
+        Internal convective heat transfer coefficient [W/(m^2*K)], with
+        whichever of the length/wall-temperature corrections were requested
+        applied exactly once each.
+    warnings : list[ModelWarning]
+        Applicability warnings for the requested corrections (empty when no
+        correction inputs are supplied or all are within range).
+
+    See ``heat_transfer_coefficient_internal_diagnostics`` for the full
+    breakdown (Nu_base, Nu_corrected, individual correction factors, etc.).
+    """
+    diagnostics = heat_transfer_coefficient_internal_diagnostics(
+        m_dot=m_dot,
+        tube_inner_diameter=tube_inner_diameter,
+        flow_area=flow_area,
+        props=props,
+        T_bulk=T_bulk,
+        T_wall=T_wall,
+        L_heated=L_heated,
+    )
+    return (
+        diagnostics.v,
+        diagnostics.Re,
+        diagnostics.Pr,
+        diagnostics.alfa_corrected,
+        diagnostics.warnings,
+    )

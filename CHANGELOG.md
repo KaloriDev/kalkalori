@@ -11,17 +11,20 @@ The project follows **Semantic Versioning (SemVer)**:
 ### Changed (breaking, internal API)
 
 - Renamed the previous mean-property rating API to **Simulation**.
-- Improved crossflow ε-NTU behavior and matching inverse handling used by Rating.
+- Improved crossflow ε-NTU behavior and inverse handling used by Rating.
+- Rating now uses the iterative thermal state (with wall effects) instead of single-pass thermal coefficients.
 
 ### Added
 
 - Simulation/Rating split with heat-balance closure and NTU inverse support.
-- Iterative thermal-state solving with wall-temperature/property corrections.
-- Supporting warnings plus tests and notebooks updates for the 0.5.x flow.
+- Iterative thermal-state solving with wall-temperature and property corrections.
+- Internal gas wall-temperature correction and finite-length correction in tube-side heat transfer.
+- Expanded diagnostics, warnings, tests, and notebook coverage for the 0.5.x workflow.
 
 ### Notes
 
 - `solve()` remains the single-pass physics kernel; Simulation and Rating are driver layers.
+- Simulation does not consume thermal wall iteration by default; Rating does.
 - Scope unchanged: 0D model only, without condensation or latent effects.
 
 ---

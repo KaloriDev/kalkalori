@@ -218,7 +218,7 @@ def test_ntu_from_effectiveness_guard() -> None:
 # Part C - Rating (overdesign)
 # ---------------------------------------------------------------------------
 def test_rating() -> tuple:
-    print("rating: geometry sized exactly for Q (from simulate on-zero) -> overdesign ~= 0")
+    print("rating: geometry sized exactly for its own achievable duty -> overdesign ~= 0")
 
     hx = BareTubeHeatExchanger(build_bundle())
 
@@ -239,29 +239,57 @@ def test_rating() -> tuple:
         HXSideInput(provider=outside_provider, m_dot=outside_m_dot, T_in=outside_T_in, p=p),
     )
 
-    # Baseline: feed simulate()'s own outlet temperatures back into rate().
-    inside_bal0 = BalanceSideSpec(provider=inside_provider, p=p, m_dot=inside_m_dot, T_in=inside_T_in, T_out=sim.T_out_inside)
-    outside_bal0 = BalanceSideSpec(provider=outside_provider, p=p, m_dot=outside_m_dot, T_in=outside_T_in, T_out=sim.T_out_outside)
+    # Since v0.5.3, rate() sources alfa_i/alfa_o/U/UA from the converged,
+    # wall/length-corrected iterative thermal state (solve_thermal_state),
+    # not from the same uncorrected single pass simulate() uses internally.
+    # So simulate()'s own outlet temperatures are no longer the self-
+    # consistent "zero overdesign" baseline for rate() -- that baseline must
+    # instead come from solve_thermal_state()'s own achievable operating
+    # point. Tight tolerances are used so the two solve_thermal_state calls
+    # (this one, and the one inside rate() below) converge to matching
+    # precision.
+    tight_iter_kwargs = dict(
+        max_iterations=200,
+        wall_temperature_tolerance_K=1e-6,
+        relative_alfa_tolerance=1e-9,
+    )
+    thermal_state = hx.solve_thermal_state(
+        m_dot_inside=inside_m_dot, m_dot_outside=outside_m_dot,
+        inside_provider=inside_provider, outside_provider=outside_provider,
+        T_in_inside=inside_T_in, T_in_outside=outside_T_in,
+        p_inside=p, p_outside=p,
+        **tight_iter_kwargs,
+    )
+    assert thermal_state.converged, thermal_state
+    T_out_inside0 = 2.0 * thermal_state.inside_bulk_temperature - inside_T_in
+    T_out_outside0 = 2.0 * thermal_state.outside_bulk_temperature - outside_T_in
 
-    res0 = hx.rate(inside_bal0, outside_bal0)
+    # Baseline: feed solve_thermal_state()'s own achievable outlet
+    # temperatures back into rate().
+    inside_bal0 = BalanceSideSpec(provider=inside_provider, p=p, m_dot=inside_m_dot, T_in=inside_T_in, T_out=T_out_inside0)
+    outside_bal0 = BalanceSideSpec(provider=outside_provider, p=p, m_dot=outside_m_dot, T_in=outside_T_in, T_out=T_out_outside0)
+
+    res0 = hx.rate(inside_bal0, outside_bal0, **tight_iter_kwargs)
     print(f"  overdesign_factor (baseline)         : {res0.overdesign_factor:.3e}")
     print(f"  A_required / A_o                     : {res0.A_required:.4f} / {res0.A_o:.4f}")
     assert res0.closed_balance.warnings is None, res0.closed_balance.warnings
-    assert abs(res0.overdesign_factor) < 1e-6, res0.overdesign_factor
-    assert abs(res0.A_required - res0.A_o) / res0.A_o < 1e-6
+    assert abs(res0.overdesign_factor) < 1e-4, res0.overdesign_factor
+    assert abs(res0.A_required - res0.A_o) / res0.A_o < 1e-4
+    assert math.isclose(res0.UA_actual, thermal_state.UA, rel_tol=1e-6)
+    assert math.isclose(res0.alfa_i, thermal_state.alfa_i, rel_tol=1e-6)
+    assert math.isclose(res0.alfa_o, thermal_state.alfa_o, rel_tol=1e-6)
 
     # include_simulation bridge: Q_achievable should match sim.q closely.
+    # (sim.q is simulate()'s own -- uncorrected -- achievable duty; it is
+    # unaffected by which T_out values were used to build inside_bal0/
+    # outside_bal0, since to_hx_side_input() only carries T_in/m_dot/p.)
     res0_sim = hx.rate(inside_bal0, outside_bal0, include_simulation=True)
     assert res0_sim.simulation is not None
     assert abs(res0_sim.Q_achievable - sim.q) / sim.q < 1e-6
 
     # Lower/higher demanded effectiveness at fixed m_dot/T_in -> overdesign
     # strictly decreasing as demanded effectiveness increases.
-    C_hot = outside_m_dot * 1180.0
-    C_cold = inside_m_dot * 1007.0
-    C_min = min(C_hot, C_cold)
-    Q_max = C_min * (outside_T_in - inside_T_in)
-    eps_actual = sim.q / Q_max
+    eps_actual = res0.closed_balance.effectiveness
 
     inside_bal_partial = BalanceSideSpec(provider=inside_provider, p=p, m_dot=inside_m_dot, T_in=inside_T_in)
     outside_bal_partial = BalanceSideSpec(provider=outside_provider, p=p, m_dot=outside_m_dot, T_in=outside_T_in)
