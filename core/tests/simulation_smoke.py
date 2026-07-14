@@ -1,13 +1,20 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
 """
-Smoke test for BareTubeHeatExchanger.simulate (v0.5.x mean-property simulation).
+Smoke test for BareTubeHeatExchanger.simulate (v0.5.3: wall/length-corrected
+iterative thermal state by default; iterate=False uncorrected escape hatch).
 
 Runs WITHOUT CoolProp / IAPWS / PsychroLib: it uses a tiny linear
-temperature-dependent provider plus ConstantPropertyProvider so the outer
-iteration loop, the forced-averaged single-pass short-circuit, convergence
-diagnostics, non-convergence handling, and surface-margin derating can all be
-exercised in a bare Python environment.
+temperature-dependent provider plus ConstantPropertyProvider so the default
+corrected path, the iterate=False escape hatch, convergence diagnostics,
+non-convergence handling, and surface-margin derating can all be exercised
+in a bare Python environment.
+
+Note (v0.5.3): a ``ConstantPropertyProvider`` no longer forces a single-pass
+shortcut under the default ``iterate=True`` path -- constant bulk properties
+do not make the wall-temperature correction trivial, so genuine iteration
+(usually a handful of passes) is still required. Only ``iterate=False``
+remains a guaranteed single pass.
 
 Run:
     python -m core.tests.simulation_smoke
@@ -107,7 +114,7 @@ def main() -> None:
 
     print()
     print("=" * 70)
-    print("CASE 2 - forced averaged props (ConstantPropertyProvider) -> 1 pass")
+    print("CASE 2 - ConstantPropertyProvider still iterates for wall temperature (v0.5.3)")
     print("=" * 70)
     inside_c = HXSideInput(
         provider=ConstantPropertyProvider(
@@ -164,9 +171,22 @@ def main() -> None:
 
     # ---- assertions --------------------------------------------------------
     assert res.converged and res.iterations > 1, "case 1 should iterate and converge"
-    assert res2.converged and res2.iterations == 1, "case 2 must be a single pass"
+    # v0.5.3: ConstantPropertyProvider no longer forces a single pass under
+    # the default iterate=True path -- the wall-temperature correction still
+    # needs genuine iteration even with constant bulk properties.
+    assert res2.converged and res2.iterations > 1, "case 2 must still iterate (wall correction)"
     assert res_inlet.converged and res_inlet.iterations == 1, "iterate=False -> single pass"
     assert not res4.converged and res4.iterations == 3, "case 4 must not converge"
+
+    # v0.5.3: the default (corrected) path always carries a thermal_state;
+    # the iterate=False escape hatch never does.
+    for sim_result in (res, res2, res4, res_margin0, res_margin_low, res_margin_high):
+        assert sim_result.thermal_state is not None, sim_result
+        assert sim_result.inside_alfa_mean == sim_result.thermal_state.alfa_i
+        assert sim_result.outside_alfa_mean == sim_result.thermal_state.alfa_o
+        assert sim_result.U_mean == sim_result.thermal_state.U
+        assert sim_result.UA == sim_result.thermal_state.UA
+    assert res_inlet.thermal_state is None
 
     # energy balance on the converged case
     q_in = inside_var.m_dot * res.inside_props_mean.cp * (res.T_out_inside - inside_var.T_in)

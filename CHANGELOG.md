@@ -13,18 +13,20 @@ The project follows **Semantic Versioning (SemVer)**:
 - Renamed the previous mean-property rating API to **Simulation**.
 - Improved crossflow ε-NTU behavior and inverse handling used by Rating.
 - Rating now uses the iterative thermal state (with wall effects) instead of single-pass thermal coefficients.
+- **Simulation now also uses the same converged, wall/length-corrected iterative thermal state by default** (`iterate=True`, unchanged default): `inside_alfa_mean`/`outside_alfa_mean`/`U_mean`/`UA` on `HXSimulationResult` are read from `solve_iterative_thermal_state` and are never overwritten by the separate (uncorrected) `solve()` pass kept only for its area/hydraulic/regime diagnostics. A `ConstantPropertyProvider` no longer forces a single-pass shortcut under `iterate=True`: the wall-temperature correction still needs to converge even with constant bulk properties. The explicit `iterate=False` escape hatch is unchanged (single, fast, uncorrected pass; `thermal_state=None` on the result).
+- Fixed a notebook/production divergence in `core/tests/heat_balance_rating_matrix_test.ipynb`: the notebook previously recomputed corrected Nu/alfa diagnostics independently (a second, parallel calculation, with a hardcoded no-op length correction) instead of reading them from the production result, so its displayed `inside_alfa_W_m2K` column silently used the *uncorrected* coefficient while `U_mean`/`UA_actual` used the corrected one. The notebook now extracts all thermal diagnostics from `result.thermal_state` (added to both `HXSimulationResult` and `HXRatingResult`) with no independent physics calculation, and asserts `inside_alfa_W_m2K == inside_alfa_corrected` for every generated row.
 
 ### Added
 
 - Simulation/Rating split with heat-balance closure and NTU inverse support.
 - Iterative thermal-state solving with wall-temperature and property corrections.
 - Internal gas wall-temperature correction and finite-length correction in tube-side heat transfer.
-- Expanded diagnostics, warnings, tests, and notebook coverage for the 0.5.x workflow.
+- `thermal_state: IterativeThermalState` field on `HXSimulationResult` (`None` only for `iterate=False`) and on `HXRatingResult`, plus `alfa_i`/`alfa_o` on `HXRatingResult` -- the shared, authoritative source for corrected coefficients across both driver layers.
+- Expanded diagnostics, warnings, tests, and notebook coverage for the 0.5.x workflow, including sentinel call-path tests (patching `solve_iterative_thermal_state` at its actual point of use in both `core.models.rating` and `core.models.simulation`), a real dry-air integration test, resistance-reconstruction checks, and a `rate(include_simulation=True)` vs. `simulate()` consistency check.
 
 ### Notes
 
-- `solve()` remains the single-pass physics kernel; Simulation and Rating are driver layers.
-- Simulation does not consume thermal wall iteration by default; Rating does.
+- `solve()` remains the single-pass physics kernel; Simulation and Rating are driver layers, both now funneling through the same `solve_iterative_thermal_state` for corrected coefficients.
 - Scope unchanged: 0D model only, without condensation or latent effects.
 
 ---

@@ -21,7 +21,7 @@
 #   cp [J/(kg*K)], m_dot [kg/s], alfa [W/(m2*K)].
 
 """
-v0.5.x - Iterative Mean-Property Heat Exchanger Simulation.
+v0.5.3 - Iterative Mean-Property Heat Exchanger Simulation.
 
 Motivation
 ----------
@@ -33,16 +33,35 @@ gas-gas duty with a large temperature span (e.g. 30 degC vs 400 degC) the
 inlet-only assumption is not adequate: rho, mu, k, cp, Pr, Re, velocity, alfa
 and U all change substantially between inlet and outlet.
 
-This module keeps the physics/correlations of ``BareTubeHeatExchanger``
-untouched and adds an *outer* iteration that:
+Authoritative thermal state (v0.5.3)
+--------------------------------------
+The default (``iterate=True``) path now delegates the *entire* mean-bulk and
+wall-temperature convergence to
+``core.heat_transfer.thermal_iteration.solve_iterative_thermal_state`` -- the
+same function used by ``core.models.rating`` -- instead of re-implementing a
+bespoke outer mean-property loop around uncorrected ``BareTubeHeatExchanger.
+solve()`` passes. Concretely:
 
-    1. guesses outlet temperatures on both sides,
-    2. evaluates each side's transport properties at its *mean bulk*
-       temperature ``T_mean = 0.5 * (T_in + T_out)`` using a property provider,
-    3. rebuilds the sensible capacity rates ``C = m_dot * cp(T_mean)``,
-    4. calls the existing MVP solver with the mean-state properties,
-    5. relaxes the new outlet temperatures,
-    6. repeats until duty and both outlet temperatures converge.
+    1. ``solve_iterative_thermal_state(...)`` converges the mean bulk
+       temperatures, both tube-wall surface temperatures, and the
+       wall/length-corrected ``alfa_i``, ``alfa_o``, ``U``, ``UA``.
+    2. Achievable duty and outlet temperatures are computed from that
+       converged ``UA`` via the existing epsilon-NTU relations
+       (``effectiveness_ntu``/``heat_duty_from_effectiveness``) -- reused, not
+       duplicated.
+    3. ``surface_margin`` (if requested) derates that same ``UA`` exactly as
+       before.
+    4. One ``BareTubeHeatExchanger.solve()`` pass is still run, at the
+       converged mean bulk properties, *purely* to populate the
+       area/hydraulic/regime-warning snapshot (``final_result``); its own
+       (uncorrected) ``alfa``/``UA`` are never propagated to the top-level
+       result -- ``inside_alfa_mean``/``outside_alfa_mean``/``U_mean``/``UA``
+       come from the converged thermal state and are not later overwritten.
+
+This supersedes the v0.5.1/v0.5.2 behavior, where Simulation deliberately
+never computed a wall temperature at all (documented as out of scope) and
+``inside_alfa_mean``/``UA`` were always the plain constant-property Gnielinski/
+Zukauskas result.
 
 Design-practice terminology
 ----------------------------
@@ -52,50 +71,55 @@ This is distinct from **Rating** (``core.models.rating``), which starts from a
 *closed* heat balance (known outlet temperatures too) and reports how much
 surface margin / overdesign the geometry provides.
 
-Default entry point and the "forced averaged properties" case
+Default entry point and the ``iterate=False`` escape hatch
 ---------------------------------------------------------------
 The intended default entry point is ``BareTubeHeatExchanger.simulate(...)``,
-which runs the mean-property iteration. There is one deliberate exception:
+which runs the corrected iterative thermal state described above -- for
+*any* property provider, including ``ConstantPropertyProvider``: even with
+constant bulk properties, the wall-temperature correction is not known a
+priori and still requires iteration, so a ``ConstantPropertyProvider`` no
+longer collapses this path to a single pass (unlike v0.5.2).
 
-    If both sides use a ``ConstantPropertyProvider`` (or the caller passes
-    ``iterate=False``), the supplied properties are taken as *already averaged*
-    and the simulation collapses to a single ``solve`` pass.
-
-This is not a heuristic shortcut: with constant properties ``UA`` and the
-capacity rates ``C`` do not depend on the guessed outlet temperatures, so the
-epsilon-NTU balance is exact in one pass and iterating would only walk the
-relaxation on the outlet temperatures for no physical gain. The single pass
-returns ``converged=True`` and ``iterations=1``.
+The caller may still request an explicit, fast, *uncorrected* single pass at
+the raw inlet state via ``iterate=False``: this bypasses
+``solve_iterative_thermal_state`` entirely (a single ``BareTubeHeatExchanger.
+solve()`` call, ``converged=True``, ``iterations=1``, no wall-temperature
+correction, ``thermal_state=None`` on the result) -- an intentional
+approximation, not a bug, for callers that want a cheap estimate.
 
 Surface margin (derating)
 --------------------------
 ``surface_margin`` is an *input* to Simulation (``0.0`` by default, meaning
-"on the nose" / no margin). When ``surface_margin > 0``, the full-geometry
-``UA`` from ``solve()`` is derated before the epsilon-NTU balance is redone:
+"on the nose" / no margin). When ``surface_margin > 0``, the converged
+``UA`` (from the thermal state, or from the single ``solve()`` pass when
+``iterate=False``) is derated before the epsilon-NTU balance is redone:
 
     UA_eff = UA_full / (1 + surface_margin)
     eps_eff = effectiveness_ntu(C_hot, C_cold, UA_eff, flow_arrangement)
     Q_eff, T_hot_out_eff, T_cold_out_eff = heat_duty_from_effectiveness(eps_eff, ...)
 
 The derated duty and outlet temperatures (not the full-UA ones) are what the
-outer relaxation loop tracks and what the result reports as ``q``/``T_out_*``.
-``surface_margin=0.0`` skips this recomputation entirely, so results are
-bit-for-bit identical to not having the parameter at all.
+result reports as ``q``/``T_out_*``. ``surface_margin=0.0`` skips this
+recomputation entirely, so results are bit-for-bit identical to not having
+the parameter at all.
 
-Scope (first v0.5.x)
+Scope (v0.5.3)
 --------------------
 In scope: sensible heat transfer; dry air, gas mixtures, water/steam where
 single-phase applies; gas-gas and gas-liquid; cases with a large property
-change; convergence diagnostics.
+change; convergence diagnostics; wall-temperature/finite-length correction
+(via the shared iterative thermal state).
 
 Out of scope (deliberately not handled here): condensation, wet surface,
 latent heat, water removal from a gas composition, acid dew point, full wet
-economizer, row-by-row / segmented models, wall-temperature iteration.
+economizer, row-by-row / segmented models.
 
 Conventions
 -----------
-- This is a *driver*: it does not duplicate any correlation. Each iteration is
-  one call to ``BareTubeHeatExchanger.solve``.
+- This is a *driver*: it does not duplicate any correlation. The corrected
+  path is one call to ``solve_iterative_thermal_state`` plus one call to
+  ``BareTubeHeatExchanger.solve`` (diagnostics only, see above); the
+  ``iterate=False`` path is one call to ``BareTubeHeatExchanger.solve``.
 - "inside" always maps to the tube side; "outside" maps to the outside/bundle
   side. Which side is thermally hot vs cold is decided from the inlet
   temperatures, independently of the tube/outside geometry role.
@@ -108,7 +132,7 @@ import math
 from dataclasses import dataclass
 
 from core.properties.common import FluidTransportProperties
-from core.properties.fluids import PropertyProvider, ConstantPropertyProvider
+from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
 from core.properties.adapters import (
     to_internal_fluid_props,
@@ -117,6 +141,10 @@ from core.properties.adapters import (
 
 from core.heat_transfer.streams import SensibleHeatStream
 from core.heat_transfer.ntu import effectiveness_ntu, heat_duty_from_effectiveness
+from core.heat_transfer.thermal_iteration import (
+    IterativeThermalState,
+    solve_iterative_thermal_state,
+)
 
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
 
@@ -176,10 +204,16 @@ class HXSimulationResult:
     the respective side. Naming follows the tube/outside geometry role:
     ``inside`` is the tube side, ``outside`` is the bundle side.
 
-    For a single-pass simulation (forced constant properties, or
-    ``iterate=False``) ``converged`` is True and ``iterations`` is 1; the
-    reported ``T_mean_*`` are the bulk means of the computed outlet
-    temperatures.
+    For the ``iterate=False`` single-pass escape hatch, ``converged`` is True
+    and ``iterations`` is 1, ``thermal_state`` is ``None``, and
+    ``inside_alfa_mean``/``outside_alfa_mean``/``U_mean``/``UA`` are the plain
+    uncorrected coefficients from that single pass; the reported ``T_mean_*``
+    are the bulk means of the computed outlet temperatures. Otherwise (the
+    default, corrected path), ``inside_alfa_mean``/``outside_alfa_mean``/
+    ``U_mean``/``UA`` are read from the converged ``thermal_state`` (wall/
+    length-corrected) and are never later overwritten by the separate
+    (uncorrected) ``final_result`` solve pass, which is retained only for its
+    area/hydraulic/regime diagnostics.
 
     Simulation does not rate the exchanger against a required duty, so its
     output ``overdesign_factor`` is defined as ``0.0``.  This keeps result
@@ -198,7 +232,9 @@ class HXSimulationResult:
     T_mean_inside: float
     T_mean_outside: float
 
-    # Transport properties used in the final pass
+    # Transport properties used in the final pass (bulk-mean; see
+    # thermal_state.inside_wall_props/outside_wall_props for wall-state
+    # properties, kept separate and never overwriting these).
     inside_props_mean: FluidTransportProperties
     outside_props_mean: FluidTransportProperties
 
@@ -209,12 +245,12 @@ class HXSimulationResult:
     outside_Re_mean: float
     inside_Pr_mean: float
     outside_Pr_mean: float
-    inside_alfa_mean: float
-    outside_alfa_mean: float
+    inside_alfa_mean: float    # == thermal_state.alfa_i when thermal_state is not None
+    outside_alfa_mean: float   # == thermal_state.alfa_o when thermal_state is not None
 
     # Overall performance (of the real, undegraded geometry)
-    U_mean: float          # [W/(m2*K)] referenced to outer area A_o
-    UA: float              # [W/K]
+    U_mean: float          # [W/(m2*K)] referenced to outer area A_o; == thermal_state.U
+    UA: float              # [W/K]; == thermal_state.UA
 
     # Achieved duty and outlet temperatures (after surface_margin derating)
     q: float                # [W]
@@ -227,8 +263,17 @@ class HXSimulationResult:
     Q_full: float            # [W] duty at the real geometry's full UA
     Q_derated: float         # [W] duty after surface_margin derating (== q)
 
-    # Full snapshot of the final MVP solve (areas, hydraulics, per-side blocks)
+    # Full snapshot of the final MVP solve (areas, hydraulics, per-side
+    # blocks); alfa/UA fields on this snapshot are NOT authoritative -- see
+    # thermal_state below.
     final_result: HXResult
+
+    # Converged iterative thermal state (wall temperatures, per-side
+    # correction/Nu diagnostics, convergence/iterations/residual). ``None``
+    # only for the ``iterate=False`` single-pass escape hatch. This is the
+    # single source of truth for inside_alfa_mean/outside_alfa_mean/U_mean/UA
+    # above.
+    thermal_state: IterativeThermalState | None
 
     # Diagnostics
     warnings: list[ModelWarning] | None = None
@@ -251,19 +296,28 @@ def run_simulation(
     K_turn: float = 1.5,
     # Outside pressure-drop provider selection:
     euler_provider: str = "zukauskas",
-    # Convergence controls (defaults per v0.5.x spec):
+    # Convergence controls (defaults per v0.5.x spec; forwarded to
+    # solve_iterative_thermal_state as max_iterations/wall_temperature_
+    # tolerance_K/relaxation_factor -- same meaning/defaults as
+    # BareTubeHeatExchanger.solve_thermal_state / .rate()):
     max_iter: int = 30,
     temperature_tolerance_K: float = 0.05,
     relative_duty_tolerance: float = 1e-4,
     relaxation_factor: float = 0.5,
+    relative_alfa_tolerance: float = 1e-3,
 ) -> HXSimulationResult:
     """Simulate a bare-tube exchanger. Backing implementation of ``.simulate``.
 
-    The default (``iterate=True`` with temperature-dependent providers) runs the
-    mean-property iteration described in the module docstring. When both sides
-    use a ``ConstantPropertyProvider`` or ``iterate=False`` is passed, a single
-    ``solve`` pass is performed and the supplied properties are treated as the
-    mean-bulk properties.
+    The default (``iterate=True``, for any property provider) calls
+    ``solve_iterative_thermal_state`` to converge the mean-bulk and
+    wall-temperature state and reports its corrected coefficients; see the
+    module docstring for the full call path. ``iterate=False`` bypasses this
+    entirely for a single, uncorrected ``solve()`` pass at the inlet state.
+
+    ``relative_duty_tolerance`` is accepted for backward compatibility but is
+    not used by the default (corrected) path, which converges on wall
+    temperature/alfa (``temperature_tolerance_K``/``relative_alfa_tolerance``)
+    exactly like ``solve_iterative_thermal_state``.
 
     ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
     before computing duty/outlet temperatures; see the module docstring.
@@ -353,6 +407,7 @@ def run_simulation(
     def _build_result(
         *,
         final_result: HXResult,
+        thermal_state: IterativeThermalState | None,
         props_in: FluidTransportProperties,
         props_out: FluidTransportProperties,
         T_out_inside: float,
@@ -365,10 +420,25 @@ def run_simulation(
         residual_T_inside_K: float,
         residual_T_outside_K: float,
     ) -> HXSimulationResult:
-        A_o = final_result.A_o
-        U_mean = final_result.UA / A_o if A_o > 0.0 else math.nan
+        # Authoritative source for alfa_i/alfa_o/U/UA: the converged thermal
+        # state when available (the default, corrected path); the legacy
+        # uncorrected single solve() pass only for the iterate=False escape
+        # hatch (thermal_state is None there by construction).
+        if thermal_state is not None:
+            inside_alfa_mean = thermal_state.alfa_i
+            outside_alfa_mean = thermal_state.alfa_o
+            U_mean = thermal_state.U
+            UA = thermal_state.UA
+            thermal_warnings = list(thermal_state.warnings)
+        else:
+            A_o = final_result.A_o
+            inside_alfa_mean = final_result.tube_side_thermal.alfa
+            outside_alfa_mean = final_result.outside_side_thermal.alfa
+            U_mean = final_result.UA / A_o if A_o > 0.0 else math.nan
+            UA = final_result.UA
+            thermal_warnings = []
 
-        warnings_list: list[ModelWarning] = list(final_result.warnings or [])
+        warnings_list: list[ModelWarning] = list(final_result.warnings or []) + thermal_warnings
         if not converged:
             warnings_list.append(
                 make_warning(
@@ -402,10 +472,10 @@ def run_simulation(
             outside_Re_mean=final_result.outside_side_thermal.Re,
             inside_Pr_mean=final_result.tube_side_thermal.Pr,
             outside_Pr_mean=final_result.outside_side_thermal.Pr,
-            inside_alfa_mean=final_result.tube_side_thermal.alfa,
-            outside_alfa_mean=final_result.outside_side_thermal.alfa,
+            inside_alfa_mean=inside_alfa_mean,
+            outside_alfa_mean=outside_alfa_mean,
             U_mean=U_mean,
-            UA=final_result.UA,
+            UA=UA,
             q=q,
             T_out_inside=T_out_inside,
             T_out_outside=T_out_outside,
@@ -414,23 +484,20 @@ def run_simulation(
             Q_full=Q_full,
             Q_derated=q,
             final_result=final_result,
+            thermal_state=thermal_state,
             warnings=warnings_list if warnings_list else None,
         )
 
-    # --- Single-pass path: forced averaged properties or iterate=False -------
-    forced_constant = (
-        isinstance(inside.provider, ConstantPropertyProvider)
-        and isinstance(outside.provider, ConstantPropertyProvider)
-    )
-    if forced_constant or not iterate:
-        # Properties are treated as already averaged. With constant providers the
-        # outlet temperatures from a single pass are exact; with a variable
-        # provider and iterate=False the properties are the inlet properties.
+    # --- iterate=False: explicit uncorrected single-pass escape hatch -------
+    if not iterate:
+        # Properties are treated as already averaged (the inlet state); no
+        # wall-temperature correction is applied. See module docstring.
         result, T_out_inside_calc, T_out_outside_calc, props_in, props_out, Q_eff, Q_full = _evaluate(
             inside.T_in, outside.T_in
         )
         return _build_result(
             final_result=result,
+            thermal_state=None,
             props_in=props_in,
             props_out=props_out,
             T_out_inside=T_out_inside_calc,
@@ -444,66 +511,110 @@ def run_simulation(
             residual_T_outside_K=0.0,
         )
 
-    # --- Iterative mean-property path ---------------------------------------
-    # Initial guess: outlet == inlet (first pass evaluates at the inlet state).
-    T_out_inside = inside.T_in
-    T_out_outside = outside.T_in
-
-    Q_prev: float | None = None
-    residual_q_rel = math.inf
-    residual_T_inside_K = math.inf
-    residual_T_outside_K = math.inf
-    converged = False
-    iterations = 0
-
-    for iteration in range(1, max_iter + 1):
-        iterations = iteration
-
-        _result, T_out_inside_calc, T_out_outside_calc, _pin, _pout, Q_eff, _Q_full = _evaluate(
-            T_out_inside, T_out_outside
-        )
-
-        # Under-relaxed outlet-temperature update.
-        T_out_inside_new = T_out_inside + relaxation_factor * (T_out_inside_calc - T_out_inside)
-        T_out_outside_new = T_out_outside + relaxation_factor * (T_out_outside_calc - T_out_outside)
-
-        residual_T_inside_K = abs(T_out_inside_new - T_out_inside)
-        residual_T_outside_K = abs(T_out_outside_new - T_out_outside)
-        residual_q_rel = (
-            abs(Q_eff - Q_prev) / max(abs(Q_eff), 1e-12) if Q_prev is not None else math.inf
-        )
-
-        T_out_inside = T_out_inside_new
-        T_out_outside = T_out_outside_new
-        Q_prev = Q_eff
-
-        if (
-            iteration >= 2
-            and residual_q_rel < relative_duty_tolerance
-            and residual_T_inside_K < temperature_tolerance_K
-            and residual_T_outside_K < temperature_tolerance_K
-        ):
-            converged = True
-            break
-
-    # Final self-consistent evaluation at the converged mean state, so that all
-    # reported means (velocity, Re, Pr, alfa, U, UA, q, T_out) are mutually
-    # consistent with the converged outlet temperatures.
-    final_result, T_out_inside_final, T_out_outside_final, props_in, props_out, Q_eff_final, Q_full_final = _evaluate(
-        T_out_inside, T_out_outside
+    # --- Default path: converged, wall/length-corrected thermal state -------
+    # Delegates the entire mean-bulk + wall-temperature convergence to
+    # solve_iterative_thermal_state (the same function core.models.rating
+    # uses), rather than re-running a bespoke, uncorrected outer loop here.
+    # This applies for ANY property provider, including
+    # ConstantPropertyProvider: unlike v0.5.2, constant bulk properties no
+    # longer imply a trivial single pass, because the wall-temperature
+    # correction still needs to converge.
+    thermal_state = solve_iterative_thermal_state(
+        hx,
+        m_dot_inside=inside.m_dot,
+        m_dot_outside=outside.m_dot,
+        inside_provider=inside.provider,
+        outside_provider=outside.provider,
+        T_in_inside=inside.T_in,
+        T_in_outside=outside.T_in,
+        p_inside=inside.p,
+        p_outside=outside.p,
+        flow_arrangement=flow_arrangement,
+        euler_provider=euler_provider,
+        max_iterations=max_iter,
+        wall_temperature_tolerance_K=temperature_tolerance_K,
+        relative_alfa_tolerance=relative_alfa_tolerance,
+        relaxation_factor=relaxation_factor,
     )
 
+    # Legacy solve() pass at the converged mean-bulk properties: kept ONLY
+    # for its area/hydraulic/regime-warning snapshot (final_result). Its own
+    # (uncorrected) alfa/UA are discarded by _build_result above in favor of
+    # thermal_state -- never propagated to the top-level result.
+    if hot_is_inside:
+        hot_stream = SensibleHeatStream(C=inside.m_dot * thermal_state.inside_bulk_props.cp, T_in=inside.T_in)
+        cold_stream = SensibleHeatStream(C=outside.m_dot * thermal_state.outside_bulk_props.cp, T_in=outside.T_in)
+    else:
+        hot_stream = SensibleHeatStream(C=outside.m_dot * thermal_state.outside_bulk_props.cp, T_in=outside.T_in)
+        cold_stream = SensibleHeatStream(C=inside.m_dot * thermal_state.inside_bulk_props.cp, T_in=inside.T_in)
+
+    final_result = hx.solve(
+        hot_stream=hot_stream,
+        cold_stream=cold_stream,
+        m_dot_tube_side=inside.m_dot,
+        tube_side_props=to_internal_fluid_props(thermal_state.inside_bulk_props),
+        m_dot_outside=outside.m_dot,
+        outside_props=to_outside_fluid_props(thermal_state.outside_bulk_props),
+        K_inlet=K_inlet,
+        K_outlet=K_outlet,
+        K_turn=K_turn,
+        flow_arrangement=flow_arrangement,
+        euler_provider=euler_provider,
+    )
+
+    # Achievable duty/outlet temperatures from the CORRECTED UA (reuses the
+    # existing epsilon-NTU relations; no correlation is duplicated here).
+    C_inside = inside.m_dot * thermal_state.inside_bulk_props.cp
+    C_outside = outside.m_dot * thermal_state.outside_bulk_props.cp
+    eps_full = effectiveness_ntu(
+        C_hot=hot_stream.capacity_rate(),
+        C_cold=cold_stream.capacity_rate(),
+        UA=thermal_state.UA,
+        flow_arrangement=flow_arrangement,
+        C_inside=C_inside,
+        C_outside=C_outside,
+    )
+    Q_full, T_hot_out_full, T_cold_out_full = heat_duty_from_effectiveness(
+        eps=eps_full, hot_stream=hot_stream, cold_stream=cold_stream,
+    )
+
+    if surface_margin > 0.0:
+        UA_eff = thermal_state.UA / (1.0 + surface_margin)
+        eps_eff = effectiveness_ntu(
+            C_hot=hot_stream.capacity_rate(),
+            C_cold=cold_stream.capacity_rate(),
+            UA=UA_eff,
+            flow_arrangement=flow_arrangement,
+            C_inside=C_inside,
+            C_outside=C_outside,
+        )
+        Q_eff, T_hot_out_eff, T_cold_out_eff = heat_duty_from_effectiveness(
+            eps=eps_eff, hot_stream=hot_stream, cold_stream=cold_stream,
+        )
+    else:
+        Q_eff, T_hot_out_eff, T_cold_out_eff = Q_full, T_hot_out_full, T_cold_out_full
+
+    if hot_is_inside:
+        T_out_inside_final, T_out_outside_final = T_hot_out_eff, T_cold_out_eff
+    else:
+        T_out_outside_final, T_out_inside_final = T_hot_out_eff, T_cold_out_eff
+
+    # thermal_state.residual is a single wall-temperature residual [K] shared
+    # across both sides (see thermal_iteration.py); there is no separate
+    # relative-duty residual in the unified path, so residual_q_rel is
+    # reported as 0.0 (not tracked) rather than a stale/synthetic value.
     return _build_result(
         final_result=final_result,
-        props_in=props_in,
-        props_out=props_out,
+        thermal_state=thermal_state,
+        props_in=thermal_state.inside_bulk_props,
+        props_out=thermal_state.outside_bulk_props,
         T_out_inside=T_out_inside_final,
         T_out_outside=T_out_outside_final,
-        q=Q_eff_final,
-        Q_full=Q_full_final,
-        converged=converged,
-        iterations=iterations,
-        residual_q_rel=residual_q_rel,
-        residual_T_inside_K=residual_T_inside_K,
-        residual_T_outside_K=residual_T_outside_K,
+        q=Q_eff,
+        Q_full=Q_full,
+        converged=thermal_state.converged,
+        iterations=thermal_state.iterations,
+        residual_q_rel=0.0,
+        residual_T_inside_K=thermal_state.residual,
+        residual_T_outside_K=thermal_state.residual,
     )

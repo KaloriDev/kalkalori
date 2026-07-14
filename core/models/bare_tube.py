@@ -458,24 +458,30 @@ class BareTubeHeatExchanger:
         temperature_tolerance_K: float = 0.05,
         relative_duty_tolerance: float = 1e-4,
         relaxation_factor: float = 0.5,
+        relative_alfa_tolerance: float = 1e-3,
     ) -> "HXSimulationResult":
-        """Simulate this exchanger, iterating on mean-bulk properties by default.
+        """Simulate this exchanger, converging the wall/length-corrected
+        iterative thermal state by default (v0.5.3).
 
-        This is the intended default entry point (v0.5.x) for Simulation:
-        given geometry, both inlet temperatures, and both flow rates, compute
-        the achievable outlet temperatures (and duty). Properties on each
-        side are recomputed at the mean bulk temperature until duty and both
-        outlet temperatures converge.
+        This is the intended default entry point for Simulation: given
+        geometry, both inlet temperatures, and both flow rates, compute the
+        achievable outlet temperatures (and duty). By default (``iterate=
+        True``) this calls ``solve_iterative_thermal_state`` -- the same
+        function used by ``.rate(...)`` -- so ``inside_alfa_mean``/
+        ``outside_alfa_mean``/``U_mean``/``UA`` are wall/length-corrected,
+        for any property provider (including ``ConstantPropertyProvider``:
+        unlike earlier versions, constant bulk properties no longer skip
+        wall-temperature iteration, since the wall correction still needs to
+        converge).
 
         ``surface_margin`` (default ``0.0``, "on the nose") derates the
         full-geometry ``UA`` before computing duty/outlet temperatures; see
         ``core.models.simulation`` for the exact relation.
 
-        Forced/averaged properties: if both ``inside.provider`` and
-        ``outside.provider`` are ``ConstantPropertyProvider`` (or
-        ``iterate=False``), the supplied properties are treated as already
-        averaged and a single ``solve`` pass is performed (``converged=True``,
-        ``iterations=1``).
+        ``iterate=False`` is an explicit escape hatch: a single, fast,
+        *uncorrected* ``solve()`` pass at the inlet state (``converged=True``,
+        ``iterations=1``, ``thermal_state=None`` on the result) -- no wall-
+        temperature correction is applied.
 
         For Rating (closing a known heat balance to get overdesign/margin),
         see ``.rate(...)``.
@@ -500,6 +506,7 @@ class BareTubeHeatExchanger:
             temperature_tolerance_K=temperature_tolerance_K,
             relative_duty_tolerance=relative_duty_tolerance,
             relaxation_factor=relaxation_factor,
+            relative_alfa_tolerance=relative_alfa_tolerance,
         )
 
     def rate(
