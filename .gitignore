@@ -1,5 +1,7 @@
 # IDE and editor
 .vscode/
+.agents/
+.claude/
 .idea/
 *.swp
 *.swo
@@ -53,3 +55,6 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Test outputs
+tests/outputs/

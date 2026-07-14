@@ -19,6 +19,7 @@ from .streams import (
 from .internal_flow import (
     FluidProps as InternalFlowFluidProps,
     heat_transfer_coefficient_internal,
+    gas_wall_temperature_correction,
 )
 
 from .internal_pressure_drop import (
@@ -48,6 +49,11 @@ from .outside_pressure_drop_external import (
     ExternalCliEulerProvider,
 )
 
+from .thermal_iteration import (
+    IterativeThermalState,
+    solve_iterative_thermal_state,
+)
+
 from core.common.warnings import (
     ApplicabilityRange,
     ModelWarning,
@@ -71,6 +77,7 @@ __all__ = [
     # Internal flow
     "InternalFlowFluidProps",
     "heat_transfer_coefficient_internal",
+    "gas_wall_temperature_correction",
 
     # Internal pressure drop (component-based)
     "InternalPressureDropFluidProps",
@@ -94,6 +101,10 @@ __all__ = [
 
     # Outside pressure drop external adapter
     "ExternalCliEulerProvider",
+
+    # Iterative wall-corrected thermal state
+    "IterativeThermalState",
+    "solve_iterative_thermal_state",
 
     # Warnings and applicability checks
     "ApplicabilityRange",

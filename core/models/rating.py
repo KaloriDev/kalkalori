@@ -163,7 +163,14 @@ def run_rating(
     C_min = min(C_hot, C_cold)
 
     eps_req = closed_balance.Q / closed_balance.Q_max
-    NTU_req = ntu_from_effectiveness(eps_req, C_hot, C_cold, flow_arrangement=flow_arrangement)
+    NTU_req = ntu_from_effectiveness(
+        eps_req,
+        C_hot,
+        C_cold,
+        flow_arrangement=flow_arrangement,
+        C_inside=inside.C,
+        C_outside=outside.C,
+    )
     UA_req = NTU_req * C_min
     A_req = UA_req / U_mean
 

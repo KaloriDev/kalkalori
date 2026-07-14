@@ -45,7 +45,9 @@ Theory references
 
 3. Petukhov, B. S. (1970).
    Heat transfer and friction in turbulent pipe flow with variable physical properties.
-   Advances in Heat Transfer.
+   Advances in Heat Transfer, Vol. 6. Also reported in Kays, W.M., Crawford, M.E.,
+   Weigand, B., Convective Heat and Mass Transfer, and in VDI Heat Atlas,
+   Section G1 (gas property-variation correction).
 
 Notes
 -----
@@ -54,12 +56,18 @@ Notes
 - Turbulent Nusselt: Gnielinski correlation is used with a smooth-tube
   friction factor.
 - Transitional regime is handled by linear blending in Re between 2300 and 4000.
+- Optional turbulent-gas wall-property correction (Petukhov 1970, see
+  ``gas_wall_temperature_correction``) is applied only when the caller
+  supplies bulk/wall temperatures; it is independent of the outside
+  Zukauskas (Pr/Pr_s) wall correction in ``outside_flow.py``.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
+from core.common.warnings import ModelWarning, make_warning
 
 
 @dataclass(frozen=True)
@@ -131,9 +139,16 @@ def nusselt_laminar_fully_developed_const_wall_temp() -> float:
     return 3.66
 
 
+# Note:
+# This internal-flow Gnielinski Nusselt correlation is independent of
+# the Gaddis–Gnielinski Euler-number correlation used for outside
+# tube-bank pressure drop (see GaddisGnielinskiEulerProvider in
+# outside_pressure_drop.py). Both are named after Gnielinski but are
+# separate, independent correlations for different physical quantities.
 def nusselt_gnielinski(Re: float, Pr: float) -> float:
     """
-    Gnielinski correlation for turbulent flow in smooth tubes.
+    Gnielinski correlation for turbulent flow in smooth tubes (internal
+    tube-side heat transfer).
 
     Validity (typical):
     - 3000 < Re < 5e6
@@ -178,12 +193,120 @@ def nusselt_internal(Re: float, Pr: float) -> float:
     return (1.0 - w) * Nu_lam + w * Nu_turb
 
 
+# Applicability bounds for the turbulent-gas wall-property correction below.
+_GAS_WALL_CORR_TW_TB_LOWER_GUARD = 0.5  # gas-cooling extrapolation guard
+_GAS_WALL_CORR_TW_TB_UPPER = 2.4        # gas-heating upper bound (Petukhov 1970)
+
+# Regime above which the Gnielinski correlation (and this wall correction,
+# which is only documented for turbulent flow) applies.
+_GAS_WALL_CORR_RE_MIN = 4000.0
+
+
+def gas_wall_temperature_correction(
+    T_bulk: float,
+    T_wall: float,
+) -> tuple[float, list[ModelWarning]]:
+    """
+    Variable-property (bulk-to-wall temperature) correction factor for
+    turbulent internal *gas* flow, to be applied on top of the
+    constant-property Gnielinski Nusselt number.
+
+        Nu / Nu_cp = (T_bulk / T_wall)^n      (T in absolute units, K)
+
+            n = 0                              for T_wall/T_bulk < 1 (gas cooling)
+            n = -log10(T_wall/T_bulk)/4 + 0.3   for 1 <= T_wall/T_bulk <= 2.4 (gas heating)
+
+    Reference:
+        Petukhov, B. S. (1970). Heat transfer and friction in turbulent pipe
+        flow with variable physical properties. Advances in Heat Transfer,
+        Vol. 6. Also reported in Kays, Crawford, Weigand, Convective Heat
+        and Mass Transfer, and VDI Heat Atlas, Section G1.
+
+    This is independent of the outside crossflow (Pr/Pr_s)^0.25 wall
+    correction used in ``outside_flow.nusselt_zukauskas`` -- that correction
+    uses a Prandtl-number ratio appropriate for the Zukauskas tube-bank
+    correlation, while this one uses the absolute-temperature ratio
+    appropriate for internal turbulent gas flow.
+
+    Returns
+    -------
+    (factor, warnings) : tuple[float, list[ModelWarning]]
+        Multiplicative correction factor for Nu, and any applicability
+        warnings (empty list when within the documented range).
+    """
+    warnings_list: list[ModelWarning] = []
+
+    if (
+        not math.isfinite(T_bulk)
+        or not math.isfinite(T_wall)
+        or T_bulk <= 0.0
+        or T_wall <= 0.0
+    ):
+        warnings_list.append(
+            make_warning(
+                code="tube_ht_gas_wall_correction_invalid_temperature",
+                message=(
+                    "tube_ht: T_bulk/T_wall must be finite, positive absolute "
+                    "temperatures [K]; gas wall-property correction skipped "
+                    "(factor=1)."
+                ),
+                source="tube_ht",
+                severity="warning",
+            )
+        )
+        return 1.0, warnings_list
+
+    ratio = T_wall / T_bulk
+
+    if ratio < 1.0:
+        # Gas cooling (wall colder than bulk): Petukhov (1970) reports no
+        # reduction is needed for this side.
+        n = 0.0
+        if ratio < _GAS_WALL_CORR_TW_TB_LOWER_GUARD:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_gas_wall_correction_applicability_exceeded",
+                    message=(
+                        f"tube_ht: T_wall/T_bulk={ratio:.3g} indicates an "
+                        "unusually large gas-cooling temperature difference "
+                        "for the current 0D turbulent-gas wall correction; "
+                        "verify applicability."
+                    ),
+                    source="tube_ht",
+                    severity="warning",
+                )
+            )
+    else:
+        # Gas heating (wall hotter than bulk).
+        n = -math.log10(ratio) / 4.0 + 0.3
+        if ratio > _GAS_WALL_CORR_TW_TB_UPPER:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_gas_wall_correction_applicability_exceeded",
+                    message=(
+                        f"tube_ht: T_wall/T_bulk={ratio:.3g} exceeds the "
+                        f"Petukhov (1970) gas-heating correction's reported "
+                        f"range (<= {_GAS_WALL_CORR_TW_TB_UPPER:g}); result is "
+                        "an extrapolation."
+                    ),
+                    source="tube_ht",
+                    severity="warning",
+                )
+            )
+
+    factor = (T_bulk / T_wall) ** n
+    return factor, warnings_list
+
+
 def heat_transfer_coefficient_internal(
     m_dot: float,
     tube_inner_diameter: float,
     flow_area: float,
     props: FluidProps,
-) -> tuple[float, float, float, float]:
+    *,
+    T_bulk: float | None = None,
+    T_wall: float | None = None,
+) -> tuple[float, float, float, float, list[ModelWarning]]:
     """
     Convenience function returning tube-side alfa and key dimensionless groups.
 
@@ -196,7 +319,14 @@ def heat_transfer_coefficient_internal(
     flow_area : float
         Flow cross-sectional area [m^2] (e.g., N_tubes * pi*D_i^2/4).
     props : FluidProps
-        Thermophysical properties at representative conditions.
+        Thermophysical properties at representative bulk conditions.
+    T_bulk, T_wall : float, optional
+        Bulk and tube-wall (inside surface) temperatures [K]. When both are
+        supplied and the regime is turbulent (Re > 4000), the turbulent-gas
+        wall-property correction (``gas_wall_temperature_correction``) is
+        applied to Nu. When omitted (the default), the base Gnielinski
+        result is returned unchanged -- this preserves backward
+        compatibility for callers that do not supply wall state.
 
     Returns
     -------
@@ -208,6 +338,9 @@ def heat_transfer_coefficient_internal(
         Prandtl number [-]
     alfa : float
         Internal convective heat transfer coefficient [W/(m^2*K)]
+    warnings : list[ModelWarning]
+        Applicability warnings for the wall-property correction (empty when
+        no wall state is supplied or the correction is within range).
     """
     if tube_inner_diameter <= 0.0:
         raise ValueError("tube_inner_diameter must be positive.")
@@ -217,6 +350,42 @@ def heat_transfer_coefficient_internal(
     Pr = prandtl_number(props.cp, props.mu, props.k)
 
     Nu = nusselt_internal(Re, Pr)
+
+    warnings_list: list[ModelWarning] = []
+
+    if T_wall is not None:
+        if Re <= _GAS_WALL_CORR_RE_MIN:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_gas_wall_correction_not_applicable_regime",
+                    message=(
+                        "tube_ht: turbulent-gas wall-property correction is "
+                        f"only defined for Re > {_GAS_WALL_CORR_RE_MIN:g}; "
+                        "current regime is laminar/transitional, so the "
+                        "correction is skipped."
+                    ),
+                    source="tube_ht",
+                    severity="info",
+                )
+            )
+        elif T_bulk is None:
+            warnings_list.append(
+                make_warning(
+                    code="tube_ht_gas_wall_correction_unavailable",
+                    message=(
+                        "tube_ht: T_wall was supplied without T_bulk; "
+                        "gas wall-property correction requires both and is "
+                        "skipped (factor=1)."
+                    ),
+                    source="tube_ht",
+                    severity="info",
+                )
+            )
+        else:
+            factor, corr_warnings = gas_wall_temperature_correction(T_bulk, T_wall)
+            Nu = Nu * factor
+            warnings_list.extend(corr_warnings)
+
     alfa = Nu * props.k / tube_inner_diameter
 
-    return v, Re, Pr, alfa
+    return v, Re, Pr, alfa, warnings_list

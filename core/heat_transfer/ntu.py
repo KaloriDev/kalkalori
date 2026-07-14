@@ -20,6 +20,7 @@ Literature (primary references)
 -------------------------------
 1) Incropera, DeWitt, Bergman, Lavine:
    "Fundamentals of Heat and Mass Transfer", Wiley, Heat Exchangers chapter
+   (Table 11.4: crossflow, one fluid mixed / one unmixed).
 2) Shah, Sekulić:
    "Fundamentals of Heat Exchanger Design", Wiley
 3) Kays, London:
@@ -36,6 +37,28 @@ C_min limits maximum possible heat transfer:
     Q_max = C_min * (T_hot,in - T_cold,in)
 
 This follows directly from energy balance.
+
+Crossflow: mixed / unmixed (v0.5.2)
+------------------------------------
+KalKalori's public flow-arrangement values are fixed to
+``"counterflow"``, ``"cocurrentflow"``, ``"crossflow"`` -- there is no public
+option to select mixed/unmixed behaviour. For the current bare-tube
+crossflow model, the physical interpretation is fixed:
+
+    - outside / inter-tube side = mixed (transverse mixing between
+      parallel flow paths across the bundle),
+    - inside / tube side        = unmixed (each tube carries its own
+      stream with no transverse mixing).
+
+"Mixed" and "unmixed" describe this transverse-mixing topology; they are
+unrelated to laminar vs. turbulent flow regimes.
+
+Because the crossflow closed-form effectiveness depends on *which physical
+stream* (mixed outside vs. unmixed inside) carries C_min -- not merely on
+which one is hot or cold -- ``effectiveness_ntu``/``ntu_from_effectiveness``
+accept optional ``C_inside``/``C_outside`` to resolve the correct branch.
+Reducing capacity rates to anonymous C_hot/C_cold too early would lose
+exactly this information.
 """
 
 from __future__ import annotations
@@ -44,29 +67,45 @@ import math
 from core.heat_transfer.streams import EnergyStream
 
 
+# Below this Cr, both crossflow branches converge to the same Cr->0 limit
+# (eps = 1 - exp(-NTU), same as one fluid isothermal); handled directly to
+# avoid a 0/0 numerical form.
+_CR_ZERO_EPS = 1e-9
+
+
 def effectiveness_ntu(
     C_hot: float,
     C_cold: float,
     UA: float,
     *,
     flow_arrangement: str = "counterflow",
+    C_inside: float | None = None,
+    C_outside: float | None = None,
 ) -> float:
     """
     Compute effectiveness ε using ε–NTU.
 
-    Supported flow arrangements (MVP):
+    Supported flow arrangements:
     - "counterflow"
     - "cocurrentflow"
-    - "crossflow"  (default assumption: both fluids mixed)
+    - "crossflow"  (outside stream mixed, tube/inside stream unmixed; see
+      module docstring)
 
-    Crossflow remark (MVP)
-    ----------------------
-    With both fluids treated as perfectly mixed (lumped-parameter),
-    crossflow performance reduces to a form equivalent to cocurrent flow
-    in effectiveness-only modeling (0D).
-
-    More detailed crossflow models (mixed/unmixed, finite rows, etc.) are
-    intentionally deferred until segmentation / higher-fidelity modeling.
+    Parameters
+    ----------
+    C_hot, C_cold : float
+        Heat capacity rates [W/K] of the hot/cold streams.
+    UA : float
+        Overall conductance [W/K].
+    flow_arrangement : str
+        "counterflow", "cocurrentflow", or "crossflow".
+    C_inside, C_outside : float, optional
+        Heat capacity rates [W/K] of the physical inside (tube) and outside
+        (bundle) streams. Required only for ``flow_arrangement="crossflow"``,
+        where the correct closed-form branch depends on which physical
+        stream (mixed outside vs. unmixed inside) carries C_min. Ignored for
+        "counterflow"/"cocurrentflow" (those formulas depend only on
+        C_min/C_max, not on which physical side is which).
     """
 
     if C_hot <= 0.0 or C_cold <= 0.0:
@@ -95,10 +134,43 @@ def effectiveness_ntu(
     elif fa == "cocurrentflow":
         eps = (1.0 - math.exp(-NTU * (1.0 + C_r))) / (1.0 + C_r)
 
-    # Crossflow (both fluids mixed, MVP)
-    # Ref concept: lumped mixing removes counterflow advantage; use cocurrent-like form in 0D.
+    # Crossflow: outside stream mixed, inside (tube) stream unmixed.
+    #
+    # For the current bare-tube crossflow model:
+    # - the outside stream is treated as mixed,
+    # - the tube-side stream is treated as unmixed.
+    #
+    # Mixed/unmixed describes transverse mixing between parallel flow paths.
+    # It is unrelated to laminar or turbulent flow regimes.
+    #
+    # Which closed form applies depends on which physical stream carries
+    # C_min (Incropera Table 11.4):
     elif fa == "crossflow":
-        eps = (1.0 - math.exp(-NTU * (1.0 + C_r))) / (1.0 + C_r)
+        if C_inside is None or C_outside is None:
+            raise ValueError(
+                "flow_arrangement='crossflow' requires C_inside and "
+                "C_outside to resolve which physical stream (mixed outside "
+                "vs. unmixed inside) carries C_min; see module docstring."
+            )
+        if not (math.isfinite(C_inside) and math.isfinite(C_outside)):
+            raise ValueError("C_inside and C_outside must be finite.")
+        if C_inside <= 0.0 or C_outside <= 0.0:
+            raise ValueError("C_inside and C_outside must be positive.")
+
+        if C_outside <= C_inside:
+            # Case A: outside (mixed) stream is C_min.
+            # eps = 1 - exp( -(1 - exp(-Cr*NTU)) / Cr )
+            if C_r < _CR_ZERO_EPS:
+                eps = 1.0 - math.exp(-NTU)
+            else:
+                eps = 1.0 - math.exp(-(1.0 - math.exp(-C_r * NTU)) / C_r)
+        else:
+            # Case B: inside (unmixed) stream is C_min.
+            # eps = (1/Cr) * (1 - exp( -Cr*(1 - exp(-NTU)) ))
+            if C_r < _CR_ZERO_EPS:
+                eps = 1.0 - math.exp(-NTU)
+            else:
+                eps = (1.0 / C_r) * (1.0 - math.exp(-C_r * (1.0 - math.exp(-NTU))))
 
     else:
         raise ValueError(f"Unsupported flow_arrangement: {flow_arrangement}")
@@ -112,6 +184,8 @@ def ntu_from_effectiveness(
     C_cold: float,
     *,
     flow_arrangement: str = "counterflow",
+    C_inside: float | None = None,
+    C_outside: float | None = None,
 ) -> float:
     """
     Invert eps-NTU: compute NTU required to achieve a target effectiveness.
@@ -124,8 +198,23 @@ def ntu_from_effectiveness(
         NTU = 1/(Cr-1) * ln((eps-1)/(eps*Cr-1))
     Counterflow (Cr == 1):
         NTU = eps/(1-eps)
-    Cocurrent/crossflow (lumped, both mixed):
+    Cocurrentflow:
         NTU = -ln(1 - eps*(1+Cr)) / (1+Cr), valid for eps < 1/(1+Cr)
+    Crossflow (outside mixed / inside unmixed; see ``effectiveness_ntu``):
+        Both branches below have a stable closed-form inverse (derived by
+        solving the corresponding forward relation for NTU), so no root
+        solver is required.
+
+        Case A (outside/mixed is C_min):
+            NTU = -ln(1 + Cr*ln(1-eps)) / Cr,  valid for eps < 1 - exp(-1/Cr)
+        Case B (inside/unmixed is C_min):
+            NTU = -ln(1 + ln(1-Cr*eps)/Cr),    valid for eps < (1-exp(-Cr))/Cr
+
+    Parameters
+    ----------
+    C_inside, C_outside : float, optional
+        Required for ``flow_arrangement="crossflow"``; see
+        ``effectiveness_ntu``.
 
     Raises:
         ValueError: if C_hot/C_cold are not positive, or if ``effectiveness``
@@ -156,7 +245,7 @@ def ntu_from_effectiveness(
                 )
             NTU = 1.0 / (C_r - 1.0) * math.log(arg)
 
-    elif fa in ("cocurrentflow", "crossflow"):
+    elif fa == "cocurrentflow":
         eps_max = 1.0 / (1.0 + C_r)
         if effectiveness >= eps_max:
             raise ValueError(
@@ -166,6 +255,49 @@ def ntu_from_effectiveness(
                 f"{eps_max:.6g} for C_r={C_r:.6g}), regardless of area."
             )
         NTU = -math.log(1.0 - effectiveness * (1.0 + C_r)) / (1.0 + C_r)
+
+    elif fa == "crossflow":
+        if C_inside is None or C_outside is None:
+            raise ValueError(
+                "flow_arrangement='crossflow' requires C_inside and "
+                "C_outside to resolve which physical stream (mixed outside "
+                "vs. unmixed inside) carries C_min; see module docstring."
+            )
+        if not (math.isfinite(C_inside) and math.isfinite(C_outside)):
+            raise ValueError("C_inside and C_outside must be finite.")
+        if C_inside <= 0.0 or C_outside <= 0.0:
+            raise ValueError("C_inside and C_outside must be positive.")
+
+        if C_outside <= C_inside:
+            # Case A (outside/mixed is C_min): NTU = -ln(1 + Cr*ln(1-eps)) / Cr
+            if C_r < _CR_ZERO_EPS:
+                NTU = -math.log(1.0 - effectiveness)
+            else:
+                eps_max = 1.0 - math.exp(-1.0 / C_r)
+                if effectiveness >= eps_max:
+                    raise ValueError(
+                        f"ntu_from_effectiveness: requested effectiveness "
+                        f"{effectiveness:.6g} is unreachable for crossflow "
+                        f"with the outside (mixed) stream as C_min "
+                        f"(eps_max={eps_max:.6g} for C_r={C_r:.6g}), "
+                        "regardless of area."
+                    )
+                NTU = -math.log(1.0 + C_r * math.log(1.0 - effectiveness)) / C_r
+        else:
+            # Case B (inside/unmixed is C_min): NTU = -ln(1 + ln(1-Cr*eps)/Cr)
+            if C_r < _CR_ZERO_EPS:
+                NTU = -math.log(1.0 - effectiveness)
+            else:
+                eps_max = (1.0 - math.exp(-C_r)) / C_r
+                if effectiveness >= eps_max:
+                    raise ValueError(
+                        f"ntu_from_effectiveness: requested effectiveness "
+                        f"{effectiveness:.6g} is unreachable for crossflow "
+                        f"with the inside (unmixed) stream as C_min "
+                        f"(eps_max={eps_max:.6g} for C_r={C_r:.6g}), "
+                        "regardless of area."
+                    )
+                NTU = -math.log(1.0 + math.log(1.0 - C_r * effectiveness) / C_r)
 
     else:
         raise ValueError(f"Unsupported flow_arrangement: {flow_arrangement}")

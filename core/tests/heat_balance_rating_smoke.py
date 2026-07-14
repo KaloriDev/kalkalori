@@ -172,17 +172,32 @@ def test_closure_over_specified() -> None:
 def test_ntu_from_effectiveness_round_trip() -> None:
     print("ntu_from_effectiveness: round-trip for counterflow (Cr!=1, Cr==1), cocurrentflow, crossflow")
 
-    def round_trip(C_hot: float, C_cold: float, UA: float, flow_arrangement: str) -> None:
+    def round_trip(
+        C_hot: float, C_cold: float, UA: float, flow_arrangement: str,
+        *, C_inside: float | None = None, C_outside: float | None = None,
+    ) -> None:
         C_min = min(C_hot, C_cold)
         NTU_expected = UA / C_min
-        eps = effectiveness_ntu(C_hot=C_hot, C_cold=C_cold, UA=UA, flow_arrangement=flow_arrangement)
-        NTU_rt = ntu_from_effectiveness(eps, C_hot, C_cold, flow_arrangement=flow_arrangement)
+        eps = effectiveness_ntu(
+            C_hot=C_hot, C_cold=C_cold, UA=UA, flow_arrangement=flow_arrangement,
+            C_inside=C_inside, C_outside=C_outside,
+        )
+        NTU_rt = ntu_from_effectiveness(
+            eps, C_hot, C_cold, flow_arrangement=flow_arrangement,
+            C_inside=C_inside, C_outside=C_outside,
+        )
         assert math.isclose(NTU_rt, NTU_expected, rel_tol=1e-6), (flow_arrangement, NTU_rt, NTU_expected)
 
     round_trip(C_hot=3540.0, C_cold=2014.0, UA=5000.0, flow_arrangement="counterflow")   # Cr != 1
     round_trip(C_hot=2000.0, C_cold=2000.0, UA=3000.0, flow_arrangement="counterflow")   # Cr == 1
     round_trip(C_hot=3540.0, C_cold=2014.0, UA=4000.0, flow_arrangement="cocurrentflow")
-    round_trip(C_hot=3540.0, C_cold=2014.0, UA=4000.0, flow_arrangement="crossflow")
+    # Crossflow (v0.5.2): outside mixed / inside unmixed requires C_inside/C_outside
+    # to resolve which physical stream is C_min; see core.tests.ntu_crossflow_test
+    # for the dedicated crossflow coverage (both branches, Cr limits, etc.).
+    round_trip(
+        C_hot=3540.0, C_cold=2014.0, UA=4000.0, flow_arrangement="crossflow",
+        C_inside=3540.0, C_outside=2014.0,
+    )
 
 
 def test_ntu_from_effectiveness_guard() -> None:

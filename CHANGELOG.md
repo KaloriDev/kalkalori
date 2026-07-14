@@ -6,18 +6,18 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
-## [0.5.x] - Simulation/Rating split, heat-balance closure, surface margin
+## [0.5.x] - Simulation/Rating split, heat-balance closure, thermal-model updates
 
 ### Changed (breaking, internal API)
 
-- Renamed the previous mean-property rating API to **Simulation**
+- Renamed the previous mean-property rating API to **Simulation**.
+- Improved crossflow ε-NTU behavior and matching inverse handling used by Rating.
 
 ### Added
 
-- Simulation: iterative mean-property driver, single-pass mode and surface_margin reporting.
-- Rating: reclaimed for overdesign from a closed heat balance.
-- Heat-balance closure and NTU inverse added
-- Tests and notebooks updated for the new Simulation/Rating API.
+- Simulation/Rating split with heat-balance closure and NTU inverse support.
+- Iterative thermal-state solving with wall-temperature/property corrections.
+- Supporting warnings plus tests and notebooks updates for the 0.5.x flow.
 
 ### Notes
 

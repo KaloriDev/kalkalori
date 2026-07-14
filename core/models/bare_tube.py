@@ -136,6 +136,15 @@ class BareTubeHeatExchanger:
         # conductivity is stored on the tube geometry itself
         self.bundle = bundle
 
+    def tube_wall_resistance(self) -> float:
+        """Public accessor for the cylindrical tube-wall conduction resistance [K/W].
+
+        Exposed so orchestration layers (e.g.
+        ``core.heat_transfer.thermal_iteration``) can reuse the existing
+        wall-resistance model without duplicating it.
+        """
+        return self._tube_wall_resistance()
+
     def _tube_wall_resistance(self) -> float:
         """
         Cylindrical wall conduction resistance (total) [K/W].
@@ -213,7 +222,7 @@ class BareTubeHeatExchanger:
         flow_area_pass = self.bundle.internal_flow_area_per_pass
         D_h = self.bundle.internal_hydraulic_diameter
 
-        v_i, Re_i, Pr_i, alfa_i = heat_transfer_coefficient_internal(
+        v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
             m_dot=m_dot_tube_side,
             tube_inner_diameter=D_h,
             flow_area=flow_area_pass,
@@ -308,11 +317,34 @@ class BareTubeHeatExchanger:
         # --------------------------------------------------------------
         # Îµâ€“NTU thermal duty
         # --------------------------------------------------------------
+        # C_inside/C_outside are derived from the physical tube-side and
+        # outside-side inputs directly (not from hot_stream/cold_stream),
+        # so their *physical* identity (which is mixed, which is unmixed)
+        # is preserved regardless of which one happens to be hot or cold.
+        # This is required for the crossflow branch below; see
+        # core.heat_transfer.ntu module docstring.
+        C_inside = m_dot_tube_side * tube_side_props.cp
+        C_outside = (
+            m_dot_outside * outside_props.cp
+            if (have_outside and outside_props is not None)
+            else None
+        )
+        if flow_arrangement.lower() == "crossflow" and C_outside is None:
+            raise ValueError(
+                "flow_arrangement='crossflow' requires the outside side to "
+                "be specified via (m_dot_outside and outside_props) so that "
+                "C_outside can be resolved; the alfa_o override path alone "
+                "does not carry enough information to identify the mixed "
+                "(outside) stream's capacity rate."
+            )
+
         eps = effectiveness_ntu(
             C_hot=hot_stream.capacity_rate(),
             C_cold=cold_stream.capacity_rate(),
             UA=UA,
             flow_arrangement=flow_arrangement,
+            C_inside=C_inside,
+            C_outside=C_outside,
         )
 
         Q, T_hot_out, T_cold_out = heat_duty_from_effectiveness(
@@ -325,6 +357,11 @@ class BareTubeHeatExchanger:
         # Collect warnings
         # --------------------------------------------------------------
         warnings_list: list[ModelWarning] = []
+
+        # Internal heat-transfer applicability warnings (e.g. gas
+        # wall-property correction, only non-empty when T_bulk/T_wall are
+        # supplied to heat_transfer_coefficient_internal).
+        warnings_list.extend(internal_ht_warnings)
 
         # Add outside flow applicability warnings
         if have_outside:
@@ -518,4 +555,53 @@ class BareTubeHeatExchanger:
             K_turn=K_turn,
             euler_provider=euler_provider,
             include_simulation=include_simulation,
+        )
+
+    def solve_thermal_state(
+        self,
+        *,
+        m_dot_inside: float,
+        m_dot_outside: float,
+        inside_provider: "PropertyProvider",
+        outside_provider: "PropertyProvider",
+        T_in_inside: float,
+        T_in_outside: float,
+        p_inside: float,
+        p_outside: float,
+        flow_arrangement: str | None = None,
+        euler_provider: str = "zukauskas",
+        max_iterations: int = 25,
+        wall_temperature_tolerance_K: float = 0.05,
+        relative_alfa_tolerance: float = 1e-3,
+        relaxation_factor: float = 0.5,
+    ) -> "IterativeThermalState":
+        """Iterative mean-property and wall-temperature thermal state (v0.5.2).
+
+        Refines alfa_i/alfa_o with separate inside/outside wall-property
+        corrections and both tube-wall surface temperatures, on top of the
+        mean-bulk-property iteration. This is a physics-kernel capability
+        alongside ``.solve()``/``.simulate()``/``.rate()`` -- it is not a new
+        application calculation mode, and present/future modes may reuse it.
+
+        See ``core.heat_transfer.thermal_iteration.solve_iterative_thermal_state``
+        for the full algorithm, convergence controls and result fields.
+        """
+        from core.heat_transfer.thermal_iteration import solve_iterative_thermal_state
+
+        return solve_iterative_thermal_state(
+            self,
+            m_dot_inside=m_dot_inside,
+            m_dot_outside=m_dot_outside,
+            inside_provider=inside_provider,
+            outside_provider=outside_provider,
+            T_in_inside=T_in_inside,
+            T_in_outside=T_in_outside,
+            p_inside=p_inside,
+            p_outside=p_outside,
+            flow_arrangement=flow_arrangement,
+            euler_provider=euler_provider,
+            max_iterations=max_iterations,
+            wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            relaxation_factor=relaxation_factor,
         )

@@ -428,9 +428,20 @@ class EsduEulerProvider:
         )
 
 
+# Note:
+# This Gaddis–Gnielinski tube-bank pressure-drop correlation is
+# independent of the Gnielinski Nusselt correlation used for
+# internal tube-flow heat transfer (see nusselt_gnielinski in
+# internal_flow.py). Both are named after Gnielinski but are separate,
+# independent correlations for different physical quantities.
 class GaddisGnielinskiEulerProvider:
     """
     Open Gaddis-Gnielinski pressure-drop provider for bare tube banks in crossflow.
+
+    This is an OUTSIDE tube-bank PRESSURE-DROP (Euler number) correlation.
+    It is unrelated to ``nusselt_internal_gnielinski``/``nusselt_gnielinski``
+    (internal tube-flow heat-transfer Nusselt correlation) beyond sharing
+    Gnielinski's name.
 
     Literature basis
     ----------------

@@ -183,6 +183,11 @@ def main() -> None:
     assert res_margin0.T_out_outside == res2.T_out_outside
     assert res_margin0.Q_full == res_margin0.Q_derated == res_margin0.q
 
+    # Simulation does not calculate Rating overdesign; the shared reporting
+    # value is explicitly zero for every simulation, independent of derating.
+    for sim_result in (res, res2, res_inlet, res4, res_margin0, res_margin_low, res_margin_high):
+        assert sim_result.overdesign_factor == 0.0
+
     # surface_margin > 0 must strictly derate duty, monotonically with margin.
     assert res_margin_low.q < res_margin0.q, "margin=0.2 must derate duty below margin=0"
     assert res_margin_high.q < res_margin_low.q, "margin=0.5 must derate duty further than 0.2"

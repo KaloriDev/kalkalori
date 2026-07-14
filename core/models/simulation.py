@@ -180,6 +180,11 @@ class HXSimulationResult:
     ``iterate=False``) ``converged`` is True and ``iterations`` is 1; the
     reported ``T_mean_*`` are the bulk means of the computed outlet
     temperatures.
+
+    Simulation does not rate the exchanger against a required duty, so its
+    output ``overdesign_factor`` is defined as ``0.0``.  This keeps result
+    reporting consistent with Rating without conflating the output with the
+    input ``surface_margin`` derating.
     """
 
     # Convergence diagnostics
@@ -218,6 +223,7 @@ class HXSimulationResult:
 
     # Surface margin (input, echoed) and duty transparency
     surface_margin: float   # [-] 0.0 = "on the nose"; input, not an output
+    overdesign_factor: float  # [-] always 0.0 for Simulation; Rating computes it
     Q_full: float            # [W] duty at the real geometry's full UA
     Q_derated: float         # [W] duty after surface_margin derating (== q)
 
@@ -320,6 +326,8 @@ def run_simulation(
                 C_cold=cold_stream.capacity_rate(),
                 UA=UA_eff,
                 flow_arrangement=flow_arrangement,
+                C_inside=C_inside,
+                C_outside=C_outside,
             )
             Q_eff, T_hot_out_eff, T_cold_out_eff = heat_duty_from_effectiveness(
                 eps=eps_eff,
@@ -402,6 +410,7 @@ def run_simulation(
             T_out_inside=T_out_inside,
             T_out_outside=T_out_outside,
             surface_margin=surface_margin,
+            overdesign_factor=0.0,
             Q_full=Q_full,
             Q_derated=q,
             final_result=final_result,
