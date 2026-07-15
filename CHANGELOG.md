@@ -8,6 +8,8 @@ The project follows **Semantic Versioning (SemVer)**:
 ---
 ## [0.5.x] - Simulation/Rating split, heat-balance closure, thermal-model updates
 
+- Added a four-point 0D estimate of minimum and maximum inside/outside wall temperatures for Simulation and Rating. This is an endpoint estimate, not a spatially segmented calculation.
+
 ### Changed (breaking, internal API)
 
 - Renamed the previous mean-property rating API to **Simulation**.

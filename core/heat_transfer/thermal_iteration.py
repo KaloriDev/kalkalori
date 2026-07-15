@@ -96,17 +96,10 @@ function; there is no separate wall-temperature calculation elsewhere.
 
 Call path (v0.5.3)
 ------------------
-``core.models.rating.run_rating`` calls this function directly (module-level
-import, so it is patchable as ``core.models.rating.solve_iterative_thermal_state``)
-to obtain the converged, wall/length-corrected ``alfa_i``/``alfa_o``/``U``/``UA``
-used for ``HXRatingResult.alfa_i``/``alfa_o``/``U_mean``/``UA_actual``. Prior to
-v0.5.3, Rating instead used a single uncorrected ``BareTubeHeatExchanger.solve()``
-pass for these fields, so the wall-temperature/length corrections implemented
-here were computed (via ``BareTubeHeatExchanger.solve_thermal_state``) but never
-consumed by Rating. ``core.models.simulation`` intentionally does not call this
-function -- wall-temperature iteration is explicitly out of scope for
-Simulation (see its module docstring); it uses the simpler uncorrected
-``solve()`` pass inside its own mean-bulk-property outer loop.
+Both ``core.models.rating`` and the default ``core.models.simulation`` path
+call this function for their authoritative mean thermal state. The independent
+endpoint-envelope probes reuse the same lower-level local correlation and
+resistance evaluation, without rerunning either complete exchanger driver.
 
 Scope
 -----
@@ -229,6 +222,365 @@ class IterativeThermalState:
     warnings: tuple[ModelWarning, ...] = ()
 
 
+@dataclass(frozen=True)
+class WallTemperatureProbe:
+    """Independent 0D wall-temperature calculation at one bulk-state pair."""
+
+    inside_bulk_temperature: float
+    outside_bulk_temperature: float
+    inside_wall_temperature: float
+    outside_wall_temperature: float
+    alfa_i: float
+    alfa_o: float
+    converged: bool
+    iterations: int
+    warnings: tuple[ModelWarning, ...] = ()
+    inside_bulk_props: FluidTransportProperties | None = None
+    inside_wall_props: FluidTransportProperties | None = None
+    outside_bulk_props: FluidTransportProperties | None = None
+    outside_wall_props: FluidTransportProperties | None = None
+    inside_nusselt: float = math.nan
+    outside_nusselt: float = math.nan
+    heat_rate_probe: float = math.nan
+    residual: float = math.inf
+
+
+@dataclass(frozen=True)
+class WallTemperatureEnvelope:
+    """Estimated wall-temperature extrema from four independent 0D probes."""
+
+    inside_min: float
+    inside_max: float
+    outside_min: float
+    outside_max: float
+    probes: tuple[WallTemperatureProbe, ...]
+    method: str = "0d_endpoint_envelope"
+    warnings: tuple[ModelWarning, ...] = ()
+
+
+@dataclass(frozen=True)
+class _LocalWallEvaluation:
+    inside_bulk_props: FluidTransportProperties
+    inside_wall_props: FluidTransportProperties | None
+    outside_bulk_props: FluidTransportProperties
+    outside_wall_props: FluidTransportProperties | None
+    alfa_i: float
+    alfa_o: float
+    inside_nusselt: float
+    outside_nusselt: float
+    inside_wall_temperature: float
+    outside_wall_temperature: float
+    heat_rate: float
+    internal_diagnostics: object
+    outside_nusselt_base: float
+    outside_wall_property_correction: float
+    warnings: tuple[ModelWarning, ...]
+
+
+def _evaluate_local_wall_state(
+    hx: "BareTubeHeatExchanger",
+    *,
+    m_dot_inside: float,
+    m_dot_outside: float,
+    inside_provider: PropertyProvider,
+    outside_provider: PropertyProvider,
+    inside_bulk_temperature: float,
+    outside_bulk_temperature: float,
+    p_inside: float,
+    p_outside: float,
+    inside_wall_temperature: float | None,
+    outside_wall_temperature: float | None,
+    euler_provider: str,
+) -> _LocalWallEvaluation:
+    """Evaluate correlations and the resistance split at one fixed bulk pair."""
+    from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
+
+    bundle = hx.bundle
+    tube = bundle.tube
+    A_i = bundle.total_inner_area
+    A_o = bundle.total_outer_area
+    D_h = bundle.internal_hydraulic_diameter
+    D_o = float(getattr(tube, "D_o"))
+
+    bulk_i = inside_provider.at(T=inside_bulk_temperature, p=p_inside)
+    bulk_o = outside_provider.at(T=outside_bulk_temperature, p=p_outside)
+    warnings: list[ModelWarning] = []
+
+    def wall_props(provider, temperature, pressure, side):
+        if temperature is None:
+            return None
+        if not math.isfinite(temperature) or temperature <= 0.0:
+            warnings.append(make_warning(
+                code="thermal_iteration_invalid_wall_temperature",
+                message=(f"thermal_iteration: computed {side} wall temperature "
+                         f"{temperature!r} is not a finite, positive absolute temperature [K]."),
+                source="thermal_iteration",
+            ))
+            return None
+        return provider.at(T=temperature, p=pressure)
+
+    wall_i = wall_props(inside_provider, inside_wall_temperature, p_inside, "inside")
+    wall_o = wall_props(outside_provider, outside_wall_temperature, p_outside, "outside")
+
+    internal = heat_transfer_coefficient_internal_diagnostics(
+        m_dot=m_dot_inside,
+        tube_inner_diameter=D_h,
+        flow_area=bundle.internal_flow_area_per_pass,
+        props=to_internal_fluid_props(bulk_i),
+        T_bulk=inside_bulk_temperature,
+        T_wall=inside_wall_temperature if wall_i is not None else None,
+        L_heated=float(getattr(tube, "length_effective")),
+    )
+    warnings.extend(internal.warnings)
+
+    Pr_s = None
+    if wall_o is not None:
+        Pr_s = outside_prandtl_number(wall_o.cp, wall_o.mu, wall_o.k)
+
+    _, Re_o, Pr_o, alfa_o, _, outside_warnings, _ = outside_flow_from_mass_flow(
+        m_dot=m_dot_outside,
+        frontal_area=bundle.frontal_flow_area,
+        tube_outer_diameter=D_o,
+        tube_pitch_transverse=bundle.pitch_transverse,
+        tube_pitch_longitudinal=bundle.pitch_longitudinal,
+        layout=bundle.layout,
+        n_rows=bundle.n_rows,
+        n_tubes_per_row=bundle.n_tubes_per_row,
+        props=to_outside_fluid_props(bulk_o),
+        Pr_s=Pr_s,
+        euler_provider=euler_provider,
+    )
+    warnings.extend(outside_warnings)
+    Nu_o_base = nusselt_zukauskas(Re_o, Pr_o, bundle.n_rows, Pr_s=None)
+    Nu_o = nusselt_zukauskas(Re_o, Pr_o, bundle.n_rows, Pr_s=Pr_s) if Pr_s is not None else Nu_o_base
+
+    alfa_i = internal.alfa_corrected
+    R_i = 1.0 / (alfa_i * A_i)
+    R_o = 1.0 / (alfa_o * A_o)
+    R_total = R_i + hx.tube_wall_resistance() + R_o
+    if not math.isfinite(R_total) or R_total <= 0.0:
+        raise ValueError("thermal_iteration: invalid total thermal resistance.")
+    heat_rate = (inside_bulk_temperature - outside_bulk_temperature) / R_total
+
+    return _LocalWallEvaluation(
+        inside_bulk_props=bulk_i,
+        inside_wall_props=wall_i,
+        outside_bulk_props=bulk_o,
+        outside_wall_props=wall_o,
+        alfa_i=alfa_i,
+        alfa_o=alfa_o,
+        inside_nusselt=internal.Nu_corrected,
+        outside_nusselt=Nu_o,
+        inside_wall_temperature=inside_bulk_temperature - heat_rate * R_i,
+        outside_wall_temperature=outside_bulk_temperature + heat_rate * R_o,
+        heat_rate=heat_rate,
+        internal_diagnostics=internal,
+        outside_nusselt_base=Nu_o_base,
+        outside_wall_property_correction=Nu_o / Nu_o_base if Nu_o_base != 0.0 else 1.0,
+        warnings=tuple(warnings),
+    )
+
+
+def _solve_wall_temperature_probe(
+    hx: "BareTubeHeatExchanger",
+    *,
+    m_dot_inside: float,
+    m_dot_outside: float,
+    inside_provider: PropertyProvider,
+    outside_provider: PropertyProvider,
+    inside_bulk_temperature: float,
+    outside_bulk_temperature: float,
+    p_inside: float,
+    p_outside: float,
+    euler_provider: str = "zukauskas",
+    max_iterations: int = 25,
+    wall_temperature_tolerance_K: float = 0.05,
+    relative_alfa_tolerance: float = 1e-3,
+    relaxation_factor: float = 0.5,
+) -> WallTemperatureProbe:
+    wall_i = wall_o = None
+    alfa_i_prev = alfa_o_prev = None
+    all_warnings: list[ModelWarning] = []
+    residual = math.inf
+    converged = False
+    evaluation = None
+
+    for iteration in range(1, max_iterations + 1):
+        evaluation = _evaluate_local_wall_state(
+            hx,
+            m_dot_inside=m_dot_inside, m_dot_outside=m_dot_outside,
+            inside_provider=inside_provider, outside_provider=outside_provider,
+            inside_bulk_temperature=inside_bulk_temperature,
+            outside_bulk_temperature=outside_bulk_temperature,
+            p_inside=p_inside, p_outside=p_outside,
+            inside_wall_temperature=wall_i, outside_wall_temperature=wall_o,
+            euler_provider=euler_provider,
+        )
+        all_warnings.extend(evaluation.warnings)
+        target_i = evaluation.inside_wall_temperature
+        target_o = evaluation.outside_wall_temperature
+        if wall_i is None:
+            new_i, new_o = target_i, target_o
+            wall_residual = math.inf
+        else:
+            new_i = wall_i + relaxation_factor * (target_i - wall_i)
+            new_o = wall_o + relaxation_factor * (target_o - wall_o)
+            wall_residual = max(abs(new_i - wall_i), abs(new_o - wall_o))
+        alfa_residual = math.inf
+        if alfa_i_prev is not None:
+            alfa_residual = max(
+                abs(evaluation.alfa_i - alfa_i_prev) / max(abs(alfa_i_prev), 1e-9),
+                abs(evaluation.alfa_o - alfa_o_prev) / max(abs(alfa_o_prev), 1e-9),
+            )
+        wall_i, wall_o = new_i, new_o
+        alfa_i_prev, alfa_o_prev = evaluation.alfa_i, evaluation.alfa_o
+        residual = wall_residual
+        if iteration >= 2 and wall_residual < wall_temperature_tolerance_K and alfa_residual < relative_alfa_tolerance:
+            converged = True
+            break
+
+    assert evaluation is not None
+    final = _evaluate_local_wall_state(
+        hx,
+        m_dot_inside=m_dot_inside, m_dot_outside=m_dot_outside,
+        inside_provider=inside_provider, outside_provider=outside_provider,
+        inside_bulk_temperature=inside_bulk_temperature,
+        outside_bulk_temperature=outside_bulk_temperature,
+        p_inside=p_inside, p_outside=p_outside,
+        inside_wall_temperature=wall_i, outside_wall_temperature=wall_o,
+        euler_provider=euler_provider,
+    )
+    all_warnings.extend(final.warnings)
+    wall_i, wall_o = final.inside_wall_temperature, final.outside_wall_temperature
+
+    finite = math.isfinite(wall_i) and math.isfinite(wall_o)
+    tol = 1e-6 * max(abs(inside_bulk_temperature), abs(outside_bulk_temperature), 1.0)
+    if final.heat_rate >= 0.0:
+        ordered = inside_bulk_temperature + tol >= wall_i >= wall_o - tol >= outside_bulk_temperature - 2 * tol
+    else:
+        ordered = outside_bulk_temperature + tol >= wall_o >= wall_i - tol >= inside_bulk_temperature - 2 * tol
+    if not finite or not ordered:
+        converged = False
+        all_warnings.append(make_warning(
+            code="wall_temperature_probe_physical_ordering_violation",
+            message="A wall-temperature probe produced non-finite or physically misordered surface temperatures.",
+            source="thermal_iteration",
+        ))
+    if not converged:
+        all_warnings.append(make_warning(
+            code="wall_temperature_probe_not_converged",
+            message=(f"The 0D wall-temperature probe at inside={inside_bulk_temperature:.6g} K, "
+                     f"outside={outside_bulk_temperature:.6g} K did not converge."),
+            source="thermal_iteration",
+        ))
+
+    return WallTemperatureProbe(
+        inside_bulk_temperature=inside_bulk_temperature,
+        outside_bulk_temperature=outside_bulk_temperature,
+        inside_wall_temperature=wall_i,
+        outside_wall_temperature=wall_o,
+        alfa_i=final.alfa_i,
+        alfa_o=final.alfa_o,
+        converged=converged,
+        iterations=iteration,
+        warnings=tuple(all_warnings),
+        inside_bulk_props=final.inside_bulk_props,
+        inside_wall_props=final.inside_wall_props,
+        outside_bulk_props=final.outside_bulk_props,
+        outside_wall_props=final.outside_wall_props,
+        inside_nusselt=final.inside_nusselt,
+        outside_nusselt=final.outside_nusselt,
+        heat_rate_probe=final.heat_rate,
+        residual=residual,
+    )
+
+
+def estimate_wall_temperature_envelope(
+    hx: "BareTubeHeatExchanger",
+    *,
+    m_dot_inside: float,
+    m_dot_outside: float,
+    inside_provider: PropertyProvider,
+    outside_provider: PropertyProvider,
+    inside_inlet_temperature: float,
+    inside_outlet_temperature: float,
+    outside_inlet_temperature: float,
+    outside_outlet_temperature: float,
+    p_inside: float,
+    p_outside: float,
+    euler_provider: str = "zukauskas",
+    max_iterations: int = 25,
+    wall_temperature_tolerance_K: float = 0.05,
+    relative_alfa_tolerance: float = 1e-3,
+    relaxation_factor: float = 0.5,
+) -> WallTemperatureEnvelope:
+    """Estimate a conservative 0D endpoint envelope; no spatial coupling is implied."""
+    pairs = (
+        (inside_inlet_temperature, outside_inlet_temperature),
+        (inside_inlet_temperature, outside_outlet_temperature),
+        (inside_outlet_temperature, outside_inlet_temperature),
+        (inside_outlet_temperature, outside_outlet_temperature),
+    )
+    probes_list: list[WallTemperatureProbe] = []
+    for T_i, T_o in pairs:
+        try:
+            probe = _solve_wall_temperature_probe(
+                hx,
+                m_dot_inside=m_dot_inside, m_dot_outside=m_dot_outside,
+                inside_provider=inside_provider, outside_provider=outside_provider,
+                inside_bulk_temperature=T_i, outside_bulk_temperature=T_o,
+                p_inside=p_inside, p_outside=p_outside,
+                euler_provider=euler_provider, max_iterations=max_iterations,
+                wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                relaxation_factor=relaxation_factor,
+            )
+        except Exception as exc:
+            warning = make_warning(
+                code="wall_temperature_probe_not_converged",
+                message=(f"The 0D wall-temperature probe at inside={T_i:.6g} K, "
+                         f"outside={T_o:.6g} K failed: {exc}"),
+                source="thermal_iteration",
+            )
+            probe = WallTemperatureProbe(
+                inside_bulk_temperature=T_i,
+                outside_bulk_temperature=T_o,
+                inside_wall_temperature=math.nan,
+                outside_wall_temperature=math.nan,
+                alfa_i=math.nan,
+                alfa_o=math.nan,
+                converged=False,
+                iterations=0,
+                warnings=(warning,),
+            )
+        probes_list.append(probe)
+    probes = tuple(probes_list)
+    valid = tuple(p for p in probes if p.converged)
+    warnings = [make_warning(
+        code="wall_temperature_envelope_0d_estimate",
+        message=("Wall-temperature minimum and maximum are estimated from a 0D inlet/outlet "
+                 "endpoint envelope. They are not local extrema from a spatially segmented exchanger model."),
+        source="thermal_iteration",
+        severity="info",
+    )]
+    for probe in probes:
+        warnings.extend(probe.warnings)
+    if len(valid) < 4:
+        warnings.append(make_warning(
+            code="wall_temperature_envelope_incomplete",
+            message=f"Only {len(valid)} of 4 wall-temperature endpoint probes converged.",
+            source="thermal_iteration",
+        ))
+    return WallTemperatureEnvelope(
+        inside_min=min((p.inside_wall_temperature for p in valid), default=math.nan),
+        inside_max=max((p.inside_wall_temperature for p in valid), default=math.nan),
+        outside_min=min((p.outside_wall_temperature for p in valid), default=math.nan),
+        outside_max=max((p.outside_wall_temperature for p in valid), default=math.nan),
+        probes=probes,
+        warnings=tuple(warnings),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -256,14 +608,6 @@ def solve_iterative_thermal_state(
     function coordinates existing correlations/geometry/NTU components; it
     does not duplicate any of them.
     """
-    # Deferred import: core.properties.adapters is itself one of the modules
-    # that pulls in core.heat_transfer (see adapters.py), so importing it at
-    # module level here would risk a circular-import deadlock depending on
-    # which module a caller imports first. Deferring to call time (the same
-    # pattern already used elsewhere in this codebase, e.g.
-    # BareTubeHeatExchanger.simulate/.rate) avoids that entirely.
-    from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
-
     for name, value in (
         ("m_dot_inside", m_dot_inside),
         ("m_dot_outside", m_dot_outside),
@@ -287,46 +631,10 @@ def solve_iterative_thermal_state(
         flow_arrangement = hx.bundle.flow_arrangement
 
     bundle = hx.bundle
-    tube = bundle.tube
     A_i = bundle.total_inner_area
     A_o = bundle.total_outer_area
     R_w = hx.tube_wall_resistance()
-    flow_area_pass = bundle.internal_flow_area_per_pass
-    D_h = bundle.internal_hydraulic_diameter
-    frontal_area = bundle.frontal_flow_area
-    D_o = float(getattr(tube, "D_o"))
-
-    # Thermally active straight length of ONE tube pass (not the total length
-    # of all tubes, and not the multi-pass hydraulic path
-    # ``bundle.internal_length_total``, which scales with n_passes_tube) --
-    # this is the length that belongs in the Gnielinski entrance-region term.
-    # See ``internal_flow.internal_length_correction``.
-    L_heated = float(getattr(tube, "length_effective"))
-
     hot_is_inside = T_in_inside >= T_in_outside
-
-    def _safe_wall_props(
-        provider: PropertyProvider, T_wall_prev: float | None, p: float, *, side: str
-    ) -> tuple[FluidTransportProperties | None, list[ModelWarning]]:
-        """Evaluate wall-state properties, guarding against an invalid wall
-        temperature rather than letting the provider raise."""
-        if T_wall_prev is None:
-            return None, []
-        if not math.isfinite(T_wall_prev) or T_wall_prev <= 0.0:
-            return None, [
-                make_warning(
-                    code="thermal_iteration_invalid_wall_temperature",
-                    message=(
-                        f"thermal_iteration: computed {side} wall temperature "
-                        f"{T_wall_prev!r} is not a finite, positive absolute "
-                        "temperature [K]; wall properties for this side are "
-                        "skipped for this evaluation."
-                    ),
-                    source="thermal_iteration",
-                    severity="warning",
-                )
-            ]
-        return provider.at(T=T_wall_prev, p=p), []
 
     def _evaluate(
         T_out_inside: float,
@@ -337,81 +645,24 @@ def solve_iterative_thermal_state(
         T_mean_inside = mean_temperature(T_in_inside, T_out_inside)
         T_mean_outside = mean_temperature(T_in_outside, T_out_outside)
 
-        props_bulk_inside = inside_provider.at(T=T_mean_inside, p=p_inside)
-        props_bulk_outside = outside_provider.at(T=T_mean_outside, p=p_outside)
-
-        step_warnings: list[ModelWarning] = []
-
-        props_wall_inside, wall_i_warnings = _safe_wall_props(
-            inside_provider, T_wall_inside_prev, p_inside, side="inside"
-        )
-        step_warnings.extend(wall_i_warnings)
-        props_wall_outside, wall_o_warnings = _safe_wall_props(
-            outside_provider, T_wall_outside_prev, p_outside, side="outside"
-        )
-        step_warnings.extend(wall_o_warnings)
-        # T_wall passed to the internal correlation must reflect the same
-        # guard: an invalid wall temperature is treated as "not supplied".
-        T_wall_inside_for_corr = None if wall_i_warnings else T_wall_inside_prev
-
-        C_inside = m_dot_inside * props_bulk_inside.cp
-        C_outside = m_dot_outside * props_bulk_outside.cp
-
-        internal_diag = heat_transfer_coefficient_internal_diagnostics(
-            m_dot=m_dot_inside,
-            tube_inner_diameter=D_h,
-            flow_area=flow_area_pass,
-            props=to_internal_fluid_props(props_bulk_inside),
-            T_bulk=T_mean_inside,
-            T_wall=T_wall_inside_for_corr,
-            L_heated=L_heated,
-        )
-        step_warnings.extend(internal_diag.warnings)
-        alfa_i = internal_diag.alfa_corrected
-
-        Pr_s = None
-        if props_wall_outside is not None:
-            Pr_s = outside_prandtl_number(
-                props_wall_outside.cp, props_wall_outside.mu, props_wall_outside.k
-            )
-
-        v_o, Re_o, Pr_o, alfa_o, dp_o, outside_warnings, _euler = outside_flow_from_mass_flow(
-            m_dot=m_dot_outside,
-            frontal_area=frontal_area,
-            tube_outer_diameter=D_o,
-            tube_pitch_transverse=bundle.pitch_transverse,
-            tube_pitch_longitudinal=bundle.pitch_longitudinal,
-            layout=bundle.layout,
-            n_rows=bundle.n_rows,
-            n_tubes_per_row=bundle.n_tubes_per_row,
-            props=to_outside_fluid_props(props_bulk_outside),
-            Pr_s=Pr_s,
+        local = _evaluate_local_wall_state(
+            hx,
+            m_dot_inside=m_dot_inside, m_dot_outside=m_dot_outside,
+            inside_provider=inside_provider, outside_provider=outside_provider,
+            inside_bulk_temperature=T_mean_inside,
+            outside_bulk_temperature=T_mean_outside,
+            p_inside=p_inside, p_outside=p_outside,
+            inside_wall_temperature=T_wall_inside_prev,
+            outside_wall_temperature=T_wall_outside_prev,
             euler_provider=euler_provider,
         )
-        step_warnings.extend(outside_warnings)
-
-        # Outside Nu diagnostics: re-evaluate the same Zukauskas correlation
-        # with/without the wall-Prandtl correction to expose the raw base/
-        # corrected Nu and the correction factor itself. This reuses
-        # nusselt_zukauskas (no correlation math is duplicated); the
-        # (Pr/Pr_s)^0.25 factor is independent of n_rows/finite-row scaling
-        # so it cancels cleanly in the ratio.
-        outside_Nu_base = nusselt_zukauskas(Re_o, Pr_o, bundle.n_rows, Pr_s=None)
-        outside_Nu_corrected = (
-            nusselt_zukauskas(Re_o, Pr_o, bundle.n_rows, Pr_s=Pr_s)
-            if Pr_s is not None
-            else outside_Nu_base
+        props_bulk_inside = local.inside_bulk_props
+        props_bulk_outside = local.outside_bulk_props
+        C_inside = m_dot_inside * props_bulk_inside.cp
+        C_outside = m_dot_outside * props_bulk_outside.cp
+        UA = 1.0 / (
+            1.0 / (local.alfa_i * A_i) + R_w + 1.0 / (local.alfa_o * A_o)
         )
-        outside_wall_property_correction = (
-            outside_Nu_corrected / outside_Nu_base if outside_Nu_base != 0.0 else 1.0
-        )
-
-        R_i = 1.0 / (alfa_i * A_i)
-        R_o = 1.0 / (alfa_o * A_o)
-        R_tot = R_i + R_w + R_o
-        if R_tot <= 0.0 or not math.isfinite(R_tot):
-            raise ValueError("thermal_iteration: invalid total thermal resistance.")
-        UA = 1.0 / R_tot
 
         if hot_is_inside:
             hot_stream = SensibleHeatStream(C=C_inside, T_in=T_in_inside)
@@ -435,40 +686,25 @@ def solve_iterative_thermal_state(
         else:
             T_out_outside_calc, T_out_inside_calc = T_hot_out, T_cold_out
 
-        # Wall-temperature split: use the *mean-bulk-consistent* heat rate
-        # UA*(T_mean_inside - T_mean_outside) rather than the actual duty Q
-        # (from eps-NTU on the inlet temperatures) to apportion the resistance
-        # network. This is a resistance-weighted split of the mean bulk
-        # temperature difference across R_i/R_w/R_o and guarantees:
-        #   - both wall temperatures always lie within [T_mean_inside,
-        #     T_mean_outside] (whichever order), for any positive resistances,
-        #   - the two wall-surface temperatures collapse together as the wall
-        #     resistance R_w -> 0 (no wall conduction resistance),
-        # independent of whichever side happens to run hotter.
-        q_inside_to_outside = UA * (T_mean_inside - T_mean_outside)
-
-        T_wall_inside_calc = T_mean_inside - q_inside_to_outside * R_i
-        T_wall_outside_calc = T_mean_outside + q_inside_to_outside * R_o
-
         return {
             "T_mean_inside": T_mean_inside,
             "T_mean_outside": T_mean_outside,
             "props_bulk_inside": props_bulk_inside,
             "props_bulk_outside": props_bulk_outside,
-            "props_wall_inside": props_wall_inside,
-            "props_wall_outside": props_wall_outside,
-            "alfa_i": alfa_i,
-            "alfa_o": alfa_o,
+            "props_wall_inside": local.inside_wall_props,
+            "props_wall_outside": local.outside_wall_props,
+            "alfa_i": local.alfa_i,
+            "alfa_o": local.alfa_o,
             "UA": UA,
             "T_out_inside_calc": T_out_inside_calc,
             "T_out_outside_calc": T_out_outside_calc,
-            "T_wall_inside_calc": T_wall_inside_calc,
-            "T_wall_outside_calc": T_wall_outside_calc,
-            "internal_diag": internal_diag,
-            "outside_Nu_base": outside_Nu_base,
-            "outside_Nu_corrected": outside_Nu_corrected,
-            "outside_wall_property_correction": outside_wall_property_correction,
-            "warnings": step_warnings,
+            "T_wall_inside_calc": local.inside_wall_temperature,
+            "T_wall_outside_calc": local.outside_wall_temperature,
+            "internal_diag": local.internal_diagnostics,
+            "outside_Nu_base": local.outside_nusselt_base,
+            "outside_Nu_corrected": local.outside_nusselt,
+            "outside_wall_property_correction": local.outside_wall_property_correction,
+            "warnings": list(local.warnings),
         }
 
     # --- Iteration ------------------------------------------------------

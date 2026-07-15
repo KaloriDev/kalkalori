@@ -54,6 +54,9 @@ from .outside_pressure_drop_external import (
 
 from .thermal_iteration import (
     IterativeThermalState,
+    WallTemperatureProbe,
+    WallTemperatureEnvelope,
+    estimate_wall_temperature_envelope,
     solve_iterative_thermal_state,
 )
 
@@ -110,6 +113,9 @@ __all__ = [
 
     # Iterative wall-corrected thermal state
     "IterativeThermalState",
+    "WallTemperatureProbe",
+    "WallTemperatureEnvelope",
+    "estimate_wall_temperature_envelope",
     "solve_iterative_thermal_state",
 
     # Warnings and applicability checks

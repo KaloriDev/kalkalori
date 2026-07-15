@@ -143,6 +143,8 @@ from core.heat_transfer.streams import SensibleHeatStream
 from core.heat_transfer.ntu import effectiveness_ntu, heat_duty_from_effectiveness
 from core.heat_transfer.thermal_iteration import (
     IterativeThermalState,
+    WallTemperatureEnvelope,
+    estimate_wall_temperature_envelope,
     solve_iterative_thermal_state,
 )
 
@@ -275,8 +277,36 @@ class HXSimulationResult:
     # above.
     thermal_state: IterativeThermalState | None
 
+    # Independent four-point 0D endpoint estimate. It is diagnostic only and
+    # does not feed back into the mean-state solution above.
+    wall_temperature_envelope: WallTemperatureEnvelope
+
     # Diagnostics
     warnings: list[ModelWarning] | None = None
+
+    @property
+    def inside_wall_temperature_mean(self) -> float | None:
+        return None if self.thermal_state is None else self.thermal_state.inside_wall_temperature
+
+    @property
+    def outside_wall_temperature_mean(self) -> float | None:
+        return None if self.thermal_state is None else self.thermal_state.outside_wall_temperature
+
+    @property
+    def inside_wall_temperature_min_estimate(self) -> float:
+        return self.wall_temperature_envelope.inside_min
+
+    @property
+    def inside_wall_temperature_max_estimate(self) -> float:
+        return self.wall_temperature_envelope.inside_max
+
+    @property
+    def outside_wall_temperature_min_estimate(self) -> float:
+        return self.wall_temperature_envelope.outside_min
+
+    @property
+    def outside_wall_temperature_max_estimate(self) -> float:
+        return self.wall_temperature_envelope.outside_max
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +468,27 @@ def run_simulation(
             UA = final_result.UA
             thermal_warnings = []
 
-        warnings_list: list[ModelWarning] = list(final_result.warnings or []) + thermal_warnings
+        envelope = estimate_wall_temperature_envelope(
+            hx,
+            m_dot_inside=inside.m_dot,
+            m_dot_outside=outside.m_dot,
+            inside_provider=inside.provider,
+            outside_provider=outside.provider,
+            inside_inlet_temperature=inside.T_in,
+            inside_outlet_temperature=T_out_inside,
+            outside_inlet_temperature=outside.T_in,
+            outside_outlet_temperature=T_out_outside,
+            p_inside=inside.p,
+            p_outside=outside.p,
+            euler_provider=euler_provider,
+            max_iterations=max_iter,
+            wall_temperature_tolerance_K=temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            relaxation_factor=relaxation_factor,
+        )
+        warnings_list: list[ModelWarning] = (
+            list(final_result.warnings or []) + thermal_warnings + list(envelope.warnings)
+        )
         if not converged:
             warnings_list.append(
                 make_warning(
@@ -485,6 +535,7 @@ def run_simulation(
             Q_derated=q,
             final_result=final_result,
             thermal_state=thermal_state,
+            wall_temperature_envelope=envelope,
             warnings=warnings_list if warnings_list else None,
         )
 

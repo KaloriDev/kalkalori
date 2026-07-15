@@ -83,6 +83,8 @@ from core.heat_transfer.streams import SensibleHeatStream
 from core.heat_transfer.ntu import ntu_from_effectiveness
 from core.heat_transfer.thermal_iteration import (
     IterativeThermalState,
+    WallTemperatureEnvelope,
+    estimate_wall_temperature_envelope,
     solve_iterative_thermal_state,
 )
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
@@ -127,8 +129,33 @@ class HXRatingResult:
     # ``BareTubeHeatExchanger.solve()`` pass used only for area/regime/
     # hydraulic diagnostics elsewhere in this module.
     thermal_state: IterativeThermalState
+    wall_temperature_envelope: WallTemperatureEnvelope
 
     warnings: list[ModelWarning] | None = None
+
+    @property
+    def inside_wall_temperature_mean(self) -> float:
+        return self.thermal_state.inside_wall_temperature
+
+    @property
+    def outside_wall_temperature_mean(self) -> float:
+        return self.thermal_state.outside_wall_temperature
+
+    @property
+    def inside_wall_temperature_min_estimate(self) -> float:
+        return self.wall_temperature_envelope.inside_min
+
+    @property
+    def inside_wall_temperature_max_estimate(self) -> float:
+        return self.wall_temperature_envelope.inside_max
+
+    @property
+    def outside_wall_temperature_min_estimate(self) -> float:
+        return self.wall_temperature_envelope.outside_min
+
+    @property
+    def outside_wall_temperature_max_estimate(self) -> float:
+        return self.wall_temperature_envelope.outside_max
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +246,24 @@ def run_rating(
         relative_alfa_tolerance=relative_alfa_tolerance,
         relaxation_factor=relaxation_factor,
     )
+    wall_temperature_envelope = estimate_wall_temperature_envelope(
+        hx,
+        m_dot_inside=inside.m_dot,
+        m_dot_outside=outside.m_dot,
+        inside_provider=inside.provider,
+        outside_provider=outside.provider,
+        inside_inlet_temperature=inside.T_in,
+        inside_outlet_temperature=inside.T_out,
+        outside_inlet_temperature=outside.T_in,
+        outside_outlet_temperature=outside.T_out,
+        p_inside=inside.p,
+        p_outside=outside.p,
+        euler_provider=euler_provider,
+        max_iterations=max_iterations,
+        wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+        relative_alfa_tolerance=relative_alfa_tolerance,
+        relaxation_factor=relaxation_factor,
+    )
 
     UA_actual = thermal_state.UA
     U_mean = thermal_state.U
@@ -246,6 +291,7 @@ def run_rating(
         list(closed_balance.warnings or [])
         + list(solve_result.warnings or [])
         + list(thermal_state.warnings)
+        + list(wall_temperature_envelope.warnings)
     )
 
     simulation_result = None
@@ -280,5 +326,6 @@ def run_rating(
         closed_balance=closed_balance,
         simulation=simulation_result,
         thermal_state=thermal_state,
+        wall_temperature_envelope=wall_temperature_envelope,
         warnings=warnings_list if warnings_list else None,
     )
