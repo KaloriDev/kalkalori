@@ -37,6 +37,8 @@ from core.heat_transfer.internal_pressure_drop import (
 
 from core.heat_transfer.outside_flow import (
     FluidProps as OutsideFlowFluidProps,
+    OutsideTubeBankHydraulicResult,
+    calculate_outside_tube_bank_hydraulics,
     outside_flow_from_mass_flow,
 )
 
@@ -141,6 +143,48 @@ class HXOutSideHydraulicResults:
     dp_total: float
     Re: float
     v: float
+    tube_bank: OutsideTubeBankHydraulicResult | None = None
+
+    @property
+    def dp_drag(self) -> float:
+        return float("nan") if self.tube_bank is None else self.tube_bank.dp_drag
+
+    @property
+    def dp_acceleration(self) -> float:
+        return float("nan") if self.tube_bank is None else self.tube_bank.dp_acceleration
+
+    @property
+    def dp_outside_total(self) -> float:
+        return self.dp_total
+
+    @property
+    def outside_dp_drag(self) -> float:
+        return self.dp_drag
+
+    @property
+    def outside_dp_acceleration(self) -> float:
+        return self.dp_acceleration
+
+    @property
+    def outside_dp(self) -> float:
+        """Compatibility alias for total bare-bank pressure change."""
+        return self.dp_total
+
+    @property
+    def outside_pressure_drop(self) -> float:
+        return self.dp_total
+
+    @property
+    def inlet(self):
+        return None if self.tube_bank is None else self.tube_bank.inlet
+
+    @property
+    def midpoint(self):
+        return None if self.tube_bank is None else self.tube_bank.midpoint
+
+    @property
+    def outlet(self):
+        return None if self.tube_bank is None else self.tube_bank.outlet
 
 
 @dataclass(frozen=True)
@@ -188,6 +232,30 @@ class HXResult:
         """Compatibility alias for the straight tube-bundle pressure change."""
         return self.inside_dp_tube_bundle
 
+    @property
+    def outside_tube_bank_hydraulic(self) -> OutsideTubeBankHydraulicResult | None:
+        return self.outside_side_hydraulic.tube_bank
+
+    @property
+    def outside_dp_drag(self) -> float:
+        return self.outside_side_hydraulic.dp_drag
+
+    @property
+    def outside_dp_acceleration(self) -> float:
+        return self.outside_side_hydraulic.dp_acceleration
+
+    @property
+    def outside_dp_total(self) -> float:
+        return self.outside_side_hydraulic.dp_outside_total
+
+    @property
+    def outside_dp(self) -> float:
+        return self.outside_dp_total
+
+    @property
+    def outside_pressure_drop(self) -> float:
+        return self.outside_dp_total
+
 
 class BareTubeHeatExchanger:
     """
@@ -204,7 +272,8 @@ class BareTubeHeatExchanger:
         dp_tube_bundle = dp_friction + dp_acceleration
       with no nozzle, chamber, tube-sheet, return, bend, header, or collector
       local-loss coefficients.
-    - Outside side: forced flow from mass flow rate -> alfa_o and dp_o (MVP)
+    - Outside side: forced flow from mass flow rate -> alfa_o and universal
+      three-state tube-bank drag plus signed acceleration pressure change
     - Overall thermal duty: Îµâ€“NTU with flow_arrangement:
         "counterflow", "cocurrentflow", "crossflow"
 
@@ -272,6 +341,10 @@ class BareTubeHeatExchanger:
         # Outside-side (preferred path):
         m_dot_outside: float | None = None,
         outside_props: OutsideFlowFluidProps | None = None,
+        outside_provider: PropertyProvider | None = None,
+        outside_temperature_in: float | None = None,
+        outside_temperature_out: float | None = None,
+        outside_pressure: float | None = None,
 
         # Retained for public-call compatibility. Local losses are outside the
         # v0.5.5 straight-tube-bundle scope and these values are not applied.
@@ -364,7 +437,11 @@ class BareTubeHeatExchanger:
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
 
         if have_outside:
-            v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = outside_flow_from_mass_flow(
+            # Keep the existing outside heat-transfer calculation and its
+            # face-velocity/Re/Pr contract, but bypass its historical
+            # one-state pressure-drop calculation.  Outside pressure is
+            # authoritative only from the three-state bank result below.
+            v_o, Re_o, Pr_o, alfa_o_calc, _legacy_dp_o, outside_warnings, _outside_euler_result = outside_flow_from_mass_flow(
                 m_dot=m_dot_outside,
                 frontal_area=A_frontal,
                 n_tubes_per_row=self.bundle.n_tubes_per_row,
@@ -375,7 +452,25 @@ class BareTubeHeatExchanger:
                 n_rows=self.bundle.n_rows,
                 props=outside_props,
                 euler_provider=euler_provider,
+                calculate_pressure_drop=False,
             )
+            outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+                m_dot=m_dot_outside,
+                face_area=A_frontal,
+                tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
+                tube_pitch_transverse=self.bundle.pitch_transverse,
+                tube_pitch_longitudinal=self.bundle.pitch_longitudinal,
+                layout=self.bundle.layout,
+                n_rows=self.bundle.n_rows,
+                n_tubes_per_row=self.bundle.n_tubes_per_row,
+                provider=outside_provider,
+                temperature_in=outside_temperature_in,
+                temperature_out=outside_temperature_out,
+                pressure=outside_pressure,
+                euler_provider=euler_provider,
+                inlet_props=outside_props if outside_provider is None else None,
+            )
+            dp_o = outside_bank_hydraulic.dp_total
         else:
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = (
                 float("nan"),
@@ -386,6 +481,7 @@ class BareTubeHeatExchanger:
                 [],
                 None,
             )
+            outside_bank_hydraulic = None
 
         if alfa_o is not None:
             if alfa_o <= 0.0:
@@ -401,7 +497,20 @@ class BareTubeHeatExchanger:
             alfa_o_used = alfa_o_calc
 
         outside_thermal = HXOutSideThermalResults(v=v_o, Re=Re_o, Pr=Pr_o, alfa=alfa_o_used)
-        outside_hyd = HXOutSideHydraulicResults(dp_total=dp_o, Re=Re_o, v=v_o)
+        outside_hyd = HXOutSideHydraulicResults(
+            dp_total=dp_o,
+            Re=(
+                outside_bank_hydraulic.midpoint.reynolds
+                if outside_bank_hydraulic is not None
+                else Re_o
+            ),
+            v=(
+                outside_bank_hydraulic.midpoint.face_velocity
+                if outside_bank_hydraulic is not None
+                else v_o
+            ),
+            tube_bank=outside_bank_hydraulic,
+        )
 
         # --------------------------------------------------------------
         # Overall UA
@@ -469,6 +578,13 @@ class BareTubeHeatExchanger:
         # Add outside flow applicability warnings
         if have_outside:
             warnings_list.extend(outside_warnings)
+            existing_outside_warning_ids = {
+                (warning.source, warning.code) for warning in warnings_list
+            }
+            for warning in outside_bank_hydraulic.warnings:
+                if (warning.source, warning.code) not in existing_outside_warning_ids:
+                    warnings_list.append(warning)
+                    existing_outside_warning_ids.add((warning.source, warning.code))
 
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
         if Re_i < 2300.0:

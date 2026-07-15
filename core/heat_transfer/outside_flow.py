@@ -15,6 +15,10 @@
 #   • Pressure-drop integration through outside_pressure_drop dispatcher:
 #       selectable euler_provider = "zukauskas" | "gaddis_gnielinski" | "esdu" | custom provider
 #
+# Production outside hydraulics use three provider states (inlet, midpoint,
+# outlet), Simpson integration of the provider-contract quantity Eu/rho, and
+# a separate signed acceleration term based on face mass flux.
+#
 # All correlations used here are taken from OPEN LITERATURE sources:
 #
 # Heat transfer (tube banks in crossflow):
@@ -49,6 +53,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import TYPE_CHECKING, Any, Literal
 
 from core.common.warnings import ModelWarning, make_warning
 from .outside_pressure_drop import (
@@ -59,6 +64,9 @@ from .outside_pressure_drop import (
     evaluate_euler,
     pressure_drop_from_euler,
 )
+
+if TYPE_CHECKING:
+    from core.properties.common import FluidTransportProperties
 
 
 # -------------------------------------------------------------------------
@@ -71,6 +79,151 @@ class FluidProps:
     mu: float   # [Pa*s]
     k: float    # [W/(m*K)]
     cp: float   # [J/(kg*K)]
+
+
+OutsideHydraulicPosition = Literal["inlet", "midpoint", "outlet"]
+
+
+@dataclass(frozen=True)
+class OutsideHydraulicPoint:
+    """Three-state outside tube-bank hydraulic point."""
+
+    position: OutsideHydraulicPosition
+    temperature: float
+    pressure: float
+    props: FluidTransportProperties
+    enthalpy: float | None
+    face_mass_flux: float
+    face_velocity: float
+    reference_area: float
+    reference_mass_flux: float
+    reference_velocity: float
+    reynolds: float
+    euler_number: float
+    dynamic_pressure_reference: float
+    prandtl: float
+
+    @property
+    def Pr(self) -> float:
+        return self.prandtl
+
+    @property
+    def h(self) -> float | None:
+        return self.enthalpy
+
+    @property
+    def dynamic_pressure(self) -> float:
+        """Compatibility alias for reference dynamic pressure."""
+        return self.dynamic_pressure_reference
+
+    @property
+    def maximum_gap_velocity(self) -> float:
+        """Velocity on the minimum-free-flow reference area."""
+        return self.reference_velocity
+
+    @property
+    def maximum_gap_mass_flux(self) -> float:
+        """Mass flux on the minimum-free-flow reference area."""
+        return self.reference_mass_flux
+
+
+@dataclass(frozen=True)
+class OutsideTubeBankHydraulicResult:
+    """Variable-property drag and signed acceleration through a tube bank."""
+
+    inlet: OutsideHydraulicPoint
+    midpoint: OutsideHydraulicPoint
+    outlet: OutsideHydraulicPoint
+    midpoint_method: str
+    euler_basis: str
+    reference_velocity_definition: str
+    face_area: float
+    face_mass_flux: float
+    reference_area: float
+    reference_mass_flux: float
+    reference_diameter: float
+    n_rows_effective: float
+    mean_euler_over_rho: float
+    dp_drag: float
+    dp_acceleration: float
+    dp_total: float
+    warnings: tuple[ModelWarning, ...]
+
+    @property
+    def dp_outside_drag(self) -> float:
+        return self.dp_drag
+
+    @property
+    def dp_outside_acceleration(self) -> float:
+        return self.dp_acceleration
+
+    @property
+    def dp_outside_total(self) -> float:
+        return self.dp_total
+
+    @property
+    def mean_Eu_over_rho(self) -> float:
+        return self.mean_euler_over_rho
+
+    @property
+    def rho_in(self) -> float:
+        return self.inlet.props.rho
+
+    @property
+    def rho_mid(self) -> float:
+        return self.midpoint.props.rho
+
+    @property
+    def rho_out(self) -> float:
+        return self.outlet.props.rho
+
+    @property
+    def mu_in(self) -> float:
+        return self.inlet.props.mu
+
+    @property
+    def mu_mid(self) -> float:
+        return self.midpoint.props.mu
+
+    @property
+    def mu_out(self) -> float:
+        return self.outlet.props.mu
+
+    @property
+    def reference_velocity_in(self) -> float:
+        return self.inlet.reference_velocity
+
+    @property
+    def reference_velocity_mid(self) -> float:
+        return self.midpoint.reference_velocity
+
+    @property
+    def reference_velocity_out(self) -> float:
+        return self.outlet.reference_velocity
+
+    @property
+    def Re_in(self) -> float:
+        return self.inlet.reynolds
+
+    @property
+    def Re_mid(self) -> float:
+        return self.midpoint.reynolds
+
+    @property
+    def Re_out(self) -> float:
+        return self.outlet.reynolds
+
+    @property
+    def Eu_in(self) -> float:
+        return self.inlet.euler_number
+
+    @property
+    def Eu_mid(self) -> float:
+        return self.midpoint.euler_number
+
+    @property
+    def Eu_out(self) -> float:
+        return self.outlet.euler_number
 
 
 # -------------------------------------------------------------------------
@@ -152,6 +305,454 @@ def vmax_ratio_min_freeflow(
         raise ValueError("layout must be 'inline' or 'staggered'.")
 
     return S_T / A_min
+
+
+def calculate_outside_tube_bank_hydraulics(
+    *,
+    m_dot: float,
+    face_area: float,
+    tube_outer_diameter: float,
+    tube_pitch_transverse: float,
+    tube_pitch_longitudinal: float,
+    layout: str,
+    n_rows: int,
+    n_tubes_per_row: int,
+    provider: Any | None = None,
+    temperature_in: float | None = None,
+    temperature_out: float | None = None,
+    pressure: float | None = None,
+    euler_provider: str | EulerProvider = "zukauskas",
+    inlet_props: Any | None = None,
+    midpoint_props: Any | None = None,
+    outlet_props: Any | None = None,
+    use_vmax_for_dp: bool = True,
+    pressure_drop_geometry_meta: dict | None = None,
+) -> OutsideTubeBankHydraulicResult:
+    """Calculate three-state variable-property crossflow tube-bank hydraulics.
+
+    Existing Euler providers return a complete-bank coefficient by default,
+    so the row count is already represented in ``Eu`` and is not multiplied
+    again.  A provider explicitly marked ``per_row`` is multiplied by its
+    reported effective row count exactly once.  In both cases the provider's
+    Reynolds number and pressure conversion use the same maximum-gap
+    reference mass flux by default.
+
+    The drag reference is the existing minimum-free-flow velocity basis
+    (``V_max`` by default).  The acceleration term uses the face mass flux,
+    because inlet and outlet are the same physical face reference sections in
+    this 0D model.  Pressure is held at one representative value for all
+    three property evaluations; no pressure-property iteration is performed.
+    """
+    _validate_outside_hydraulic_inputs(
+        m_dot=m_dot,
+        face_area=face_area,
+        tube_outer_diameter=tube_outer_diameter,
+        tube_pitch_transverse=tube_pitch_transverse,
+        tube_pitch_longitudinal=tube_pitch_longitudinal,
+        layout=layout,
+        n_rows=n_rows,
+        n_tubes_per_row=n_tubes_per_row,
+    )
+
+    ratio = vmax_ratio_min_freeflow(
+        tube_outer_diameter,
+        tube_pitch_transverse,
+        tube_pitch_longitudinal,
+        layout,
+    )
+    reference_area = face_area / ratio if use_vmax_for_dp else face_area
+    reference_velocity_definition = (
+        "maximum_gap_velocity" if use_vmax_for_dp else "face_velocity"
+    )
+    face_mass_flux = m_dot / face_area
+    reference_mass_flux = m_dot / reference_area
+
+    warnings: list[ModelWarning] = []
+    if provider is None:
+        if inlet_props is None:
+            raise ValueError(
+                "provider or inlet_props must be supplied for outside tube-bank hydraulics."
+            )
+        props_in, h_in = _outside_transport_and_enthalpy(inlet_props)
+        props_mid, h_mid = _outside_transport_and_enthalpy(midpoint_props or inlet_props)
+        props_out, h_out = _outside_transport_and_enthalpy(outlet_props or inlet_props)
+        T_in = 300.0 if temperature_in is None else float(temperature_in)
+        T_out = T_in if temperature_out is None else float(temperature_out)
+        T_mid = 0.5 * (T_in + T_out)
+        p = 101325.0 if pressure is None else float(pressure)
+        midpoint_method = "arithmetic_temperature"
+    else:
+        T_in = _outside_require_temperature(temperature_in, "temperature_in")
+        T_out = _outside_require_temperature(temperature_out, "temperature_out")
+        p = _outside_require_pressure(pressure)
+        props_in, h_in = _outside_evaluate_provider_state(provider, T_in, p)
+        props_out, h_out = _outside_evaluate_provider_state(provider, T_out, p)
+        T_mid = 0.5 * (T_in + T_out)
+        midpoint_method = "arithmetic_temperature"
+
+        if _outside_finite_enthalpy(h_in) and _outside_finite_enthalpy(h_out):
+            h_mid_target = (float(h_in) + float(h_out)) / 2.0
+            T_mid_enthalpy = _outside_try_temperature_from_enthalpy(
+                provider, h=h_mid_target, p=p
+            )
+            if T_mid_enthalpy is not None:
+                T_mid = T_mid_enthalpy
+                midpoint_method = "enthalpy"
+            else:
+                warnings.append(_outside_midpoint_fallback_warning("inversion is unavailable or failed"))
+        else:
+            warnings.append(_outside_midpoint_fallback_warning("complete inlet/outlet enthalpy data are unavailable"))
+
+        if midpoint_props is not None:
+            props_mid, h_mid = _outside_transport_and_enthalpy(midpoint_props)
+        else:
+            props_mid, h_mid = _outside_evaluate_provider_state(provider, T_mid, p)
+
+    points: list[OutsideHydraulicPoint] = []
+    euler_basis: str | None = None
+    n_rows_effective: float | None = None
+    for position, temperature, props, enthalpy in (
+        ("inlet", T_in, props_in, h_in),
+        ("midpoint", T_mid, props_mid, h_mid),
+        ("outlet", T_out, props_out, h_out),
+    ):
+        reynolds = reference_mass_flux * tube_outer_diameter / props.mu
+        if not math.isfinite(reynolds) or reynolds <= 0.0:
+            raise ValueError(
+                "outside_bank_hydraulics_invalid_reynolds: Reynolds number must be finite and positive."
+            )
+
+        geometry_meta = dict(pressure_drop_geometry_meta or {})
+        # Outside v0.5.5 hydraulics are bulk-property only; wall-property
+        # corrections belong to the thermal path and are not injected into
+        # the pressure-drop provider.
+        geometry_meta.pop("mu_wall", None)
+        geometry_meta.pop("mu_surface", None)
+        # These reference quantities are owned by this integrator.  Do not
+        # let optional provider metadata silently mix a different velocity,
+        # area, density, or viscosity basis into Re or pressure conversion.
+        geometry_meta.update(
+            {
+                "m_dot_total": m_dot,
+                "rho": props.rho,
+                "mu": props.mu,
+                "v_ref": reference_mass_flux / props.rho,
+                "face_area": face_area,
+                "reference_area": reference_area,
+                "face_mass_flux": face_mass_flux,
+                "reference_mass_flux": reference_mass_flux,
+                "tube_outer_diameter": tube_outer_diameter,
+                "tube_pitch_transverse": tube_pitch_transverse,
+                "tube_pitch_longitudinal": tube_pitch_longitudinal,
+                "mu_bulk": props.mu,
+            }
+        )
+
+        request = EulerRequest(
+            Re=reynolds,
+            ST_over_D=tube_pitch_transverse / tube_outer_diameter,
+            SL_over_D=tube_pitch_longitudinal / tube_outer_diameter,
+            layout=layout,
+            n_rows=n_rows,
+            geometry_meta=geometry_meta,
+        )
+        euler_result = evaluate_euler(request, euler_provider=euler_provider)
+        basis = getattr(euler_result, "euler_basis", None)
+        if basis is None:
+            basis = "complete_bank"
+            warnings.append(
+                make_warning(
+                    code="outside_bank_hydraulics_ambiguous_euler_basis",
+                    message=(
+                        "outside_bank_hydraulics: Euler provider did not declare "
+                        "whether Eu is per-row or complete-bank; assuming complete-bank."
+                    ),
+                    source="outside_bank_hydraulics",
+                    severity="warning",
+                )
+            )
+        if basis not in ("per_row", "complete_bank"):
+            raise ValueError(
+                "outside_bank_hydraulics_ambiguous_euler_basis: unsupported Euler basis."
+            )
+        if euler_basis is None:
+            euler_basis = basis
+        elif euler_basis != basis:
+            raise ValueError(
+                "outside_bank_hydraulics_ambiguous_euler_basis: Euler basis changed between states."
+            )
+
+        effective_rows_raw = getattr(euler_result, "n_rows_effective", None)
+        effective_rows = (
+            float(n_rows)
+            if effective_rows_raw is None
+            else float(effective_rows_raw)
+        )
+        if not math.isfinite(effective_rows) or effective_rows <= 0.0:
+            raise ValueError(
+                "outside_bank_hydraulics_invalid_row_count: effective row count must be finite and positive."
+            )
+        if n_rows_effective is None:
+            n_rows_effective = effective_rows
+        elif not math.isclose(n_rows_effective, effective_rows, rel_tol=0.0, abs_tol=1.0e-12):
+            raise ValueError(
+                "outside_bank_hydraulics_invalid_row_count: effective row count changed between states."
+            )
+
+        eu = float(euler_result.Eu)
+        if not math.isfinite(eu) or eu < 0.0:
+            raise ValueError(
+                "outside_bank_hydraulics_invalid_euler: Euler number must be finite and non-negative."
+            )
+
+        reference_velocity = reference_mass_flux / props.rho
+        face_velocity = face_mass_flux / props.rho
+        dynamic_pressure_reference = reference_mass_flux**2 / (2.0 * props.rho)
+        prandtl = props.mu * props.cp / props.k
+        if not all(
+            math.isfinite(value)
+            for value in (
+                temperature,
+                p,
+                face_velocity,
+                reference_velocity,
+                dynamic_pressure_reference,
+                prandtl,
+            )
+        ):
+            raise ValueError(
+                "outside_bank_hydraulics_nonfinite_state: outside hydraulic point is not finite."
+            )
+
+        points.append(
+            OutsideHydraulicPoint(
+                position=position,
+                temperature=float(temperature),
+                pressure=float(p),
+                props=props,
+                enthalpy=enthalpy,
+                face_mass_flux=face_mass_flux,
+                face_velocity=face_velocity,
+                reference_area=reference_area,
+                reference_mass_flux=reference_mass_flux,
+                reference_velocity=reference_velocity,
+                reynolds=reynolds,
+                euler_number=eu,
+                dynamic_pressure_reference=dynamic_pressure_reference,
+                prandtl=prandtl,
+            )
+        )
+        warnings.extend(
+            check_outside_dp_applicability(
+                request,
+                euler_provider=euler_provider,
+                use_vmax_for_dp=use_vmax_for_dp,
+            )
+        )
+
+    if euler_basis is None or n_rows_effective is None:
+        raise ValueError("outside_bank_hydraulics_nonfinite_state: no hydraulic states were evaluated.")
+
+    mean_euler_over_rho = (
+        points[0].euler_number / points[0].props.rho
+        + 4.0 * points[1].euler_number / points[1].props.rho
+        + points[2].euler_number / points[2].props.rho
+    ) / 6.0
+    row_multiplier = n_rows_effective if euler_basis == "per_row" else 1.0
+    # Three-state 0D+ approximation of the local tube-bank drag integral;
+    # this integrates the Euler-correlation quantity, not Darcy f/rho.
+    dp_drag = row_multiplier * (reference_mass_flux**2 / 2.0) * mean_euler_over_rho
+
+    # The inlet and outlet are the same face-flow reference sections in this
+    # 0D bank model, so acceleration uses face mass flux rather than V_max mass
+    # flux.  Refs: White, Fluid Mechanics; Idelchik; Crane TP-410.
+    dp_acceleration = face_mass_flux**2 * (
+        1.0 / points[2].props.rho - 1.0 / points[0].props.rho
+    )
+    dp_total = dp_drag + dp_acceleration
+
+    if not math.isfinite(dp_drag) or dp_drag < 0.0:
+        raise ValueError(
+            "outside_bank_hydraulics_invalid_drag: bank drag must be finite and non-negative."
+        )
+    if not math.isfinite(dp_acceleration) or not math.isfinite(dp_total):
+        raise ValueError(
+            "outside_bank_hydraulics_nonfinite_state: outside pressure change is not finite."
+        )
+    if dp_total < 0.0:
+        warnings.append(
+            make_warning(
+                code="outside_bank_hydraulics_negative_total_pressure_change",
+                message=(
+                    "outside_bank_hydraulics: signed outside bank pressure change "
+                    f"is negative ({dp_total:.6g} Pa), representing net pressure "
+                    "recovery after irreversible bank drag."
+                ),
+                source="outside_bank_hydraulics",
+                severity="warning",
+            )
+        )
+
+    return OutsideTubeBankHydraulicResult(
+        inlet=points[0],
+        midpoint=points[1],
+        outlet=points[2],
+        midpoint_method=midpoint_method,
+        euler_basis=euler_basis,
+        reference_velocity_definition=reference_velocity_definition,
+        face_area=float(face_area),
+        face_mass_flux=face_mass_flux,
+        reference_area=float(reference_area),
+        reference_mass_flux=reference_mass_flux,
+        reference_diameter=float(tube_outer_diameter),
+        n_rows_effective=n_rows_effective,
+        mean_euler_over_rho=mean_euler_over_rho,
+        dp_drag=dp_drag,
+        dp_acceleration=dp_acceleration,
+        dp_total=dp_total,
+        warnings=_deduplicate_outside_hydraulic_warnings(warnings),
+    )
+
+
+outside_tube_bank_hydraulics = calculate_outside_tube_bank_hydraulics
+
+
+def _validate_outside_hydraulic_inputs(
+    *,
+    m_dot: float,
+    face_area: float,
+    tube_outer_diameter: float,
+    tube_pitch_transverse: float,
+    tube_pitch_longitudinal: float,
+    layout: str,
+    n_rows: int,
+    n_tubes_per_row: int,
+) -> None:
+    checks = (
+        ("mass flow", m_dot, "outside_bank_hydraulics_invalid_mass_flux", True),
+        ("face area", face_area, "outside_bank_hydraulics_invalid_face_area", True),
+        ("reference diameter", tube_outer_diameter, "outside_bank_hydraulics_invalid_reference_diameter", True),
+        ("transverse pitch", tube_pitch_transverse, "outside_bank_hydraulics_invalid_geometry", True),
+        ("longitudinal pitch", tube_pitch_longitudinal, "outside_bank_hydraulics_invalid_geometry", True),
+    )
+    for label, value, code, strictly_positive in checks:
+        valid = math.isfinite(value) and (value > 0.0 if strictly_positive else value >= 0.0)
+        if not valid:
+            raise ValueError(f"{code}: {label} must be finite and positive.")
+    if n_rows <= 0 or n_tubes_per_row <= 0:
+        raise ValueError(
+            "outside_bank_hydraulics_invalid_row_count: row and tube counts must be positive."
+        )
+    if layout not in ("inline", "staggered"):
+        raise ValueError("outside_bank_hydraulics_invalid_geometry: layout is invalid.")
+
+
+def _outside_require_temperature(value: float | None, name: str) -> float:
+    if value is None or not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            f"outside_bank_hydraulics_nonfinite_state: {name} must be finite and positive."
+        )
+    return float(value)
+
+
+def _outside_require_pressure(value: float | None) -> float:
+    if value is None or not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            "outside_bank_hydraulics_nonfinite_state: pressure must be finite and positive."
+        )
+    return float(value)
+
+
+def _outside_transport_and_enthalpy(raw: Any) -> tuple[FluidTransportProperties, float | None]:
+    from core.properties.common import FluidTransportProperties
+
+    transport = getattr(raw, "transport", raw)
+    if isinstance(transport, FluidTransportProperties):
+        props = transport
+    else:
+        props = FluidTransportProperties(
+            rho=float(getattr(transport, "rho")),
+            mu=float(getattr(transport, "mu")),
+            k=float(getattr(transport, "k")),
+            cp=float(getattr(transport, "cp")),
+        )
+    enthalpy = getattr(raw, "h", getattr(raw, "enthalpy", None))
+    return props, _outside_finite_float_or_none(enthalpy)
+
+
+def _outside_evaluate_provider_state(
+    provider: Any,
+    temperature: float,
+    pressure: float,
+) -> tuple[FluidTransportProperties, float | None]:
+    full_at = getattr(provider, "full_at", None)
+    raw = (
+        full_at(T=temperature, p=pressure)
+        if callable(full_at)
+        else provider.at(T=temperature, p=pressure)
+    )
+    return _outside_transport_and_enthalpy(raw)
+
+
+def _outside_try_temperature_from_enthalpy(
+    provider: Any,
+    *,
+    h: float,
+    p: float,
+) -> float | None:
+    for method_name in ("temperature_from_h_p", "T_from_h_p"):
+        method = getattr(provider, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            raw = method(h=h, p=p)
+        except Exception:
+            continue
+        if isinstance(raw, (int, float)):
+            value = float(raw)
+        else:
+            value = _outside_finite_float_or_none(getattr(raw, "T", None))
+        return value if value is not None and value > 0.0 else None
+    return None
+
+
+def _outside_finite_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _outside_finite_enthalpy(value: float | None) -> bool:
+    return value is not None and math.isfinite(value)
+
+
+def _outside_midpoint_fallback_warning(reason: str) -> ModelWarning:
+    return make_warning(
+        code="outside_bank_hydraulics_midpoint_temperature_fallback",
+        message=(
+            "outside_bank_hydraulics: " + reason + "; using arithmetic "
+            "temperature midpoint."
+        ),
+        source="outside_bank_hydraulics",
+        severity="info",
+    )
+
+
+def _deduplicate_outside_hydraulic_warnings(
+    warnings: list[ModelWarning],
+) -> tuple[ModelWarning, ...]:
+    unique: list[ModelWarning] = []
+    seen: set[tuple[str, str]] = set()
+    for warning in warnings:
+        identity = (warning.source, warning.code)
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(warning)
+    return tuple(unique)
 
 
 # -------------------------------------------------------------------------
@@ -502,9 +1103,10 @@ def outside_flow_from_mass_flow(
     euler_provider: str | EulerProvider = "zukauskas",
     use_vmax_for_ht: bool = True,
     use_vmax_for_dp: bool = True,
+    calculate_pressure_drop: bool = True,
     is_finned: bool = False,
     pressure_drop_geometry_meta: dict | None = None,
-) -> tuple[float, float, float, float, float, list[ModelWarning], EulerResult]:
+) -> tuple[float, float, float, float, float, list[ModelWarning], EulerResult | None]:
     """
     Outside forced convection for tube bank (0D core).
 
@@ -525,7 +1127,8 @@ def outside_flow_from_mass_flow(
         - alfa_o: outside heat transfer coefficient [W/(m^2*K)]
         - dp_o: pressure drop [Pa]
         - warnings_list: structured applicability warnings
-        - euler_result: metadata about selected pressure-drop backend
+        - euler_result: metadata about selected pressure-drop backend, or
+          ``None`` when ``calculate_pressure_drop=False``
     """
 
     if m_dot <= 0.0:
@@ -574,37 +1177,6 @@ def outside_flow_from_mass_flow(
     )
     alfa_o = Nu * props.k / tube_outer_diameter
 
-    # Pressure drop
-    ST_over_D = tube_pitch_transverse / tube_outer_diameter
-    SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
-    Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)
-
-    pressure_drop_geometry_meta = dict(pressure_drop_geometry_meta or {})
-    pressure_drop_geometry_meta.setdefault("m_dot_total", m_dot)
-    pressure_drop_geometry_meta.setdefault("rho", props.rho)
-    pressure_drop_geometry_meta.setdefault("mu", props.mu)
-    pressure_drop_geometry_meta.setdefault("v_ref", V_ref_dp)
-    pressure_drop_geometry_meta.setdefault("tube_outer_diameter", tube_outer_diameter)
-    pressure_drop_geometry_meta.setdefault("tube_pitch_transverse", tube_pitch_transverse)
-    pressure_drop_geometry_meta.setdefault("tube_pitch_longitudinal", tube_pitch_longitudinal)
-    pressure_drop_geometry_meta.setdefault("mu_bulk", props.mu)
-
-    request = EulerRequest(
-        Re=Re_dp,
-        ST_over_D=ST_over_D,
-        SL_over_D=SL_over_D,
-        layout=layout,
-        n_rows=n_rows,
-        is_finned=is_finned,
-        geometry_meta=pressure_drop_geometry_meta,
-    )
-
-    euler_result = evaluate_euler(
-        request,
-        euler_provider=euler_provider,
-    )
-    dp_o = pressure_drop_from_euler(props.rho, V_ref_dp, euler_result.Eu)
-
     # Applicability warnings
     warnings_list = check_outside_ht_applicability(
         Re,
@@ -617,12 +1189,49 @@ def outside_flow_from_mass_flow(
         use_vmax_for_ht=use_vmax_for_ht,
     )
 
-    warnings_list.extend(
-        check_outside_dp_applicability(
+    if calculate_pressure_drop:
+        # This compatibility helper retains the historical one-state API.
+        # Production BareTubeHeatExchanger pressure drop uses the universal
+        # three-state outside-bank function instead.
+        ST_over_D = tube_pitch_transverse / tube_outer_diameter
+        SL_over_D = tube_pitch_longitudinal / tube_outer_diameter
+        Re_dp = reynolds_number(props.rho, V_ref_dp, tube_outer_diameter, props.mu)
+
+        pressure_drop_geometry_meta = dict(pressure_drop_geometry_meta or {})
+        pressure_drop_geometry_meta.setdefault("m_dot_total", m_dot)
+        pressure_drop_geometry_meta.setdefault("rho", props.rho)
+        pressure_drop_geometry_meta.setdefault("mu", props.mu)
+        pressure_drop_geometry_meta.setdefault("v_ref", V_ref_dp)
+        pressure_drop_geometry_meta.setdefault("tube_outer_diameter", tube_outer_diameter)
+        pressure_drop_geometry_meta.setdefault("tube_pitch_transverse", tube_pitch_transverse)
+        pressure_drop_geometry_meta.setdefault("tube_pitch_longitudinal", tube_pitch_longitudinal)
+        pressure_drop_geometry_meta.setdefault("mu_bulk", props.mu)
+
+        request = EulerRequest(
+            Re=Re_dp,
+            ST_over_D=ST_over_D,
+            SL_over_D=SL_over_D,
+            layout=layout,
+            n_rows=n_rows,
+            is_finned=is_finned,
+            geometry_meta=pressure_drop_geometry_meta,
+        )
+
+        euler_result = evaluate_euler(
             request,
             euler_provider=euler_provider,
-            use_vmax_for_dp=use_vmax_for_dp,
         )
-    )
+        dp_o = pressure_drop_from_euler(props.rho, V_ref_dp, euler_result.Eu)
+
+        warnings_list.extend(
+            check_outside_dp_applicability(
+                request,
+                euler_provider=euler_provider,
+                use_vmax_for_dp=use_vmax_for_dp,
+            )
+        )
+    else:
+        euler_result = None
+        dp_o = float("nan")
 
     return v, Re, Pr, alfa_o, dp_o, warnings_list, euler_result

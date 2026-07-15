@@ -17,6 +17,11 @@ The project follows **Semantic Versioning (SemVer)**:
 - Signed tube-side acceleration pressure-change calculation.
 - Reusable tube-side hydraulic states for future local-loss models.
 - Detailed tube-bundle hydraulic diagnostics.
+- Universal three-state outside tube-bank hydraulic property evaluation at
+  inlet, midpoint, and outlet.
+- Variable-property integration of the Euler tube-bank drag term.
+- Signed outside acceleration pressure-change calculation.
+- Explicit outside Euler-number and reference-velocity diagnostics.
 
 ### Changed
 
@@ -24,6 +29,10 @@ The project follows **Semantic Versioning (SemVer)**:
   replaced by a universal variable-property method.
 - The same straight tube-bundle hydraulic calculation is now used for all
   supported tube-side fluids and thermal directions.
+- Outside bare-tube-bank pressure drop now uses local bulk properties instead
+  of one mean state.
+- The same outside hydraulic calculation path is used for all supported fluids
+  and all thermal directions.
 
 ### Notes
 
@@ -31,6 +40,14 @@ The project follows **Semantic Versioning (SemVer)**:
 - The same equations are used for all supported property providers.
 - Tube-side pressure drop currently covers only straight tube-bundle friction
   and signed acceleration pressure change.
+- Tube-side and outside-side variable-property hydraulics use the same
+  three-state principle but different physical equations: the tube-side model
+  integrates `f/rho`, while the outside tube-bank model integrates the
+  Euler-based drag quantity consistent with the provider contract.
+- Outside pressure drop covers irreversible crossflow drag through the bare
+  tube bank and signed inlet-to-outlet acceleration pressure change only.
+- Outside duct, plenum, casing-transition, screen, louver, and other local
+  losses are not included.
 - Nozzle, chamber, tube-sheet entrance/exit, and return losses remain excluded
   and are planned for a later patch.
 

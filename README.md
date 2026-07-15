@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.3.x)
+## Current Capabilities (v0.5.5)
 
 - Bare tube heat exchangers
 - Tube-side forced convection
@@ -45,11 +45,14 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - counterflow
   - cocurrentflow
   - crossflow (both sides mixed, lumped 0D)
-- Detailed tube-side pressure drop:
-  - friction losses
-  - inlet losses
-  - outlet losses
-  - return (pass) losses
+- Three-state variable-property tube-side pressure change:
+  - distributed straight-tube friction
+  - signed acceleration pressure change
+- Three-state variable-property outside tube-bank pressure change:
+  - irreversible crossflow bank drag
+  - signed inlet-to-outlet acceleration pressure change
+- Outside reference-velocity, Euler-number, and inlet/midpoint/outlet
+  hydraulic diagnostics
 - Explicit geometry modelling:
   - tube dimensions
   - effective vs total length
@@ -59,6 +62,10 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - geometry
   - thermal performance
   - hydraulic performance
+
+Outside pressure change is limited to the bare-tube bank. Duct, plenum,
+casing-transition, screen, louver, damper, fan, and external-piping losses are
+not included.
 
 ---
 

@@ -40,6 +40,10 @@ from .internal_pressure_drop import (
 
 from .outside_flow import (
     FluidProps as OutsideFlowFluidProps,
+    OutsideHydraulicPoint,
+    OutsideTubeBankHydraulicResult,
+    calculate_outside_tube_bank_hydraulics,
+    outside_tube_bank_hydraulics,
     outside_flow_from_mass_flow,
 )
 
@@ -106,6 +110,10 @@ __all__ = [
 
     # Outside flow (mass-flow driven)
     "OutsideFlowFluidProps",
+    "OutsideHydraulicPoint",
+    "OutsideTubeBankHydraulicResult",
+    "calculate_outside_tube_bank_hydraulics",
+    "outside_tube_bank_hydraulics",
     "outside_flow_from_mass_flow",
 
     # Outside pressure drop

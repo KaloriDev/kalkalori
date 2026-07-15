@@ -26,11 +26,13 @@ v0.5.5 - Iterative Thermal-State Heat Exchanger Simulation.
 Motivation
 ----------
 Thermal coefficients continue to use the existing converged mean bulk state.
-Tube-side hydraulics are separate: the production result evaluates inlet,
-midpoint, and outlet bulk properties and integrates straight-tube friction
-with the signed acceleration term.  The hydraulic representative pressure is
-held constant for those three property evaluations; this patch does not add
-pressure-distribution iteration.
+Hydraulics are separate from the thermal convergence: the production result
+evaluates inlet, midpoint, and outlet bulk properties on both the tube side
+and the outside tube bank. Tube-side friction integrates ``f/rho``; outside
+bank drag integrates the provider-contract ``Eu/rho`` quantity and adds the
+signed face-reference acceleration term. The hydraulic representative
+pressure is held constant for those property evaluations; this patch does not
+add pressure-distribution iteration.
 
 Authoritative thermal state (v0.5.3)
 --------------------------------------
@@ -149,6 +151,7 @@ from core.heat_transfer.thermal_iteration import (
 
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
 from core.heat_transfer.internal_pressure_drop import calculate_tube_bundle_hydraulics
+from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.common.warnings import ModelWarning, make_warning
 
@@ -329,6 +332,31 @@ class HXSimulationResult:
     def inside_dp_total(self) -> float:
         return self.inside_dp_tube_bundle
 
+    @property
+    def outside_tube_bank_hydraulic(self):
+        """Nested three-state outside tube-bank hydraulic result."""
+        return self.final_result.outside_tube_bank_hydraulic
+
+    @property
+    def outside_dp_drag(self) -> float:
+        return self.final_result.outside_dp_drag
+
+    @property
+    def outside_dp_acceleration(self) -> float:
+        return self.final_result.outside_dp_acceleration
+
+    @property
+    def outside_dp_total(self) -> float:
+        return self.final_result.outside_dp_total
+
+    @property
+    def outside_dp(self) -> float:
+        return self.outside_dp_total
+
+    @property
+    def outside_pressure_drop(self) -> float:
+        return self.outside_dp_total
+
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -419,6 +447,10 @@ def run_simulation(
             tube_side_pressure=inside.p,
             m_dot_outside=outside.m_dot,
             outside_props=to_outside_fluid_props(props_out),
+            outside_provider=outside.provider,
+            outside_temperature_in=outside.T_in,
+            outside_temperature_out=T_out_outside,
+            outside_pressure=outside.p,
             K_inlet=K_inlet,
             K_outlet=K_outlet,
             K_turn=K_turn,
@@ -457,9 +489,9 @@ def run_simulation(
             T_out_inside_calc = T_cold_out_eff
             T_out_outside_calc = T_hot_out_eff
 
-        # The thermal pass determines the actual outlet temperature after the
-        # hydraulic snapshot was first evaluated. Refresh only the common
-        # tube-bundle hydraulic result so exposed states use that outlet.
+        # The thermal pass determines the actual outlet temperatures after the
+        # hydraulic snapshot was first evaluated. Refresh both common
+        # three-state hydraulic results so exposed states use those outlets.
         bundle_hydraulic = calculate_tube_bundle_hydraulics(
             m_dot=inside.m_dot,
             flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
@@ -474,15 +506,42 @@ def run_simulation(
             result.tube_side_hydraulic,
             tube_bundle=bundle_hydraulic,
         )
+        outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+            m_dot=outside.m_dot,
+            face_area=hx.bundle.frontal_flow_area,
+            tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
+            tube_pitch_transverse=hx.bundle.pitch_transverse,
+            tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
+            layout=hx.bundle.layout,
+            n_rows=hx.bundle.n_rows,
+            n_tubes_per_row=hx.bundle.n_tubes_per_row,
+            provider=outside.provider,
+            temperature_in=outside.T_in,
+            temperature_out=T_out_outside_calc,
+            pressure=outside.p,
+            euler_provider=euler_provider,
+        )
+        outside_hydraulic = replace(
+            result.outside_side_hydraulic,
+            dp_total=outside_bank_hydraulic.dp_total,
+            Re=outside_bank_hydraulic.midpoint.reynolds,
+            v=outside_bank_hydraulic.midpoint.face_velocity,
+            tube_bank=outside_bank_hydraulic,
+        )
         result_warnings = [
             warning
             for warning in (result.warnings or [])
-            if warning.source != "tube_bundle_hydraulics"
+            if warning.source not in {
+                "tube_bundle_hydraulics",
+                "outside_bank_hydraulics",
+            }
         ]
         result_warnings.extend(bundle_hydraulic.warnings)
+        result_warnings.extend(outside_bank_hydraulic.warnings)
         result = replace(
             result,
             tube_side_hydraulic=tube_hydraulic,
+            outside_side_hydraulic=outside_hydraulic,
             warnings=result_warnings if result_warnings else None,
         )
 
@@ -704,6 +763,10 @@ def run_simulation(
         tube_side_pressure=inside.p,
         m_dot_outside=outside.m_dot,
         outside_props=to_outside_fluid_props(thermal_state.outside_bulk_props),
+        outside_provider=outside.provider,
+        outside_temperature_in=outside.T_in,
+        outside_temperature_out=T_out_outside_final,
+        outside_pressure=outside.p,
         K_inlet=K_inlet,
         K_outlet=K_outlet,
         K_turn=K_turn,

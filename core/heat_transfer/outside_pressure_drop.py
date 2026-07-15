@@ -36,6 +36,14 @@
 # IMPORTANT:
 #   - The current ZukauskasEulerProvider is implemented from openly published /
 #     openly distributed material and returns Euler number.
+#   - Built-in providers return a COMPLETE-BANK Euler number: their row or
+#     effective-row treatment is already included in the returned Eu.
+#   - A custom provider may explicitly declare ``euler_basis="per_row"``;
+#     the universal outside-bank integrator then applies its effective row
+#     count exactly once.
+#   - Built-in Euler correlations represent irreversible bank drag. They do
+#     not include the separate variable-density inlet-to-outlet acceleration
+#     term added by the outside-bank hydraulic integrator.
 #   - pressure_drop_from_euler() must use the SAME reference velocity that was
 #     used to build Reynolds number for the provider. For the current provider,
 #     this should be V_max.
@@ -100,11 +108,19 @@ class EulerRequest:
 class EulerResult:
     """
     Standardized output from pressure-drop models.
+
+    ``Eu`` is explicitly a complete-bank coefficient by default.  Existing
+    built-in providers already apply their physical/effective row treatment
+    internally, so callers must not multiply this value by ``n_rows`` again.
+    A custom provider may opt into ``per_row`` and provide its effective row
+    count; the outside-bank integrator then applies that count exactly once.
     """
     Eu: float
     source: str
     model: str
     validity_note: str | None = None
+    euler_basis: Literal["per_row", "complete_bank"] = "complete_bank"
+    n_rows_effective: float | None = None
 
 
 @runtime_checkable
@@ -194,6 +210,7 @@ class ZukauskasEulerProvider:
     Important notes
     ---------------
       - Re should be based on V_max and D_o.
+      - the returned ``Eu`` is ``complete_bank``; row count is already applied.
       - pressure_drop_from_euler() must then use the same V_max reference velocity.
       - Validity is strongest near tabulated b values:
             b in {1.25, 1.5, 2.0}
@@ -250,6 +267,8 @@ class ZukauskasEulerProvider:
                 "Best consistency is obtained when Re is based on V_max and "
                 "pressure drop is evaluated with the same V_max reference."
             ),
+            euler_basis="complete_bank",
+            n_rows_effective=float(n_rows),
         )
 
     def _eu_per_row_inline(self, Re: float, b: float) -> float:
@@ -467,6 +486,7 @@ class GaddisGnielinskiEulerProvider:
     Important
     ---------
     - Re must be based on V_max and tube outside diameter.
+    - the returned ``Eu`` is ``complete_bank``; row count is already applied.
     - pressure_drop_from_euler() must use the same V_max reference velocity.
     - This provider is for bare tube banks, not finned tube banks.
     """
@@ -527,6 +547,8 @@ class GaddisGnielinskiEulerProvider:
                 "Open Gaddis-Gnielinski pressure-drop provider for bare tube banks. "
                 "Use with Re and pressure-drop dynamic pressure both referenced to V_max."
             ),
+            euler_basis="complete_bank",
+            n_rows_effective=n_eff,
         )
 
     @staticmethod

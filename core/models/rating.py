@@ -178,6 +178,31 @@ class HXRatingResult:
     def inside_dp_total(self) -> float:
         return self.inside_dp_tube_bundle
 
+    @property
+    def outside_tube_bank_hydraulic(self):
+        """Nested three-state outside tube-bank hydraulic result."""
+        return self.final_result.outside_tube_bank_hydraulic
+
+    @property
+    def outside_dp_drag(self) -> float:
+        return self.final_result.outside_dp_drag
+
+    @property
+    def outside_dp_acceleration(self) -> float:
+        return self.final_result.outside_dp_acceleration
+
+    @property
+    def outside_dp_total(self) -> float:
+        return self.final_result.outside_dp_total
+
+    @property
+    def outside_dp(self) -> float:
+        return self.outside_dp_total
+
+    @property
+    def outside_pressure_drop(self) -> float:
+        return self.outside_dp_total
+
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -242,6 +267,10 @@ def run_rating(
         tube_side_pressure=inside.p,
         m_dot_outside=outside.m_dot,
         outside_props=to_outside_fluid_props(props_out),
+        outside_provider=outside.provider,
+        outside_temperature_in=outside.T_in,
+        outside_temperature_out=outside.T_out,
+        outside_pressure=outside.p,
         K_inlet=K_inlet,
         K_outlet=K_outlet,
         K_turn=K_turn,
