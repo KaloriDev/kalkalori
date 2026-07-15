@@ -143,6 +143,12 @@ class CoolPropFluidProvider:
             imposed_phase=self.imposed_phase,
         )
 
+    def temperature_from_h_p(self, h: float, p: float) -> float:
+        """Invert specific enthalpy and pressure to temperature [K]."""
+        return coolprop_temperature_from_h_p(
+            h=h, p=p, fluid=self.fluid, imposed_phase=self.imposed_phase
+        )
+
 
 @dataclass(frozen=True)
 class CoolPropGasMixtureProvider:
@@ -215,6 +221,12 @@ class CoolPropGasMixtureProvider:
             p=p,
             fluid=self.fluid,
             imposed_phase=self.imposed_phase,
+        )
+
+    def temperature_from_h_p(self, h: float, p: float) -> float:
+        """Invert specific enthalpy and pressure to temperature [K]."""
+        return coolprop_temperature_from_h_p(
+            h=h, p=p, fluid=self.fluid, imposed_phase=self.imposed_phase
         )
 
 
@@ -306,6 +318,34 @@ def coolprop_props(
         fluid=fluid,
         warnings=warnings,
     )
+
+
+def coolprop_temperature_from_h_p(
+    h: float,
+    p: float,
+    fluid: str,
+    *,
+    imposed_phase: str | None = None,
+) -> float:
+    """Return temperature [K] from CoolProp ``h,p`` inputs."""
+    if not math.isfinite(h):
+        raise ValueError("Specific enthalpy must be finite [J/kg].")
+    _validate_pressure(p)
+    _validate_fluid_string(fluid)
+    _validate_imposed_phase(imposed_phase)
+    backend = backend_from_fluid_string(fluid)
+    if backend is not None:
+        require_coolprop_backend(backend)
+    CP = _coolprop_module()
+    H_key = _input_key_with_imposed_phase("Hmass", imposed_phase)
+    try:
+        return float(CP.PropsSI("T", H_key, h, "P", p, fluid))
+    except Exception as exc:
+        phase_note = f", imposed_phase={imposed_phase!r}" if imposed_phase is not None else ""
+        raise ValueError(
+            f"CoolProp h,p inversion failed for fluid={fluid!r}, h={h} J/kg, p={p} Pa"
+            f"{phase_note}. CoolProp error: {exc}"
+        ) from exc
 
 
 def build_coolprop_mixture_string(

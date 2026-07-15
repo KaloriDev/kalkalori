@@ -21,17 +21,16 @@
 #   cp [J/(kg*K)], m_dot [kg/s], alfa [W/(m2*K)].
 
 """
-v0.5.3 - Iterative Mean-Property Heat Exchanger Simulation.
+v0.5.5 - Iterative Thermal-State Heat Exchanger Simulation.
 
 Motivation
 ----------
-The MVP ``BareTubeHeatExchanger.solve`` evaluates every transport property,
-velocity, Re, Pr, ``alfa`` and ``U`` at a *single* externally supplied state
-(in practice the inlet state). For water heaters with a moderate temperature
-change this is acceptable, because properties barely move the result. For
-gas-gas duty with a large temperature span (e.g. 30 degC vs 400 degC) the
-inlet-only assumption is not adequate: rho, mu, k, cp, Pr, Re, velocity, alfa
-and U all change substantially between inlet and outlet.
+Thermal coefficients continue to use the existing converged mean bulk state.
+Tube-side hydraulics are separate: the production result evaluates inlet,
+midpoint, and outlet bulk properties and integrates straight-tube friction
+with the signed acceleration term.  The hydraulic representative pressure is
+held constant for those three property evaluations; this patch does not add
+pressure-distribution iteration.
 
 Authoritative thermal state (v0.5.3)
 --------------------------------------
@@ -51,12 +50,12 @@ solve()`` passes. Concretely:
        duplicated.
     3. ``surface_margin`` (if requested) derates that same ``UA`` exactly as
        before.
-    4. One ``BareTubeHeatExchanger.solve()`` pass is still run, at the
-       converged mean bulk properties, *purely* to populate the
-       area/hydraulic/regime-warning snapshot (``final_result``); its own
-       (uncorrected) ``alfa``/``UA`` are never propagated to the top-level
-       result -- ``inside_alfa_mean``/``outside_alfa_mean``/``U_mean``/``UA``
-       come from the converged thermal state and are not later overwritten.
+    4. One final ``BareTubeHeatExchanger.solve()`` snapshot is assembled after
+       the actual outlet temperatures are known.  Its nested hydraulic result
+       is the common three-state straight-bundle calculation; its thermal
+       coefficients remain diagnostics while ``inside_alfa_mean``/
+       ``outside_alfa_mean``/``U_mean``/``UA`` come from the converged thermal
+       state.
 
 This supersedes the v0.5.1/v0.5.2 behavior, where Simulation deliberately
 never computed a wall temperature at all (documented as out of scope) and
@@ -129,7 +128,7 @@ Conventions
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
@@ -149,6 +148,7 @@ from core.heat_transfer.thermal_iteration import (
 )
 
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
+from core.heat_transfer.internal_pressure_drop import calculate_tube_bundle_hydraulics
 
 from core.common.warnings import ModelWarning, make_warning
 
@@ -308,6 +308,27 @@ class HXSimulationResult:
     def outside_wall_temperature_max_estimate(self) -> float:
         return self.wall_temperature_envelope.outside_max
 
+    @property
+    def tube_side_hydraulic(self):
+        """Nested straight tube-bundle hydraulic result."""
+        return self.final_result.tube_side_hydraulic
+
+    @property
+    def inside_dp_friction(self) -> float:
+        return self.final_result.inside_dp_friction
+
+    @property
+    def inside_dp_acceleration(self) -> float:
+        return self.final_result.inside_dp_acceleration
+
+    @property
+    def inside_dp_tube_bundle(self) -> float:
+        return self.final_result.inside_dp_tube_bundle
+
+    @property
+    def inside_dp_total(self) -> float:
+        return self.inside_dp_tube_bundle
+
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -392,6 +413,10 @@ def run_simulation(
             cold_stream=cold_stream,
             m_dot_tube_side=inside.m_dot,
             tube_side_props=to_internal_fluid_props(props_in),
+            tube_side_provider=inside.provider,
+            tube_side_temperature_in=inside.T_in,
+            tube_side_temperature_out=T_out_inside,
+            tube_side_pressure=inside.p,
             m_dot_outside=outside.m_dot,
             outside_props=to_outside_fluid_props(props_out),
             K_inlet=K_inlet,
@@ -432,6 +457,35 @@ def run_simulation(
             T_out_inside_calc = T_cold_out_eff
             T_out_outside_calc = T_hot_out_eff
 
+        # The thermal pass determines the actual outlet temperature after the
+        # hydraulic snapshot was first evaluated. Refresh only the common
+        # tube-bundle hydraulic result so exposed states use that outlet.
+        bundle_hydraulic = calculate_tube_bundle_hydraulics(
+            m_dot=inside.m_dot,
+            flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
+            hydraulic_diameter=hx.bundle.internal_hydraulic_diameter,
+            hydraulic_length_total=hx.bundle.internal_length_total,
+            provider=inside.provider,
+            temperature_in=inside.T_in,
+            temperature_out=T_out_inside_calc,
+            pressure=inside.p,
+        )
+        tube_hydraulic = replace(
+            result.tube_side_hydraulic,
+            tube_bundle=bundle_hydraulic,
+        )
+        result_warnings = [
+            warning
+            for warning in (result.warnings or [])
+            if warning.source != "tube_bundle_hydraulics"
+        ]
+        result_warnings.extend(bundle_hydraulic.warnings)
+        result = replace(
+            result,
+            tube_side_hydraulic=tube_hydraulic,
+            warnings=result_warnings if result_warnings else None,
+        )
+
         return result, T_out_inside_calc, T_out_outside_calc, props_in, props_out, Q_eff, Q_full
 
     def _build_result(
@@ -451,9 +505,9 @@ def run_simulation(
         residual_T_outside_K: float,
     ) -> HXSimulationResult:
         # Authoritative source for alfa_i/alfa_o/U/UA: the converged thermal
-        # state when available (the default, corrected path); the legacy
-        # uncorrected single solve() pass only for the iterate=False escape
-        # hatch (thermal_state is None there by construction).
+        # state when available; the explicit iterate=False path uses the
+        # single uncorrected thermal snapshot by design. Hydraulic fields on
+        # final_result always come from the three-state tube-bundle function.
         if thermal_state is not None:
             inside_alfa_mean = thermal_state.alfa_i
             outside_alfa_mean = thermal_state.alfa_o
@@ -588,30 +642,15 @@ def run_simulation(
         relaxation_factor=relaxation_factor,
     )
 
-    # Legacy solve() pass at the converged mean-bulk properties: kept ONLY
-    # for its area/hydraulic/regime-warning snapshot (final_result). Its own
-    # (uncorrected) alfa/UA are discarded by _build_result above in favor of
-    # thermal_state -- never propagated to the top-level result.
+    # Build the final snapshot after thermal convergence.  The tube-side
+    # hydraulic state is evaluated from the actual inlet/outlet temperatures;
+    # no one-state hydraulic result is propagated or used here.
     if hot_is_inside:
         hot_stream = SensibleHeatStream(C=inside.m_dot * thermal_state.inside_bulk_props.cp, T_in=inside.T_in)
         cold_stream = SensibleHeatStream(C=outside.m_dot * thermal_state.outside_bulk_props.cp, T_in=outside.T_in)
     else:
         hot_stream = SensibleHeatStream(C=outside.m_dot * thermal_state.outside_bulk_props.cp, T_in=outside.T_in)
         cold_stream = SensibleHeatStream(C=inside.m_dot * thermal_state.inside_bulk_props.cp, T_in=inside.T_in)
-
-    final_result = hx.solve(
-        hot_stream=hot_stream,
-        cold_stream=cold_stream,
-        m_dot_tube_side=inside.m_dot,
-        tube_side_props=to_internal_fluid_props(thermal_state.inside_bulk_props),
-        m_dot_outside=outside.m_dot,
-        outside_props=to_outside_fluid_props(thermal_state.outside_bulk_props),
-        K_inlet=K_inlet,
-        K_outlet=K_outlet,
-        K_turn=K_turn,
-        flow_arrangement=flow_arrangement,
-        euler_provider=euler_provider,
-    )
 
     # Achievable duty/outlet temperatures from the CORRECTED UA (reuses the
     # existing epsilon-NTU relations; no correlation is duplicated here).
@@ -649,6 +688,28 @@ def run_simulation(
         T_out_inside_final, T_out_outside_final = T_hot_out_eff, T_cold_out_eff
     else:
         T_out_outside_final, T_out_inside_final = T_hot_out_eff, T_cold_out_eff
+
+    # Build the final snapshot after the corrected thermal state has supplied
+    # the actual tube-side outlet temperature.  The common hydraulic function
+    # therefore evaluates inlet, midpoint, and outlet bulk properties on the
+    # production result itself.
+    final_result = hx.solve(
+        hot_stream=hot_stream,
+        cold_stream=cold_stream,
+        m_dot_tube_side=inside.m_dot,
+        tube_side_props=to_internal_fluid_props(thermal_state.inside_bulk_props),
+        tube_side_provider=inside.provider,
+        tube_side_temperature_in=inside.T_in,
+        tube_side_temperature_out=T_out_inside_final,
+        tube_side_pressure=inside.p,
+        m_dot_outside=outside.m_dot,
+        outside_props=to_outside_fluid_props(thermal_state.outside_bulk_props),
+        K_inlet=K_inlet,
+        K_outlet=K_outlet,
+        K_turn=K_turn,
+        flow_arrangement=flow_arrangement,
+        euler_provider=euler_provider,
+    )
 
     # thermal_state.residual is a single wall-temperature residual [K] shared
     # across both sides (see thermal_iteration.py); there is no separate

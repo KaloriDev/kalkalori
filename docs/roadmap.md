@@ -35,9 +35,11 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.5.1`  
+**Current version:** `v0.5.5`
 **Model level:** MVP_0D  
-**Scope:** Bare tube heat exchanger, forced external flow, complete thermal and hydraulic balance.
+**Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
+and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
+return losses remain future work.
 
 ---
 
@@ -57,6 +59,10 @@ Simulation from Rating along design-practice lines.
 - (v0.5.1) Separate **Simulation** (known inlets -> achievable outlets) from
   **Rating** (closed heat balance -> overdesign / surface margin), with a
   heat-balance closure helper and an inverted eps-NTU relation.
+- (v0.5.5) Use universal inlet/midpoint/outlet bulk states for straight
+  tube-bundle friction with Simpson integration and signed acceleration change.
+- (v0.5.5) Keep nozzle, chamber, tube-sheet, return, bend, header, and
+  collector local losses outside the current 0D scope.
 
 ---
 

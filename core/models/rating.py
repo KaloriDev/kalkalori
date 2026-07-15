@@ -54,11 +54,10 @@ uncorrected ``BareTubeHeatExchanger.solve()`` pass at the closed balance's
 *specified* mean bulk temperature and never applied the wall-temperature or
 finite-length corrections -- i.e. the iterative thermal state was computed
 elsewhere (``BareTubeHeatExchanger.solve_thermal_state``) but never consumed
-by Rating. ``run_rating`` still also calls ``BareTubeHeatExchanger.solve()``
-once (unchanged) to obtain the areas/regime/hydraulic diagnostics embedded in
-``closed_balance``-adjacent reporting; its own (uncorrected) ``alfa``/``UA``
-are deliberately not propagated to ``HXRatingResult`` -- the thermal-state
-values are authoritative and are never overwritten by that legacy pass.
+by Rating. ``run_rating`` also calls ``BareTubeHeatExchanger.solve()`` once to
+obtain the areas and the final provider-based three-state tube-bundle
+hydraulic result; its thermal coefficients are deliberately not propagated to
+``HXRatingResult`` because the thermal-state values are authoritative.
 
 Algorithm
 ---------
@@ -93,7 +92,7 @@ from core.common.warnings import ModelWarning
 from core.models.heat_balance import ClosedBalance
 
 if TYPE_CHECKING:
-    from core.models.bare_tube import BareTubeHeatExchanger
+    from core.models.bare_tube import BareTubeHeatExchanger, HXResult
     from core.models.simulation import HXSimulationResult
 
 
@@ -120,6 +119,7 @@ class HXRatingResult:
     Q_achievable: float | None  # [W] from an optional comparison simulate() run
 
     closed_balance: ClosedBalance
+    final_result: "HXResult"
     simulation: "HXSimulationResult | None"
 
     # Converged iterative thermal state (wall temperatures, per-side
@@ -156,6 +156,27 @@ class HXRatingResult:
     @property
     def outside_wall_temperature_max_estimate(self) -> float:
         return self.wall_temperature_envelope.outside_max
+
+    @property
+    def tube_side_hydraulic(self):
+        """Nested straight tube-bundle hydraulic result."""
+        return self.final_result.tube_side_hydraulic
+
+    @property
+    def inside_dp_friction(self) -> float:
+        return self.final_result.inside_dp_friction
+
+    @property
+    def inside_dp_acceleration(self) -> float:
+        return self.final_result.inside_dp_acceleration
+
+    @property
+    def inside_dp_tube_bundle(self) -> float:
+        return self.final_result.inside_dp_tube_bundle
+
+    @property
+    def inside_dp_total(self) -> float:
+        return self.inside_dp_tube_bundle
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +236,10 @@ def run_rating(
         cold_stream=cold_stream,
         m_dot_tube_side=inside.m_dot,
         tube_side_props=to_internal_fluid_props(props_in),
+        tube_side_provider=inside.provider,
+        tube_side_temperature_in=inside.T_in,
+        tube_side_temperature_out=inside.T_out,
+        tube_side_pressure=inside.p,
         m_dot_outside=outside.m_dot,
         outside_props=to_outside_fluid_props(props_out),
         K_inlet=K_inlet,
@@ -324,6 +349,7 @@ def run_rating(
         Q_required=closed_balance.Q,
         Q_achievable=Q_achievable,
         closed_balance=closed_balance,
+        final_result=solve_result,
         simulation=simulation_result,
         thermal_state=thermal_state,
         wall_temperature_envelope=wall_temperature_envelope,
