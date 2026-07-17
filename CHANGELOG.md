@@ -6,6 +6,52 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
+## v0.5.5
+
+### Added
+
+- Universal three-state tube-side hydraulic property evaluation at inlet,
+  midpoint, and outlet.
+- Simpson integration of distributed straight-tube friction using local bulk
+  properties.
+- Signed tube-side acceleration pressure-change calculation.
+- Reusable tube-side hydraulic states for future local-loss models.
+- Detailed tube-bundle hydraulic diagnostics.
+- Universal three-state outside tube-bank hydraulic property evaluation at
+  inlet, midpoint, and outlet.
+- Variable-property integration of the Euler tube-bank drag term.
+- Signed outside acceleration pressure-change calculation.
+- Explicit outside Euler-number and reference-velocity diagnostics.
+
+### Changed
+
+- The previous one-state mean-property tube-side friction calculation has been
+  replaced by a universal variable-property method.
+- The same straight tube-bundle hydraulic calculation is now used for all
+  supported tube-side fluids and thermal directions.
+- Outside bare-tube-bank pressure drop now uses local bulk properties instead
+  of one mean state.
+- The same outside hydraulic calculation path is used for all supported fluids
+  and all thermal directions.
+
+### Notes
+
+- The hydraulic model does not classify fluids as gases or liquids.
+- The same equations are used for all supported property providers.
+- Tube-side pressure drop currently covers only straight tube-bundle friction
+  and signed acceleration pressure change.
+- Tube-side and outside-side variable-property hydraulics use the same
+  three-state principle but different physical equations: the tube-side model
+  integrates `f/rho`, while the outside tube-bank model integrates the
+  Euler-based drag quantity consistent with the provider contract.
+- Outside pressure drop covers irreversible crossflow drag through the bare
+  tube bank and signed inlet-to-outlet acceleration pressure change only.
+- Outside duct, plenum, casing-transition, screen, louver, and other local
+  losses are not included.
+- Nozzle, chamber, tube-sheet entrance/exit, and return losses remain excluded
+  and are planned for a later patch.
+
+---
 ## [0.5.x] - Simulation/Rating split, heat-balance closure, thermal-model updates
 
 - Added a four-point 0D estimate of minimum and maximum inside/outside wall temperatures for Simulation and Rating. This is an endpoint estimate, not a spatially segmented calculation.
@@ -15,7 +61,7 @@ The project follows **Semantic Versioning (SemVer)**:
 - Renamed the previous mean-property rating API to **Simulation**.
 - Improved crossflow ε-NTU behavior and inverse handling used by Rating.
 - Rating now uses the iterative thermal state (with wall effects) instead of single-pass thermal coefficients.
-- **Simulation now also uses the same converged, wall/length-corrected iterative thermal state by default** (`iterate=True`, unchanged default): `inside_alfa_mean`/`outside_alfa_mean`/`U_mean`/`UA` on `HXSimulationResult` are read from `solve_iterative_thermal_state` and are never overwritten by the separate (uncorrected) `solve()` pass kept only for its area/hydraulic/regime diagnostics. A `ConstantPropertyProvider` no longer forces a single-pass shortcut under `iterate=True`: the wall-temperature correction still needs to converge even with constant bulk properties. The explicit `iterate=False` escape hatch is unchanged (single, fast, uncorrected pass; `thermal_state=None` on the result).
+- **Simulation now also uses the same converged, wall/length-corrected iterative thermal state by default** (`iterate=True`, unchanged default): `inside_alfa_mean`/`outside_alfa_mean`/`U_mean`/`UA` on `HXSimulationResult` are read from `solve_iterative_thermal_state` and are never overwritten by the final snapshot's thermal diagnostics. A `ConstantPropertyProvider` no longer forces a single-pass shortcut under `iterate=True`: the wall-temperature correction still needs to converge even with constant bulk properties. The explicit `iterate=False` escape hatch is unchanged (single, fast, uncorrected pass; `thermal_state=None` on the result).
 - Fixed a notebook/production divergence in `core/tests/heat_balance_rating_matrix_test.ipynb`: the notebook previously recomputed corrected Nu/alfa diagnostics independently (a second, parallel calculation, with a hardcoded no-op length correction) instead of reading them from the production result, so its displayed `inside_alfa_W_m2K` column silently used the *uncorrected* coefficient while `U_mean`/`UA_actual` used the corrected one. The notebook now extracts all thermal diagnostics from `result.thermal_state` (added to both `HXSimulationResult` and `HXRatingResult`) with no independent physics calculation, and asserts `inside_alfa_W_m2K == inside_alfa_corrected` for every generated row.
 
 ### Added
@@ -28,7 +74,7 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ### Notes
 
-- `solve()` remains the single-pass physics kernel; Simulation and Rating are driver layers, both now funneling through the same `solve_iterative_thermal_state` for corrected coefficients.
+- `solve()` remains the thermal snapshot kernel; its tube-side hydraulic result now uses the universal three-state function, while Simulation and Rating continue to funnel thermal coefficients through the same `solve_iterative_thermal_state`.
 - Scope unchanged: 0D model only, without condensation or latent effects.
 
 ---

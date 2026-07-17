@@ -165,6 +165,17 @@ class ExternalCliEulerProvider(EulerProvider):
         validity_note_raw = data.get("validity_note")
         validity_note = None if validity_note_raw is None else str(validity_note_raw)
 
+        euler_basis = str(data.get("euler_basis", "complete_bank"))
+        if euler_basis not in ("per_row", "complete_bank"):
+            raise RuntimeError(
+                "External Euler provider field 'euler_basis' must be 'per_row' "
+                "or 'complete_bank'."
+            )
+        n_rows_effective_raw = data.get("n_rows_effective")
+        n_rows_effective = (
+            None if n_rows_effective_raw is None else float(n_rows_effective_raw)
+        )
+
         if eu < 0.0:
             raise RuntimeError("External Euler provider returned negative Eu.")
 
@@ -173,4 +184,6 @@ class ExternalCliEulerProvider(EulerProvider):
             source=source,
             model=model,
             validity_note=validity_note,
+            euler_basis=euler_basis,
+            n_rows_effective=n_rows_effective,
         )

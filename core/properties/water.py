@@ -179,6 +179,23 @@ class IAPWS97WaterSteamProvider:
         """Return transport properties at T [K] and p [Pa]."""
         return water_steam_props_iapws97(T=T, p=p).transport
 
+    def full_at(self, T: float, p: float) -> WaterSteamProperties:
+        """Return transport and specific enthalpy at T [K] and p [Pa]."""
+        return water_steam_props_iapws97(T=T, p=p)
+
+    def temperature_from_h_p(self, h: float, p: float) -> float:
+        """Invert specific enthalpy and pressure to temperature [K]."""
+        if not math.isfinite(h):
+            raise ValueError("Specific enthalpy must be finite [J/kg].")
+        _validate_pressure(p)
+        try:
+            state = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
+        except Exception as exc:
+            raise ValueError(
+                f"IAPWS-IF97 failed for h={h} J/kg, p={p} Pa."
+            ) from exc
+        return float(state.T)
+
 
 def _props_from_iapws_state(state: IAPWS97) -> WaterSteamProperties:
     """Convert an IAPWS97 state object to KalKalori SI property container."""

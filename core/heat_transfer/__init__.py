@@ -27,6 +27,10 @@ from .internal_flow import (
 
 from .internal_pressure_drop import (
     FluidProps as InternalPressureDropFluidProps,
+    TubeSideHydraulicPoint,
+    TubeBundleHydraulicResult,
+    calculate_tube_bundle_hydraulics,
+    tube_bundle_hydraulics,
     pressure_drop_internal_total,
     pressure_drop_tubes,
     pressure_drop_inlet,
@@ -36,6 +40,10 @@ from .internal_pressure_drop import (
 
 from .outside_flow import (
     FluidProps as OutsideFlowFluidProps,
+    OutsideHydraulicPoint,
+    OutsideTubeBankHydraulicResult,
+    calculate_outside_tube_bank_hydraulics,
+    outside_tube_bank_hydraulics,
     outside_flow_from_mass_flow,
 )
 
@@ -90,6 +98,10 @@ __all__ = [
 
     # Internal pressure drop (component-based)
     "InternalPressureDropFluidProps",
+    "TubeSideHydraulicPoint",
+    "TubeBundleHydraulicResult",
+    "calculate_tube_bundle_hydraulics",
+    "tube_bundle_hydraulics",
     "pressure_drop_internal_total",
     "pressure_drop_tubes",
     "pressure_drop_inlet",
@@ -98,6 +110,10 @@ __all__ = [
 
     # Outside flow (mass-flow driven)
     "OutsideFlowFluidProps",
+    "OutsideHydraulicPoint",
+    "OutsideTubeBankHydraulicResult",
+    "calculate_outside_tube_bank_hydraulics",
+    "outside_tube_bank_hydraulics",
     "outside_flow_from_mass_flow",
 
     # Outside pressure drop
