@@ -6,6 +6,41 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
+## v0.5.6
+
+### Added
+
+- General pressure-drop flow-path architecture for tube-side and
+  outside-side exchanger paths.
+- Common pressure-drop stage geometry for straight sections, area
+  changes, screens/opening arrays, chambers, direction changes, and
+  user-defined stages.
+- Separate specified tube-side and outside-side pressure-drop paths.
+- Stage-by-stage, grouped, and total pressure-drop result aggregation.
+- Explicit preparation for a future suggested-geometry sizing mode.
+
+### Changed
+
+- Existing pressure-drop modules were moved from
+  core.heat_transfer to core.pressure_drop.
+- Previous import paths remain available through compatibility
+  re-exports.
+- Existing tube-side results are now explicitly identified as
+  straight tube-bundle pressure drop.
+- Existing outside results are now explicitly identified as
+  bare tube-bank pressure drop.
+- Complete path results now distinguish core, local, and total
+  pressure drop.
+
+### Notes
+
+- No new local-loss correlations are included in this commit.
+- Unimplemented local stages are represented explicitly with zero
+  pressure drop and status not_implemented.
+- Numerical pressure-drop and thermal results remain unchanged from
+  v0.5.5.
+
+---
 ## v0.5.5
 
 ### Added

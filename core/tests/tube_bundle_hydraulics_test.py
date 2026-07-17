@@ -10,7 +10,7 @@ from unittest import mock
 
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
-from core.heat_transfer.internal_pressure_drop import (
+from core.pressure_drop.internal_pressure_drop import (
     calculate_tube_bundle_hydraulics,
     friction_factor_smooth,
 )

@@ -13,7 +13,7 @@ from core.heat_transfer.outside_flow import (
     outside_flow_from_mass_flow,
     vmax_ratio_min_freeflow,
 )
-from core.heat_transfer.outside_pressure_drop import EulerResult
+from core.pressure_drop.outside_pressure_drop import EulerResult
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger

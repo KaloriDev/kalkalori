@@ -30,7 +30,7 @@ from core.heat_transfer.internal_flow import (
     heat_transfer_coefficient_internal,
 )
 
-from core.heat_transfer.internal_pressure_drop import (
+from core.pressure_drop.internal_pressure_drop import (
     TubeBundleHydraulicResult,
     calculate_tube_bundle_hydraulics,
 )
@@ -42,8 +42,23 @@ from core.heat_transfer.outside_flow import (
     outside_flow_from_mass_flow,
 )
 
-from core.heat_transfer.outside_pressure_drop import (
+from core.pressure_drop.outside_pressure_drop import (
     EulerProvider,
+)
+
+from core.pressure_drop.flow_path import (
+    PressureDropPathResult,
+    build_tube_side_pressure_drop_result,
+    build_outside_pressure_drop_result,
+)
+
+from core.geometry.tube_side_pressure_drop_path import (
+    SpecifiedTubeSidePressureDropPath,
+    TubeSidePressureDropDesignRequest,
+)
+from core.geometry.outside_pressure_drop_path import (
+    SpecifiedOutsidePressureDropPath,
+    OutsidePressureDropDesignRequest,
 )
 
 from core.heat_transfer.ntu import (
@@ -188,6 +203,59 @@ class HXOutSideHydraulicResults:
 
 
 @dataclass(frozen=True)
+class HXTubeSidePressureDropResults:
+    """Tube-side complete pressure-drop result (v0.5.6 architecture).
+
+    ``tube_bundle`` is the existing calculated straight tube-bundle result,
+    inserted into the aggregated ``flow_path`` as the ``dp_core`` stage.
+    With no specified local-loss geometry (the default), ``dp_local`` is
+    ``0.0`` and ``dp_total`` equals ``tube_bundle.dp_tube_bundle`` exactly.
+    """
+
+    tube_bundle: TubeBundleHydraulicResult
+    flow_path: PressureDropPathResult
+
+    @property
+    def dp_core(self) -> float:
+        return self.flow_path.dp_core
+
+    @property
+    def dp_local(self) -> float:
+        return self.flow_path.dp_local
+
+    @property
+    def dp_total(self) -> float:
+        return self.flow_path.dp_total
+
+
+@dataclass(frozen=True)
+class HXOutsidePressureDropResults:
+    """Outside-side complete pressure-drop result (v0.5.6 architecture).
+
+    ``tube_bank`` is the existing calculated bare tube-bank result (``None``
+    when the outside side was not specified), inserted into the aggregated
+    ``flow_path`` as the ``dp_core`` stage. With no specified local-loss
+    geometry (the default), ``dp_local`` is ``0.0`` and ``dp_total`` equals
+    ``tube_bank.dp_total`` exactly.
+    """
+
+    tube_bank: OutsideTubeBankHydraulicResult | None
+    flow_path: PressureDropPathResult
+
+    @property
+    def dp_core(self) -> float:
+        return self.flow_path.dp_core
+
+    @property
+    def dp_local(self) -> float:
+        return self.flow_path.dp_local
+
+    @property
+    def dp_total(self) -> float:
+        return self.flow_path.dp_total
+
+
+@dataclass(frozen=True)
 class HXResult:
     # Geometry / areas
     A_i: float          # [m^2] inner heat transfer area (effective)
@@ -207,6 +275,11 @@ class HXResult:
 
     outside_side_thermal: HXOutSideThermalResults
     outside_side_hydraulic: HXOutSideHydraulicResults
+
+    # Complete pressure-drop flow-path results (v0.5.6 architecture):
+    # stage-by-stage, grouped, and total pressure drop for each side.
+    tube_side_pressure_drop: HXTubeSidePressureDropResults
+    outside_side_pressure_drop: HXOutsidePressureDropResults
 
     # Warnings and applicability diagnostics
     warnings: list[ModelWarning] | None = None
@@ -232,6 +305,24 @@ class HXResult:
         """Compatibility alias for the straight tube-bundle pressure change."""
         return self.inside_dp_tube_bundle
 
+    # -- Canonical tube-side pressure-drop field names (v0.5.6) -----------
+    # The tube-side result covers only straight tube-bundle friction and
+    # signed acceleration pressure change; ``inside_dp_local`` is 0.0 and
+    # ``inside_dp_tube_bundle`` == ``inside_dp_total`` in this commit (no
+    # local-loss correlations are implemented yet).
+
+    @property
+    def inside_dp_tube_bundle_friction(self) -> float:
+        return self.tube_side_hydraulic.dp_friction
+
+    @property
+    def inside_dp_tube_bundle_acceleration(self) -> float:
+        return self.tube_side_hydraulic.dp_acceleration
+
+    @property
+    def inside_dp_local(self) -> float:
+        return self.tube_side_pressure_drop.dp_local
+
     @property
     def outside_tube_bank_hydraulic(self) -> OutsideTubeBankHydraulicResult | None:
         return self.outside_side_hydraulic.tube_bank
@@ -255,6 +346,28 @@ class HXResult:
     @property
     def outside_pressure_drop(self) -> float:
         return self.outside_dp_total
+
+    # -- Canonical outside-side pressure-drop field names (v0.5.6) --------
+    # The outside result covers only bare tube-bank Euler drag and signed
+    # acceleration pressure change; ``outside_dp_local`` is 0.0 and
+    # ``outside_dp_tube_bank`` == ``outside_dp_total`` in this commit (no
+    # local-loss correlations are implemented yet).
+
+    @property
+    def outside_dp_tube_bank_drag(self) -> float:
+        return self.outside_side_hydraulic.dp_drag
+
+    @property
+    def outside_dp_tube_bank_acceleration(self) -> float:
+        return self.outside_side_hydraulic.dp_acceleration
+
+    @property
+    def outside_dp_tube_bank(self) -> float:
+        return self.outside_dp_total
+
+    @property
+    def outside_dp_local(self) -> float:
+        return self.outside_side_pressure_drop.dp_local
 
 
 class BareTubeHeatExchanger:
@@ -360,6 +473,18 @@ class BareTubeHeatExchanger:
 
         # Outside pressure-drop provider selection:
         euler_provider: str | EulerProvider = "zukauskas",
+
+        # Specified local pressure-drop flow-path geometry (v0.5.6). ``None``
+        # (the default) preserves exact v0.5.5 behaviour: dp_local=0 and
+        # dp_total==the existing core (tube-bundle/tube-bank) result. A
+        # *DesignRequest (future suggested-geometry mode) raises
+        # NotImplementedError rather than silently returning a result.
+        tube_side_pressure_drop_path: (
+            SpecifiedTubeSidePressureDropPath | TubeSidePressureDropDesignRequest | None
+        ) = None,
+        outside_side_pressure_drop_path: (
+            SpecifiedOutsidePressureDropPath | OutsidePressureDropDesignRequest | None
+        ) = None,
 
     ) -> HXResult:
         # Use bundle's flow_arrangement if not provided
@@ -643,6 +768,36 @@ class BareTubeHeatExchanger:
                     )
                 )
 
+        # --------------------------------------------------------------
+        # Pressure-drop flow-path aggregation (v0.5.6 architecture).  With
+        # no specified local-loss geometry (the default), this is a thin
+        # wrapper around the existing tube-bundle/tube-bank results:
+        # dp_local=0 and dp_total==the existing core result exactly.
+        # --------------------------------------------------------------
+        tube_side_pressure_drop = HXTubeSidePressureDropResults(
+            tube_bundle=tube_bundle_hydraulic,
+            flow_path=build_tube_side_pressure_drop_result(
+                tube_bundle_hydraulic,
+                n_tube_passes=self.bundle.n_passes_tube,
+                path=tube_side_pressure_drop_path,
+            ),
+        )
+        outside_side_pressure_drop = HXOutsidePressureDropResults(
+            tube_bank=outside_bank_hydraulic,
+            flow_path=build_outside_pressure_drop_result(
+                outside_bank_hydraulic,
+                path=outside_side_pressure_drop_path,
+            ),
+        )
+        existing_warning_ids = {(warning.source, warning.code) for warning in warnings_list}
+        for warning in (
+            tuple(tube_side_pressure_drop.flow_path.warnings)
+            + tuple(outside_side_pressure_drop.flow_path.warnings)
+        ):
+            if (warning.source, warning.code) not in existing_warning_ids:
+                warnings_list.append(warning)
+                existing_warning_ids.add((warning.source, warning.code))
+
         return HXResult(
             A_i=A_i,
             A_o=A_o,
@@ -656,6 +811,8 @@ class BareTubeHeatExchanger:
             tube_side_hydraulic=tube_hyd,
             outside_side_thermal=outside_thermal,
             outside_side_hydraulic=outside_hyd,
+            tube_side_pressure_drop=tube_side_pressure_drop,
+            outside_side_pressure_drop=outside_side_pressure_drop,
             warnings=warnings_list if warnings_list else None,
         )
 

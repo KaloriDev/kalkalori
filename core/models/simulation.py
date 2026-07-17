@@ -150,7 +150,11 @@ from core.heat_transfer.thermal_iteration import (
 )
 
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
-from core.heat_transfer.internal_pressure_drop import calculate_tube_bundle_hydraulics
+from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
+from core.pressure_drop.flow_path import (
+    build_tube_side_pressure_drop_result,
+    build_outside_pressure_drop_result,
+)
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.common.warnings import ModelWarning, make_warning
@@ -357,6 +361,26 @@ class HXSimulationResult:
     def outside_pressure_drop(self) -> float:
         return self.outside_dp_total
 
+    # -- Pressure-drop flow-path aggregation (v0.5.6) ----------------------
+
+    @property
+    def tube_side_pressure_drop(self):
+        """Complete tube-side pressure-drop result (core + local + total)."""
+        return self.final_result.tube_side_pressure_drop
+
+    @property
+    def outside_side_pressure_drop(self):
+        """Complete outside-side pressure-drop result (core + local + total)."""
+        return self.final_result.outside_side_pressure_drop
+
+    @property
+    def inside_dp_local(self) -> float:
+        return self.final_result.inside_dp_local
+
+    @property
+    def outside_dp_local(self) -> float:
+        return self.final_result.outside_dp_local
+
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -528,6 +552,24 @@ def run_simulation(
             v=outside_bank_hydraulic.midpoint.face_velocity,
             tube_bank=outside_bank_hydraulic,
         )
+        # Refresh the pressure-drop flow-path aggregation to match the
+        # refreshed hydraulic snapshots (dp_core must track tube_bundle/
+        # tube_bank exactly). No specified local-loss path is threaded
+        # through Simulation in this commit, so this is always the
+        # core-only aggregation (dp_local=0).
+        tube_side_pressure_drop = replace(
+            result.tube_side_pressure_drop,
+            tube_bundle=bundle_hydraulic,
+            flow_path=build_tube_side_pressure_drop_result(
+                bundle_hydraulic,
+                n_tube_passes=hx.bundle.n_passes_tube,
+            ),
+        )
+        outside_side_pressure_drop = replace(
+            result.outside_side_pressure_drop,
+            tube_bank=outside_bank_hydraulic,
+            flow_path=build_outside_pressure_drop_result(outside_bank_hydraulic),
+        )
         result_warnings = [
             warning
             for warning in (result.warnings or [])
@@ -542,6 +584,8 @@ def run_simulation(
             result,
             tube_side_hydraulic=tube_hydraulic,
             outside_side_hydraulic=outside_hydraulic,
+            tube_side_pressure_drop=tube_side_pressure_drop,
+            outside_side_pressure_drop=outside_side_pressure_drop,
             warnings=result_warnings if result_warnings else None,
         )
 

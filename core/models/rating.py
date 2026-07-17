@@ -203,6 +203,26 @@ class HXRatingResult:
     def outside_pressure_drop(self) -> float:
         return self.outside_dp_total
 
+    # -- Pressure-drop flow-path aggregation (v0.5.6) ----------------------
+
+    @property
+    def tube_side_pressure_drop(self):
+        """Complete tube-side pressure-drop result (core + local + total)."""
+        return self.final_result.tube_side_pressure_drop
+
+    @property
+    def outside_side_pressure_drop(self):
+        """Complete outside-side pressure-drop result (core + local + total)."""
+        return self.final_result.outside_side_pressure_drop
+
+    @property
+    def inside_dp_local(self) -> float:
+        return self.final_result.inside_dp_local
+
+    @property
+    def outside_dp_local(self) -> float:
+        return self.final_result.outside_dp_local
+
 
 # ---------------------------------------------------------------------------
 # Driver
