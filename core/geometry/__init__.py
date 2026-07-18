@@ -6,7 +6,7 @@ Geometric definitions for heat exchanger components.
 """
 
 from .tube import BaseTube, BareTube
-from .bundle import TubeBundle
+from .bundle import TubeBundle, TubePathType
 
 from .pressure_drop_stages import (
     FlowSectionShape,
@@ -36,6 +36,7 @@ __all__ = [
     "BaseTube",
     "BareTube",
     "TubeBundle",
+    "TubePathType",
 
     # Common pressure-drop stage geometry
     "FlowSectionShape",

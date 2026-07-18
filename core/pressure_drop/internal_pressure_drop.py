@@ -57,6 +57,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from core.common.warnings import ModelWarning, make_warning
+from core.geometry.bundle import TubePathType
+from core.pressure_drop.screens import (
+    TubeSheetEntranceType,
+    TubeSheetExitType,
+    calculate_tube_sheet_entrance_loss,
+    calculate_tube_sheet_exit_loss,
+)
 
 if TYPE_CHECKING:
     from core.properties.common import FluidTransportProperties
@@ -105,8 +112,79 @@ class TubeSideHydraulicPoint:
 
 
 @dataclass(frozen=True)
+class TubePassBoundaryHydraulicState:
+    """Hydraulic state at one tube-side pass boundary (v0.5.6).
+
+    For ``n_tube_passes = n``, there are ``n + 1`` boundary states, indexed
+    ``0..n``: boundary 0 is the exchanger tube-side inlet (entrance to pass
+    1); boundary ``n`` is the exchanger tube-side outlet (exit from the
+    final pass); for straight tube paths, boundary ``j`` (``0 < j < n``) is
+    simultaneously pass ``j``'s exit and pass ``j + 1``'s entrance. For
+    U-tube paths, only boundaries 0 and ``n`` produce tube-sheet entrance/
+    exit losses; intermediate boundaries remain available for a future
+    U-bend calculation but are not used for entrance/exit losses.
+    """
+
+    boundary_index: int
+
+    temperature: float
+    pressure: float
+    props: FluidTransportProperties
+
+    flow_area_per_pass: float
+    mass_flux: float
+    velocity: float
+    dynamic_pressure: float
+    reynolds: float
+
+
+@dataclass(frozen=True)
+class TubeEndPressureDropResult:
+    """A single tube-sheet entrance or exit pressure-drop component (v0.5.6).
+
+    ``pass_index`` is 1-based for straight tube paths; it is ``None`` for
+    U-tube paths, where a single entrance/exit spans the complete
+    continuous tube path (``component_id`` values ``tube_bundle_entrance``/
+    ``tube_bundle_exit``).
+    """
+
+    component_id: str
+    component_type: str
+
+    pass_index: int | None
+    boundary_index: int
+
+    loss_coefficient: float
+    reference_velocity: float
+    reference_dynamic_pressure: float
+
+    pressure_drop: float
+    method: str
+
+    warnings: tuple[ModelWarning, ...]
+
+
+@dataclass(frozen=True)
 class TubeBundleHydraulicResult:
-    """Straight tube-bundle friction and signed acceleration result."""
+    """Complete tube-bundle pressure-drop result (v0.5.6).
+
+    ``dp_tube_bundle`` is the sum of distributed straight-tube friction,
+    signed tube-side acceleration, and tube-sheet entrance/exit losses:
+
+        dp_straight_tubes = dp_straight_tube_friction + dp_straight_tube_acceleration
+        dp_tube_bundle = dp_straight_tubes + dp_tube_entrances + dp_tube_exits
+
+    ``dp_friction``/``dp_acceleration`` remain as compatibility aliases for
+    ``dp_straight_tube_friction``/``dp_straight_tube_acceleration``.
+    ``dp_straight_tubes`` is the pre-v0.5.6 scope of ``dp_tube_bundle``
+    (friction + acceleration only, excluding tube-sheet entrance/exit).
+
+    Inlet nozzle, outlet nozzle, inlet/outlet/return chambers, headers,
+    collectors, external pipework, and direction-change (bend/elbow)
+    losses remain outside this result; they belong to the optional,
+    explicitly invoked pressure-drop path architecture (see
+    ``core.pressure_drop.flow_path``).
+    """
 
     inlet: TubeSideHydraulicPoint
     midpoint: TubeSideHydraulicPoint
@@ -117,14 +195,50 @@ class TubeBundleHydraulicResult:
     hydraulic_diameter: float
     hydraulic_length_total: float
     mean_f_over_rho: float
-    dp_friction: float
-    dp_acceleration: float
+
+    dp_straight_tube_friction: float
+    dp_straight_tube_acceleration: float
+
+    dp_tube_entrances: float
+    dp_tube_exits: float
+
     dp_tube_bundle: float
+
+    tube_path_type: TubePathType
+    entrance_count: int
+    exit_count: int
+    pass_boundary_method: str
+    pass_boundary_states: tuple[TubePassBoundaryHydraulicState, ...]
+    entrance_results: tuple[TubeEndPressureDropResult, ...]
+    exit_results: tuple[TubeEndPressureDropResult, ...]
+
     warnings: tuple[ModelWarning, ...]
 
     @property
+    def dp_straight_tubes(self) -> float:
+        """Diagnostic/compatibility total for the pre-v0.5.6 scope of
+        ``dp_tube_bundle``: straight-tube friction plus acceleration only,
+        excluding tube-sheet entrance/exit losses."""
+        return self.dp_straight_tube_friction + self.dp_straight_tube_acceleration
+
+    @property
+    def dp_friction(self) -> float:
+        """Compatibility alias for dp_straight_tube_friction."""
+        return self.dp_straight_tube_friction
+
+    @property
+    def dp_acceleration(self) -> float:
+        """Compatibility alias for dp_straight_tube_acceleration."""
+        return self.dp_straight_tube_acceleration
+
+    @property
     def dp_total(self) -> float:
-        """Compatibility alias for the straight tube-bundle pressure change."""
+        """Compatibility alias for the complete tube-bundle pressure change.
+
+        Since v0.5.6 this includes tube-sheet entrance/exit losses; see
+        ``dp_straight_tubes`` for the pre-v0.5.6 (friction + acceleration
+        only) scope.
+        """
         return self.dp_tube_bundle
 
     @property
@@ -218,6 +332,10 @@ def calculate_tube_bundle_hydraulics(
     flow_area_per_pass: float,
     hydraulic_diameter: float,
     hydraulic_length_total: float,
+    n_tube_passes: int,
+    tube_path_type: TubePathType = TubePathType.STRAIGHT,
+    entrance_type: TubeSheetEntranceType = TubeSheetEntranceType.SHARP_EDGED,
+    exit_type: TubeSheetExitType = TubeSheetExitType.NORMAL,
     provider: Any | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
@@ -226,12 +344,22 @@ def calculate_tube_bundle_hydraulics(
     midpoint_props: FluidTransportProperties | None = None,
     outlet_props: FluidTransportProperties | None = None,
 ) -> TubeBundleHydraulicResult:
-    """Calculate universal three-state straight tube-bundle hydraulics.
+    """Calculate universal tube-bundle hydraulics (v0.5.6).
+
+    Distributed straight-tube friction and signed acceleration continue to
+    use the existing three-state (inlet/midpoint/outlet) Simpson
+    integration. Tube-sheet entrance and exit losses are evaluated at
+    ``n_tube_passes + 1`` pass-boundary states and applied according to
+    ``tube_path_type``: one entrance and one exit per pass for
+    ``STRAIGHT``, or a single entrance (boundary 0) and single exit
+    (final boundary) for ``U_TUBE``. See ``core.pressure_drop.screens``
+    for the entrance/exit correlations themselves.
 
     A provider is evaluated at inlet and outlet bulk temperatures.  When
     complete enthalpy data and a provider ``temperature_from_h_p`` capability
-    are available, the midpoint is enthalpy-based.  Otherwise the same
-    arithmetic-temperature fallback is used for every provider.
+    are available, the midpoint and pass-boundary states are enthalpy-based.
+    Otherwise the same arithmetic-temperature fallback is used for every
+    provider.
 
     The point-property arguments are a deterministic test/compatibility hook.
     Production exchanger paths pass a provider and temperatures.
@@ -242,6 +370,15 @@ def calculate_tube_bundle_hydraulics(
         hydraulic_diameter=hydraulic_diameter,
         hydraulic_length_total=hydraulic_length_total,
     )
+    if n_tube_passes <= 0:
+        raise ValueError(
+            "tube_bundle_hydraulics_invalid_pass_count: n_tube_passes must be a positive integer."
+        )
+    if tube_path_type == TubePathType.U_TUBE and n_tube_passes < 2:
+        raise ValueError(
+            "tube_bundle_hydraulics_invalid_u_tube_pass_count: "
+            "tube_path_type=U_TUBE requires at least two tube passes."
+        )
 
     if provider is None:
         if inlet_props is None:
@@ -328,33 +465,70 @@ def calculate_tube_bundle_hydraulics(
 
     # Three-state 0D+ approximation of the distributed pressure-gradient
     # integral, not a spatially segmented solver.
-    dp_friction = (hydraulic_length_total / hydraulic_diameter) * (mass_flux**2 / 2.0) * mean_f_over_rho
+    dp_straight_tube_friction = (hydraulic_length_total / hydraulic_diameter) * (mass_flux**2 / 2.0) * mean_f_over_rho
 
     # One-dimensional momentum balance.  Pressure loss is positive, so a
     # density decrease gives a positive acceleration term and a density
     # increase gives pressure recovery.  Refs: White, Fluid Mechanics;
     # Idelchik, Handbook of Hydraulic Resistance; Crane TP-410.
-    dp_acceleration = mass_flux**2 * (1.0 / points[2].props.rho - 1.0 / points[0].props.rho)
-    dp_tube_bundle = dp_friction + dp_acceleration
+    dp_straight_tube_acceleration = mass_flux**2 * (1.0 / points[2].props.rho - 1.0 / points[0].props.rho)
+    dp_straight_tubes = dp_straight_tube_friction + dp_straight_tube_acceleration
 
-    if not math.isfinite(dp_friction) or dp_friction < 0.0:
+    if not math.isfinite(dp_straight_tube_friction) or dp_straight_tube_friction < 0.0:
         raise ValueError(
             "tube_bundle_hydraulics_invalid_friction: distributed friction must be finite and non-negative."
         )
-    if not math.isfinite(dp_acceleration) or not math.isfinite(dp_tube_bundle):
+    if not math.isfinite(dp_straight_tube_acceleration) or not math.isfinite(dp_straight_tubes):
         raise ValueError("tube_bundle_hydraulics_nonfinite_state: pressure change is not finite.")
-    if dp_tube_bundle < 0.0:
+    if dp_straight_tubes < 0.0:
         warnings.append(
             make_warning(
                 code="tube_bundle_hydraulics_negative_total_pressure_change",
                 message=(
                     "tube_bundle_hydraulics: signed straight tube-bundle pressure "
-                    f"change is negative ({dp_tube_bundle:.6g} Pa), representing "
+                    f"change is negative ({dp_straight_tubes:.6g} Pa), representing "
                     "net pressure recovery after friction."
                 ),
                 source="tube_bundle_hydraulics",
                 severity="warning",
             )
+        )
+
+    # --------------------------------------------------------------
+    # Tube-sheet entrance and exit losses (v0.5.6).  Pass-boundary states
+    # reuse the same provider-evaluation helpers as the inlet/midpoint/
+    # outlet points above; entrance/exit calculations themselves are
+    # delegated to core.pressure_drop.screens (stateless K*dynamic_pressure
+    # models), applied here according to tube_path_type/n_tube_passes.
+    # --------------------------------------------------------------
+    boundary_states, pass_boundary_method, boundary_warnings = _build_tube_pass_boundary_states(
+        n_tube_passes=n_tube_passes,
+        mass_flux=mass_flux,
+        flow_area_per_pass=flow_area_per_pass,
+        hydraulic_diameter=hydraulic_diameter,
+        T_in=T_in, T_out=T_out, p=p,
+        provider=provider,
+        props_in=props_in, h_in=h_in,
+        props_out=props_out, h_out=h_out,
+    )
+    warnings.extend(boundary_warnings)
+
+    entrance_results, exit_results, dp_tube_entrances, dp_tube_exits = _apply_tube_sheet_entrances_and_exits(
+        tube_path_type=tube_path_type,
+        n_tube_passes=n_tube_passes,
+        boundary_states=boundary_states,
+        entrance_type=entrance_type,
+        exit_type=exit_type,
+    )
+
+    dp_tube_bundle = dp_straight_tubes + dp_tube_entrances + dp_tube_exits
+    if not math.isfinite(dp_tube_entrances) or dp_tube_entrances < 0.0:
+        raise ValueError(
+            "tube_bundle_hydraulics_invalid_entrance_loss: dp_tube_entrances must be finite and non-negative."
+        )
+    if not math.isfinite(dp_tube_exits) or dp_tube_exits < 0.0:
+        raise ValueError(
+            "tube_bundle_hydraulics_invalid_exit_loss: dp_tube_exits must be finite and non-negative."
         )
 
     return TubeBundleHydraulicResult(
@@ -364,8 +538,18 @@ def calculate_tube_bundle_hydraulics(
         hydraulic_diameter=float(hydraulic_diameter),
         hydraulic_length_total=float(hydraulic_length_total),
         mean_f_over_rho=mean_f_over_rho,
-        dp_friction=dp_friction, dp_acceleration=dp_acceleration,
+        dp_straight_tube_friction=dp_straight_tube_friction,
+        dp_straight_tube_acceleration=dp_straight_tube_acceleration,
+        dp_tube_entrances=dp_tube_entrances,
+        dp_tube_exits=dp_tube_exits,
         dp_tube_bundle=dp_tube_bundle,
+        tube_path_type=tube_path_type,
+        entrance_count=len(entrance_results),
+        exit_count=len(exit_results),
+        pass_boundary_method=pass_boundary_method,
+        pass_boundary_states=boundary_states,
+        entrance_results=entrance_results,
+        exit_results=exit_results,
         warnings=_deduplicate_warnings(warnings),
     )
 
@@ -503,6 +687,200 @@ def _deduplicate_warnings(warnings: list[ModelWarning]) -> tuple[ModelWarning, .
             seen.add(identity)
             unique.append(warning)
     return tuple(unique)
+
+
+def _pass_boundary_fallback_warning(reason: str) -> ModelWarning:
+    return make_warning(
+        code="tube_bundle_hydraulics_pass_boundary_temperature_fallback",
+        message=(
+            "tube_bundle_hydraulics: " + reason + "; using linear "
+            "temperature interpolation for tube-pass boundary states."
+        ),
+        source="tube_bundle_hydraulics",
+        severity="info",
+    )
+
+
+def _make_pass_boundary_state(
+    *, boundary_index: int, temperature: float, pressure: float,
+    props: FluidTransportProperties, flow_area_per_pass: float,
+    mass_flux: float, hydraulic_diameter: float,
+) -> TubePassBoundaryHydraulicState:
+    if not math.isfinite(props.rho) or props.rho <= 0.0:
+        raise ValueError("tube_bundle_hydraulics_invalid_density: density must be finite and positive.")
+    if not math.isfinite(props.mu) or props.mu <= 0.0:
+        raise ValueError("tube_bundle_hydraulics_invalid_viscosity: viscosity must be finite and positive.")
+    velocity = mass_flux / props.rho
+    dynamic_pressure_value = mass_flux**2 / (2.0 * props.rho)
+    reynolds = mass_flux * hydraulic_diameter / props.mu
+    if not all(math.isfinite(value) for value in (temperature, pressure, velocity, dynamic_pressure_value, reynolds)):
+        raise ValueError("tube_bundle_hydraulics_nonfinite_state: pass-boundary state is not finite.")
+    return TubePassBoundaryHydraulicState(
+        boundary_index=boundary_index,
+        temperature=float(temperature), pressure=float(pressure), props=props,
+        flow_area_per_pass=float(flow_area_per_pass), mass_flux=float(mass_flux),
+        velocity=velocity, dynamic_pressure=dynamic_pressure_value, reynolds=reynolds,
+    )
+
+
+def _build_tube_pass_boundary_states(
+    *,
+    n_tube_passes: int,
+    mass_flux: float,
+    flow_area_per_pass: float,
+    hydraulic_diameter: float,
+    T_in: float,
+    T_out: float,
+    p: float,
+    provider: Any | None,
+    props_in: FluidTransportProperties,
+    h_in: float | None,
+    props_out: FluidTransportProperties,
+    h_out: float | None,
+) -> tuple[tuple[TubePassBoundaryHydraulicState, ...], str, list[ModelWarning]]:
+    """Build the ``n_tube_passes + 1`` tube-side pass-boundary states.
+
+    Boundary 0 is the tube-side inlet (``props_in``); boundary
+    ``n_tube_passes`` is the tube-side outlet (``props_out``); reuses the
+    same enthalpy-interpolation-with-linear-temperature-fallback strategy
+    as the existing three-state midpoint, generalized to ``n - 1``
+    intermediate boundaries and applied uniformly (one method for the
+    whole boundary set, not mixed per boundary).
+    """
+    n = n_tube_passes
+    warnings: list[ModelWarning] = []
+    method = "linear_temperature"
+    temperatures = [T_in + (j / n) * (T_out - T_in) for j in range(n + 1)]
+
+    if provider is None:
+        # Compatibility/no-provider path: uniform constant properties at
+        # every boundary, matching calculate_tube_bundle_hydraulics'
+        # existing inlet/midpoint/outlet compatibility behaviour.
+        props_list = [props_in] * (n + 1)
+    else:
+        if _finite_enthalpy(h_in) and _finite_enthalpy(h_out):
+            h_in_f, h_out_f = float(h_in), float(h_out)
+            candidate_temperatures = [T_in]
+            inversion_ok = True
+            for j in range(1, n):
+                h_j = h_in_f + (j / n) * (h_out_f - h_in_f)
+                T_j = _try_temperature_from_enthalpy(provider, h=h_j, p=p)
+                if T_j is None:
+                    inversion_ok = False
+                    break
+                candidate_temperatures.append(T_j)
+            if inversion_ok:
+                candidate_temperatures.append(T_out)
+                temperatures = candidate_temperatures
+                method = "enthalpy"
+            else:
+                warnings.append(_pass_boundary_fallback_warning("inversion is unavailable or failed"))
+        else:
+            warnings.append(_pass_boundary_fallback_warning("complete inlet/outlet enthalpy data are unavailable"))
+
+        props_list = [props_in]
+        for j in range(1, n):
+            props_j, _ = _evaluate_provider_state(provider, temperatures[j], p)
+            props_list.append(props_j)
+        props_list.append(props_out)
+
+    states = tuple(
+        _make_pass_boundary_state(
+            boundary_index=j, temperature=temperatures[j], pressure=p,
+            props=props_list[j], flow_area_per_pass=flow_area_per_pass,
+            mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+        )
+        for j in range(n + 1)
+    )
+    return states, method, warnings
+
+
+def _build_entrance_result(
+    *, component_id: str, pass_index: int | None,
+    state: TubePassBoundaryHydraulicState, entrance_type: TubeSheetEntranceType,
+) -> TubeEndPressureDropResult:
+    K, dp = calculate_tube_sheet_entrance_loss(
+        dynamic_pressure=state.dynamic_pressure, entrance_type=entrance_type,
+    )
+    return TubeEndPressureDropResult(
+        component_id=component_id, component_type="tube_sheet_entrance",
+        pass_index=pass_index, boundary_index=state.boundary_index,
+        loss_coefficient=K, reference_velocity=state.velocity,
+        reference_dynamic_pressure=state.dynamic_pressure,
+        pressure_drop=dp, method=f"tube_sheet_entrance_{entrance_type.value}",
+        warnings=(),
+    )
+
+
+def _build_exit_result(
+    *, component_id: str, pass_index: int | None,
+    state: TubePassBoundaryHydraulicState, exit_type: TubeSheetExitType,
+) -> TubeEndPressureDropResult:
+    K, dp = calculate_tube_sheet_exit_loss(
+        dynamic_pressure=state.dynamic_pressure, exit_type=exit_type,
+    )
+    return TubeEndPressureDropResult(
+        component_id=component_id, component_type="tube_sheet_exit",
+        pass_index=pass_index, boundary_index=state.boundary_index,
+        loss_coefficient=K, reference_velocity=state.velocity,
+        reference_dynamic_pressure=state.dynamic_pressure,
+        pressure_drop=dp, method=f"tube_sheet_exit_{exit_type.value}",
+        warnings=(),
+    )
+
+
+def _apply_tube_sheet_entrances_and_exits(
+    *,
+    tube_path_type: TubePathType,
+    n_tube_passes: int,
+    boundary_states: tuple[TubePassBoundaryHydraulicState, ...],
+    entrance_type: TubeSheetEntranceType,
+    exit_type: TubeSheetExitType,
+) -> tuple[tuple[TubeEndPressureDropResult, ...], tuple[TubeEndPressureDropResult, ...], float, float]:
+    """Apply tube-sheet entrance/exit losses per ``tube_path_type``.
+
+    ``STRAIGHT``: one entrance and one exit per pass (entrance at boundary
+    ``pass_index - 1``, exit at boundary ``pass_index``); ``entrance_count
+    == exit_count == n_tube_passes``. ``U_TUBE``: a single entrance at
+    boundary 0 and a single exit at the final boundary only;
+    ``entrance_count == exit_count == 1``. No loss is applied at
+    intermediate U-bend boundaries, and no U-bend/direction-change loss is
+    calculated here.
+    """
+    entrance_results: list[TubeEndPressureDropResult] = []
+    exit_results: list[TubeEndPressureDropResult] = []
+
+    if tube_path_type == TubePathType.STRAIGHT:
+        for pass_index in range(1, n_tube_passes + 1):
+            entrance_results.append(
+                _build_entrance_result(
+                    component_id=f"pass_{pass_index}_entrance", pass_index=pass_index,
+                    state=boundary_states[pass_index - 1], entrance_type=entrance_type,
+                )
+            )
+            exit_results.append(
+                _build_exit_result(
+                    component_id=f"pass_{pass_index}_exit", pass_index=pass_index,
+                    state=boundary_states[pass_index], exit_type=exit_type,
+                )
+            )
+    else:
+        entrance_results.append(
+            _build_entrance_result(
+                component_id="tube_bundle_entrance", pass_index=None,
+                state=boundary_states[0], entrance_type=entrance_type,
+            )
+        )
+        exit_results.append(
+            _build_exit_result(
+                component_id="tube_bundle_exit", pass_index=None,
+                state=boundary_states[-1], exit_type=exit_type,
+            )
+        )
+
+    dp_tube_entrances = sum(result.pressure_drop for result in entrance_results)
+    dp_tube_exits = sum(result.pressure_drop for result in exit_results)
+    return tuple(entrance_results), tuple(exit_results), dp_tube_entrances, dp_tube_exits
 
 
 def mean_velocity(m_dot: float, rho: float, flow_area: float) -> float:

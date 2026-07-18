@@ -269,12 +269,19 @@ def _assemble_path_result(
 # ---------------------------------------------------------------------------
 
 def _tube_bundle_core_stage(tube_bundle: TubeBundleHydraulicResult) -> PressureDropStageResult:
+    # Friction and tube-sheet entrance/exit losses are all irreversible;
+    # only the signed acceleration term is kept separate (v0.5.6).
+    dp_irreversible = (
+        tube_bundle.dp_straight_tube_friction
+        + tube_bundle.dp_tube_entrances
+        + tube_bundle.dp_tube_exits
+    )
     return PressureDropStageResult(
         stage_id="tube_bundle",
         stage_type="straight_tube_bundle",
         status=PressureDropStageStatus.CALCULATED,
-        dp_irreversible=tube_bundle.dp_friction,
-        dp_acceleration=tube_bundle.dp_acceleration,
+        dp_irreversible=dp_irreversible,
+        dp_acceleration=tube_bundle.dp_straight_tube_acceleration,
         dp_total=tube_bundle.dp_tube_bundle,
         method="tube_bundle_hydraulics",
         warnings=tube_bundle.warnings,

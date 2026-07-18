@@ -18,6 +18,10 @@ The project follows **Semantic Versioning (SemVer)**:
 - Separate specified tube-side and outside-side pressure-drop paths.
 - Stage-by-stage, grouped, and total pressure-drop result aggregation.
 - Explicit preparation for a future suggested-geometry sizing mode.
+- Explicit straight-tube and U-tube path geometry selection.
+- Tube-pass boundary hydraulic states.
+- Tube-sheet entrance and exit pressure-loss calculations.
+- Pass-specific entrance and exit diagnostics.
 
 ### Changed
 
@@ -31,14 +35,31 @@ The project follows **Semantic Versioning (SemVer)**:
   bare tube-bank pressure drop.
 - Complete path results now distinguish core, local, and total
   pressure drop.
+- Tube-bundle pressure drop now includes tube-sheet entrance and exit
+  losses in addition to straight-tube friction and acceleration.
+- Straight tube paths apply one entrance and one exit for every tube
+  pass.
+- U-tube paths apply only the initial tube-sheet entrance and final
+  tube-sheet exit.
+- The previous friction-plus-acceleration result is now explicitly
+  reported as straight-tube pressure drop.
 
 ### Notes
 
-- No new local-loss correlations are included in this commit.
+- No new local-loss correlations are included in the flow-path
+  architecture commit.
 - Unimplemented local stages are represented explicitly with zero
   pressure drop and status not_implemented.
-- Numerical pressure-drop and thermal results remain unchanged from
-  v0.5.5.
+- Numerical pressure-drop and thermal results remained unchanged from
+  v0.5.5 for the flow-path architecture commit; tube-side pressure-drop
+  results changed in the entrance/exit commit as described above.
+- Sharp-edged flush entrance and normal exit coefficients are used as
+  the initial standard models.
+- U-bend and 180-degree elbow pressure losses are not yet included.
+- Return chambers, nozzles, chambers, transitions, ducts, and external
+  pipework remain outside the standard tube-bundle calculation.
+- Full local pressure-drop paths remain explicitly invoked calculations
+  intended to be orchestrated by the front-end.
 
 ---
 ## v0.5.5

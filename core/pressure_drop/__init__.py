@@ -27,6 +27,8 @@ from .internal_pressure_drop import (
     FluidProps as InternalPressureDropFluidProps,
     HydraulicPosition,
     TubeSideHydraulicPoint,
+    TubePassBoundaryHydraulicState,
+    TubeEndPressureDropResult,
     TubeBundleHydraulicResult,
     calculate_tube_bundle_hydraulics,
     tube_bundle_hydraulics,
@@ -35,6 +37,15 @@ from .internal_pressure_drop import (
     pressure_drop_inlet,
     pressure_drop_outlet,
     pressure_drop_turns,
+)
+
+from .screens import (
+    TubeSheetEntranceType,
+    TubeSheetExitType,
+    tube_sheet_entrance_loss_coefficient,
+    tube_sheet_exit_loss_coefficient,
+    calculate_tube_sheet_entrance_loss,
+    calculate_tube_sheet_exit_loss,
 )
 
 from .outside_pressure_drop import (
@@ -68,6 +79,8 @@ __all__ = [
     "InternalPressureDropFluidProps",
     "HydraulicPosition",
     "TubeSideHydraulicPoint",
+    "TubePassBoundaryHydraulicState",
+    "TubeEndPressureDropResult",
     "TubeBundleHydraulicResult",
     "calculate_tube_bundle_hydraulics",
     "tube_bundle_hydraulics",
@@ -76,6 +89,14 @@ __all__ = [
     "pressure_drop_inlet",
     "pressure_drop_outlet",
     "pressure_drop_turns",
+
+    # Tube-sheet entrance/exit pressure drop (screens.py)
+    "TubeSheetEntranceType",
+    "TubeSheetExitType",
+    "tube_sheet_entrance_loss_coefficient",
+    "tube_sheet_exit_loss_coefficient",
+    "calculate_tube_sheet_entrance_loss",
+    "calculate_tube_sheet_exit_loss",
 
     # Outside pressure drop
     "Layout",

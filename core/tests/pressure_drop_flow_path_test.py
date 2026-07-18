@@ -71,6 +71,7 @@ def _tube_bundle_result(bundle: TubeBundle):
         flow_area_per_pass=bundle.internal_flow_area_per_pass,
         hydraulic_diameter=bundle.internal_hydraulic_diameter,
         hydraulic_length_total=bundle.internal_length_total,
+        n_tube_passes=bundle.n_passes_tube,
         inlet_props=_props(1000.0),
     )
 

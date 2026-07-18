@@ -28,6 +28,8 @@ from .internal_flow import (
 from core.pressure_drop.internal_pressure_drop import (
     FluidProps as InternalPressureDropFluidProps,
     TubeSideHydraulicPoint,
+    TubePassBoundaryHydraulicState,
+    TubeEndPressureDropResult,
     TubeBundleHydraulicResult,
     calculate_tube_bundle_hydraulics,
     tube_bundle_hydraulics,
@@ -99,6 +101,8 @@ __all__ = [
     # Internal pressure drop (component-based)
     "InternalPressureDropFluidProps",
     "TubeSideHydraulicPoint",
+    "TubePassBoundaryHydraulicState",
+    "TubeEndPressureDropResult",
     "TubeBundleHydraulicResult",
     "calculate_tube_bundle_hydraulics",
     "tube_bundle_hydraulics",

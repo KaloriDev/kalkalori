@@ -86,12 +86,15 @@ class HXOutSideThermalResults:
 
 @dataclass(frozen=True)
 class HXTubeSideHydraulicResults:
-    """Tube-side straight-bundle hydraulics and compatibility accessors.
+    """Tube-side tube-bundle hydraulics and compatibility accessors.
 
-    The nested result contains only distributed straight-tube friction and
-    signed acceleration pressure change.  ``dp_inlet``, ``dp_outlet`` and
-    ``dp_turns`` remain as zero-valued compatibility accessors; no local-loss
-    coefficients are applied by this patch.
+    Since v0.5.6 the nested result contains distributed straight-tube
+    friction, signed acceleration pressure change, and tube-sheet entrance/
+    exit losses (see ``dp_straight_tubes`` for the pre-v0.5.6 friction +
+    acceleration-only scope).  ``dp_inlet``, ``dp_outlet`` and ``dp_turns``
+    remain as zero-valued compatibility accessors for the older,
+    unused K_inlet/K_outlet/K_turn helpers; they are unrelated to the new
+    tube-sheet entrance/exit calculation.
     """
 
     tube_bundle: TubeBundleHydraulicResult
@@ -137,8 +140,48 @@ class HXTubeSideHydraulicResults:
         return self.tube_bundle.dp_acceleration
 
     @property
+    def dp_straight_tubes(self) -> float:
+        return self.tube_bundle.dp_straight_tubes
+
+    @property
+    def dp_tube_entrances(self) -> float:
+        return self.tube_bundle.dp_tube_entrances
+
+    @property
+    def dp_tube_exits(self) -> float:
+        return self.tube_bundle.dp_tube_exits
+
+    @property
     def dp_tube_bundle(self) -> float:
         return self.tube_bundle.dp_tube_bundle
+
+    @property
+    def tube_path_type(self):
+        return self.tube_bundle.tube_path_type
+
+    @property
+    def entrance_count(self) -> int:
+        return self.tube_bundle.entrance_count
+
+    @property
+    def exit_count(self) -> int:
+        return self.tube_bundle.exit_count
+
+    @property
+    def pass_boundary_method(self) -> str:
+        return self.tube_bundle.pass_boundary_method
+
+    @property
+    def pass_boundary_states(self):
+        return self.tube_bundle.pass_boundary_states
+
+    @property
+    def entrance_results(self):
+        return self.tube_bundle.entrance_results
+
+    @property
+    def exit_results(self):
+        return self.tube_bundle.exit_results
 
     @property
     def inlet(self):
@@ -306,10 +349,13 @@ class HXResult:
         return self.inside_dp_tube_bundle
 
     # -- Canonical tube-side pressure-drop field names (v0.5.6) -----------
-    # The tube-side result covers only straight tube-bundle friction and
-    # signed acceleration pressure change; ``inside_dp_local`` is 0.0 and
-    # ``inside_dp_tube_bundle`` == ``inside_dp_total`` in this commit (no
-    # local-loss correlations are implemented yet).
+    # The tube-side core now covers distributed straight-tube friction,
+    # signed acceleration pressure change, and tube-sheet entrance/exit
+    # losses (dp_tube_bundle = dp_straight_tubes + dp_tube_entrances +
+    # dp_tube_exits). ``inside_dp_local`` remains 0.0 in this commit: no
+    # inlet/return/outlet local-loss path is automatically invoked (see
+    # core.pressure_drop.flow_path). ``inside_dp_tube_bundle`` ==
+    # ``inside_dp_total``.
 
     @property
     def inside_dp_tube_bundle_friction(self) -> float:
@@ -318,6 +364,54 @@ class HXResult:
     @property
     def inside_dp_tube_bundle_acceleration(self) -> float:
         return self.tube_side_hydraulic.dp_acceleration
+
+    @property
+    def inside_dp_straight_tube_friction(self) -> float:
+        return self.tube_side_hydraulic.dp_friction
+
+    @property
+    def inside_dp_straight_tube_acceleration(self) -> float:
+        return self.tube_side_hydraulic.dp_acceleration
+
+    @property
+    def inside_dp_straight_tubes(self) -> float:
+        return self.tube_side_hydraulic.dp_straight_tubes
+
+    @property
+    def inside_dp_tube_entrances(self) -> float:
+        return self.tube_side_hydraulic.dp_tube_entrances
+
+    @property
+    def inside_dp_tube_exits(self) -> float:
+        return self.tube_side_hydraulic.dp_tube_exits
+
+    @property
+    def tube_path_type(self):
+        return self.tube_side_hydraulic.tube_path_type
+
+    @property
+    def entrance_count(self) -> int:
+        return self.tube_side_hydraulic.entrance_count
+
+    @property
+    def exit_count(self) -> int:
+        return self.tube_side_hydraulic.exit_count
+
+    @property
+    def pass_boundary_method(self) -> str:
+        return self.tube_side_hydraulic.pass_boundary_method
+
+    @property
+    def pass_boundary_states(self):
+        return self.tube_side_hydraulic.pass_boundary_states
+
+    @property
+    def entrance_results(self):
+        return self.tube_side_hydraulic.entrance_results
+
+    @property
+    def exit_results(self):
+        return self.tube_side_hydraulic.exit_results
 
     @property
     def inside_dp_local(self) -> float:
@@ -381,10 +475,13 @@ class BareTubeHeatExchanger:
     Implemented features (current stage)
     ------------------------------------
     - Tube-side: internal convection correlation -> alfa_i
-    - Tube-side: universal three-state straight-bundle hydraulics:
-        dp_tube_bundle = dp_friction + dp_acceleration
-      with no nozzle, chamber, tube-sheet, return, bend, header, or collector
-      local-loss coefficients.
+    - Tube-side: universal three-state straight-bundle hydraulics plus
+      tube-sheet entrance/exit losses (v0.5.6):
+        dp_tube_bundle = dp_straight_tubes + dp_tube_entrances + dp_tube_exits
+        dp_straight_tubes = dp_friction + dp_acceleration
+      with no nozzle, chamber, return, bend, header, or collector
+      local-loss coefficients (those remain in the optional, explicitly
+      invoked pressure-drop path architecture; see core.pressure_drop.flow_path).
     - Outside side: forced flow from mass flow rate -> alfa_o and universal
       three-state tube-bank drag plus signed acceleration pressure change
     - Overall thermal duty: Îµâ€“NTU with flow_arrangement:
@@ -532,6 +629,8 @@ class BareTubeHeatExchanger:
                 flow_area_per_pass=flow_area_pass,
                 hydraulic_diameter=D_h,
                 hydraulic_length_total=self.bundle.internal_length_total,
+                n_tube_passes=self.bundle.n_passes_tube,
+                tube_path_type=self.bundle.tube_path_type,
                 inlet_props=hydraulic_props,
                 temperature_in=tube_side_temperature_in,
                 temperature_out=tube_side_temperature_out,
@@ -546,6 +645,8 @@ class BareTubeHeatExchanger:
                 flow_area_per_pass=flow_area_pass,
                 hydraulic_diameter=D_h,
                 hydraulic_length_total=self.bundle.internal_length_total,
+                n_tube_passes=self.bundle.n_passes_tube,
+                tube_path_type=self.bundle.tube_path_type,
                 provider=tube_side_provider,
                 temperature_in=T_in_hyd,
                 temperature_out=T_out_hyd,

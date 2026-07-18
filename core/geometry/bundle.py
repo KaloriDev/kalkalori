@@ -20,7 +20,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+
 from core.geometry.tube import BaseTube
+
+
+class TubePathType(str, Enum):
+    """How successive tube passes are physically connected (v0.5.6).
+
+    ``STRAIGHT``: each pass is a separate set of straight tubes connected
+    through chambers, headers, collectors, or external return devices
+    (none of those return devices are modeled in this commit). Each pass
+    therefore has its own tube-sheet entrance and its own tube-sheet exit:
+    ``entrance_count = exit_count = n_passes_tube``.
+
+    ``U_TUBE``: successive straight legs are connected by integral
+    U-bends -- the same pressure-drop element family as a 180-degree
+    elbow (``core.geometry.pressure_drop_stages.DirectionChangeType.
+    U_BEND``/``ELBOW_180``; not calculated in this commit). The complete
+    continuous tube path has only one initial tube-sheet entrance and one
+    final tube-sheet exit: ``entrance_count = exit_count = 1``.
+    Intermediate U-bend boundaries do not create additional tube-sheet
+    entrance or exit losses.
+    """
+
+    STRAIGHT = "straight"
+    U_TUBE = "u_tube"
 
 
 @dataclass(frozen=True)
@@ -44,6 +69,10 @@ class TubeBundle:
         "inline" or "staggered" (used later for refined outside correlations).
     n_passes_tube : int
         Number of tube-side passes (biegów).
+    tube_path_type : TubePathType
+        How successive passes are connected; see ``TubePathType``. Defaults
+        to ``STRAIGHT``, preserving the interpretation used by models that
+        do not specify it.
 
     Notes
     -----
@@ -61,6 +90,7 @@ class TubeBundle:
     layout: str
     n_passes_tube: int
     flow_arrangement: str
+    tube_path_type: TubePathType = TubePathType.STRAIGHT
 
     def __post_init__(self) -> None:
         if self.n_rows <= 0 or self.n_tubes_per_row <= 0:
@@ -78,6 +108,13 @@ class TubeBundle:
             raise ValueError(
                 "For MVP, total tube count must be divisible by n_passes_tube "
                 "(equal tube partitioning per pass)."
+            )
+
+        if self.tube_path_type == TubePathType.U_TUBE and self.n_passes_tube < 2:
+            raise ValueError(
+                "tube_path_type=U_TUBE requires at least two tube passes "
+                "(a single-pass bundle has no U-bend). Bend arc length and "
+                "bend pressure loss are not yet included in any tube path type."
             )
 
     # -----------------------
