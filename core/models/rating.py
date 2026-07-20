@@ -203,6 +203,76 @@ class HXRatingResult:
     def outside_pressure_drop(self) -> float:
         return self.outside_dp_total
 
+    # -- Pressure-drop flow-path aggregation (v0.5.6) ----------------------
+
+    @property
+    def tube_side_pressure_drop(self):
+        """Complete tube-side pressure-drop result (core + local + total)."""
+        return self.final_result.tube_side_pressure_drop
+
+    @property
+    def outside_side_pressure_drop(self):
+        """Complete outside-side pressure-drop result (core + local + total)."""
+        return self.final_result.outside_side_pressure_drop
+
+    @property
+    def inside_dp_local(self) -> float:
+        return self.final_result.inside_dp_local
+
+    @property
+    def outside_dp_local(self) -> float:
+        return self.final_result.outside_dp_local
+
+    # -- Tube-sheet entrance/exit pressure drop (v0.5.6) --------------------
+
+    @property
+    def inside_dp_straight_tube_friction(self) -> float:
+        return self.final_result.inside_dp_straight_tube_friction
+
+    @property
+    def inside_dp_straight_tube_acceleration(self) -> float:
+        return self.final_result.inside_dp_straight_tube_acceleration
+
+    @property
+    def inside_dp_straight_tubes(self) -> float:
+        return self.final_result.inside_dp_straight_tubes
+
+    @property
+    def inside_dp_tube_entrances(self) -> float:
+        return self.final_result.inside_dp_tube_entrances
+
+    @property
+    def inside_dp_tube_exits(self) -> float:
+        return self.final_result.inside_dp_tube_exits
+
+    @property
+    def tube_path_type(self):
+        return self.final_result.tube_path_type
+
+    @property
+    def entrance_count(self) -> int:
+        return self.final_result.entrance_count
+
+    @property
+    def exit_count(self) -> int:
+        return self.final_result.exit_count
+
+    @property
+    def pass_boundary_method(self) -> str:
+        return self.final_result.pass_boundary_method
+
+    @property
+    def pass_boundary_states(self):
+        return self.final_result.pass_boundary_states
+
+    @property
+    def entrance_results(self):
+        return self.final_result.entrance_results
+
+    @property
+    def exit_results(self):
+        return self.final_result.exit_results
+
 
 # ---------------------------------------------------------------------------
 # Driver

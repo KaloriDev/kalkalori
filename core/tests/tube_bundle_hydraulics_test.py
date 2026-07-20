@@ -10,7 +10,7 @@ from unittest import mock
 
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
-from core.heat_transfer.internal_pressure_drop import (
+from core.pressure_drop.internal_pressure_drop import (
     calculate_tube_bundle_hydraulics,
     friction_factor_smooth,
 )
@@ -61,6 +61,7 @@ def _hydraulic(**kwargs):
         flow_area_per_pass=0.01,
         hydraulic_diameter=0.1,
         hydraulic_length_total=2.0,
+        n_tube_passes=1,
     )
     defaults.update(kwargs)
     return calculate_tube_bundle_hydraulics(**defaults)
@@ -73,7 +74,11 @@ def test_constant_property_regression() -> None:
     expected = f * (result.hydraulic_length_total / result.hydraulic_diameter) * G**2 / (2.0 * 1000.0)
     assert result.dp_acceleration == 0.0
     assert math.isclose(result.dp_friction, expected, rel_tol=0.0, abs_tol=1.0e-12)
-    assert result.dp_tube_bundle == result.dp_friction
+    # dp_tube_bundle now also includes tube-sheet entrance/exit losses
+    # (v0.5.6); dp_straight_tubes is the pre-v0.5.6 friction+acceleration-only
+    # scope and remains exactly the friction-only value here.
+    assert result.dp_straight_tubes == result.dp_friction
+    assert result.dp_tube_bundle == result.dp_straight_tubes + result.dp_tube_entrances + result.dp_tube_exits
 
 
 def test_signed_acceleration_for_both_density_directions() -> None:
@@ -81,10 +86,10 @@ def test_signed_acceleration_for_both_density_directions() -> None:
     increasing = _hydraulic(provider=LinearProvider(rho_slope=1.0), temperature_in=300.0, temperature_out=400.0, pressure=101325.0)
     assert decreasing.outlet.props.rho < decreasing.inlet.props.rho
     assert decreasing.dp_acceleration > 0.0
-    assert decreasing.dp_tube_bundle > decreasing.dp_friction
+    assert decreasing.dp_straight_tubes > decreasing.dp_friction
     assert increasing.outlet.props.rho > increasing.inlet.props.rho
     assert increasing.dp_acceleration < 0.0
-    assert increasing.dp_tube_bundle < increasing.dp_friction
+    assert increasing.dp_straight_tubes < increasing.dp_friction
 
     recovery = _hydraulic(
         provider=LinearProvider(rho_slope=10.0),
@@ -92,7 +97,10 @@ def test_signed_acceleration_for_both_density_directions() -> None:
         hydraulic_length_total=1.0e-3,
         pressure=101325.0,
     )
-    assert recovery.dp_tube_bundle < 0.0
+    # The straight-tube-only (pre-v0.5.6) scope can still show net pressure
+    # recovery; the complete tube_bundle total additionally includes the
+    # (always non-negative) tube-sheet entrance/exit losses.
+    assert recovery.dp_straight_tubes < 0.0
     assert any(
         warning.code == "tube_bundle_hydraulics_negative_total_pressure_change"
         for warning in recovery.warnings
@@ -145,7 +153,8 @@ def test_available_property_providers_use_the_same_hydraulic_structure() -> None
         assert result.inlet.position == "inlet"
         assert result.midpoint.position == "midpoint"
         assert result.outlet.position == "outlet"
-        assert result.dp_tube_bundle == result.dp_friction + result.dp_acceleration
+        assert result.dp_straight_tubes == result.dp_friction + result.dp_acceleration
+        assert result.dp_tube_bundle == result.dp_straight_tubes + result.dp_tube_entrances + result.dp_tube_exits
         assert all(point.props.rho > 0.0 and point.props.mu > 0.0 for point in (result.inlet, result.midpoint, result.outlet))
 
 
@@ -154,8 +163,8 @@ def test_multi_pass_geometry_and_no_local_losses() -> None:
     bundle_one = TubeBundle(tube=tube, n_rows=4, n_tubes_per_row=8, pitch_transverse=0.03, pitch_longitudinal=0.03, layout="inline", n_passes_tube=1, flow_arrangement="counterflow")
     bundle_two = TubeBundle(tube=tube, n_rows=4, n_tubes_per_row=8, pitch_transverse=0.03, pitch_longitudinal=0.03, layout="inline", n_passes_tube=2, flow_arrangement="counterflow")
     props = _props(1000.0)
-    one = calculate_tube_bundle_hydraulics(m_dot=1.0, flow_area_per_pass=bundle_one.internal_flow_area_per_pass, hydraulic_diameter=bundle_one.internal_hydraulic_diameter, hydraulic_length_total=bundle_one.internal_length_total, inlet_props=props)
-    two = calculate_tube_bundle_hydraulics(m_dot=1.0, flow_area_per_pass=bundle_two.internal_flow_area_per_pass, hydraulic_diameter=bundle_two.internal_hydraulic_diameter, hydraulic_length_total=bundle_two.internal_length_total, inlet_props=props)
+    one = calculate_tube_bundle_hydraulics(m_dot=1.0, flow_area_per_pass=bundle_one.internal_flow_area_per_pass, hydraulic_diameter=bundle_one.internal_hydraulic_diameter, hydraulic_length_total=bundle_one.internal_length_total, n_tube_passes=bundle_one.n_passes_tube, inlet_props=props)
+    two = calculate_tube_bundle_hydraulics(m_dot=1.0, flow_area_per_pass=bundle_two.internal_flow_area_per_pass, hydraulic_diameter=bundle_two.internal_hydraulic_diameter, hydraulic_length_total=bundle_two.internal_length_total, n_tube_passes=bundle_two.n_passes_tube, inlet_props=props)
     assert one.flow_area_per_pass == 32 * tube.flow_area
     assert two.flow_area_per_pass == 16 * tube.flow_area
     assert two.hydraulic_length_total == 2.0 * one.hydraulic_length_total

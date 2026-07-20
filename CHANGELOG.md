@@ -6,76 +6,56 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
-## v0.5.5
+## [0.5.x] - Simulation/Rating split, pressure-drop, heat-balance and thermal-model improvements
 
 ### Added
 
-- Universal three-state tube-side hydraulic property evaluation at inlet,
-  midpoint, and outlet.
-- Simpson integration of distributed straight-tube friction using local bulk
-  properties.
-- Signed tube-side acceleration pressure-change calculation.
-- Reusable tube-side hydraulic states for future local-loss models.
-- Detailed tube-bundle hydraulic diagnostics.
-- Universal three-state outside tube-bank hydraulic property evaluation at
-  inlet, midpoint, and outlet.
-- Variable-property integration of the Euler tube-bank drag term.
-- Signed outside acceleration pressure-change calculation.
-- Explicit outside Euler-number and reference-velocity diagnostics.
+- Simulation/Rating split with shared heat-balance closure, NTU inverse
+  support, and one iterative thermal state used consistently across both
+  driver layers.
+- Wall-temperature-aware and length-corrected thermal diagnostics, including a
+  four-point 0D wall-temperature envelope and a shared `thermal_state` as the
+  authoritative source for corrected coefficients.
+- Variable-property hydraulic calculations for tube-side and outside-side
+  flow, based on reusable inlet/midpoint/outlet states instead of simplified
+  mean-property handling.
+- General pressure-drop flow-path architecture with stage-based aggregation,
+  separate tube-side and outside-side paths, straight-tube and U-tube support,
+  tube-sheet entrance/exit losses, and clearer hydraulic diagnostics.
+- Optional tube roughness support for internal pressure drop, plus expanded
+  tests, warnings, and notebook coverage for the updated workflows.
+- Added explicit local pressure-drop calculations for straight ducts, area changes, elbows, planar obstructions, screens, and user-defined elements.
+- Added circular and rectangular fitting geometry, including gradual and sudden transitions, smooth-radius and segmented elbows, and 45°, 90°, and 180° bends.
+- Added explicit tube-side and outside-side pressure-drop paths with separate reporting of irreversible loss, dynamic-pressure change, and static-pressure difference.
 
 ### Changed
 
-- The previous one-state mean-property tube-side friction calculation has been
-  replaced by a universal variable-property method.
-- The same straight tube-bundle hydraulic calculation is now used for all
-  supported tube-side fluids and thermal directions.
-- Outside bare-tube-bank pressure drop now uses local bulk properties instead
-  of one mean state.
-- The same outside hydraulic calculation path is used for all supported fluids
-  and all thermal directions.
+- The previous mean-property rating API was renamed to `Simulation`, while
+  `Simulation` and `Rating` now both rely on the same converged iterative
+  thermal backbone by default.
+- Crossflow NTU handling, corrected heat-transfer coefficients, and notebook
+  diagnostics were aligned so reported results come from the production thermal
+  state instead of parallel recomputation.
+- Tube-side and outside-side hydraulic calculations were upgraded from single
+  representative states to universal variable-property methods with clearer
+  result separation for straight-tube, tube-bank, local, and total pressure
+  drop.
+- Pressure-drop modules were moved from `core.heat_transfer` to
+  `core.pressure_drop`, while earlier import paths remain available through
+  compatibility re-exports.
+- Internal roughness now affects distributed straight-tube pressure drop when
+  specified, while the previous smooth-tube behavior is preserved when
+  roughness is omitted or zero.
+- Standard exchanger calculations no longer include local pressure-drop paths; these are now evaluated explicitly by the application layer, while standard bundle and tube-bank results remain unchanged.
+- Pressure-drop stage results now provide detailed flow and geometry diagnostics, with separate values for irreversible loss, dynamic-pressure change, and static-pressure difference.
 
 ### Notes
 
-- The hydraulic model does not classify fluids as gases or liquids.
-- The same equations are used for all supported property providers.
-- Tube-side pressure drop currently covers only straight tube-bundle friction
-  and signed acceleration pressure change.
-- Tube-side and outside-side variable-property hydraulics use the same
-  three-state principle but different physical equations: the tube-side model
-  integrates `f/rho`, while the outside tube-bank model integrates the
-  Euler-based drag quantity consistent with the provider contract.
-- Outside pressure drop covers irreversible crossflow drag through the bare
-  tube bank and signed inlet-to-outlet acceleration pressure change only.
-- Outside duct, plenum, casing-transition, screen, louver, and other local
-  losses are not included.
-- Nozzle, chamber, tube-sheet entrance/exit, and return losses remain excluded
-  and are planned for a later patch.
-
----
-## [0.5.x] - Simulation/Rating split, heat-balance closure, thermal-model updates
-
-- Added a four-point 0D estimate of minimum and maximum inside/outside wall temperatures for Simulation and Rating. This is an endpoint estimate, not a spatially segmented calculation.
-
-### Changed (breaking, internal API)
-
-- Renamed the previous mean-property rating API to **Simulation**.
-- Improved crossflow ε-NTU behavior and inverse handling used by Rating.
-- Rating now uses the iterative thermal state (with wall effects) instead of single-pass thermal coefficients.
-- **Simulation now also uses the same converged, wall/length-corrected iterative thermal state by default** (`iterate=True`, unchanged default): `inside_alfa_mean`/`outside_alfa_mean`/`U_mean`/`UA` on `HXSimulationResult` are read from `solve_iterative_thermal_state` and are never overwritten by the final snapshot's thermal diagnostics. A `ConstantPropertyProvider` no longer forces a single-pass shortcut under `iterate=True`: the wall-temperature correction still needs to converge even with constant bulk properties. The explicit `iterate=False` escape hatch is unchanged (single, fast, uncorrected pass; `thermal_state=None` on the result).
-- Fixed a notebook/production divergence in `core/tests/heat_balance_rating_matrix_test.ipynb`: the notebook previously recomputed corrected Nu/alfa diagnostics independently (a second, parallel calculation, with a hardcoded no-op length correction) instead of reading them from the production result, so its displayed `inside_alfa_W_m2K` column silently used the *uncorrected* coefficient while `U_mean`/`UA_actual` used the corrected one. The notebook now extracts all thermal diagnostics from `result.thermal_state` (added to both `HXSimulationResult` and `HXRatingResult`) with no independent physics calculation, and asserts `inside_alfa_W_m2K == inside_alfa_corrected` for every generated row.
-
-### Added
-
-- Simulation/Rating split with heat-balance closure and NTU inverse support.
-- Iterative thermal-state solving with wall-temperature and property corrections.
-- Internal gas wall-temperature correction and finite-length correction in tube-side heat transfer.
-- `thermal_state: IterativeThermalState` field on `HXSimulationResult` (`None` only for `iterate=False`) and on `HXRatingResult`, plus `alfa_i`/`alfa_o` on `HXRatingResult` -- the shared, authoritative source for corrected coefficients across both driver layers.
-- Expanded diagnostics, warnings, tests, and notebook coverage for the 0.5.x workflow, including sentinel call-path tests (patching `solve_iterative_thermal_state` at its actual point of use in both `core.models.rating` and `core.models.simulation`), a real dry-air integration test, resistance-reconstruction checks, and a `rate(include_simulation=True)` vs. `simulate()` consistency check.
-
-### Notes
-
-- `solve()` remains the thermal snapshot kernel; its tube-side hydraulic result now uses the universal three-state function, while Simulation and Rating continue to funnel thermal coefficients through the same `solve_iterative_thermal_state`.
-- Scope unchanged: 0D model only, without condensation or latent effects.
+- Scope remains 0D, with no condensation or latent-heat modelling.
+- Local pressure-drop paths are calculated explicitly and are not included automatically in `solve()`, `simulate()`, or `rate()`.
+- Elbow losses currently require a user-defined `K` or `Le/D`; return chambers, nozzles, and general external pipework remain unsupported.
+- Flat-obstruction losses use a simplified high-Re blockage-based model.
+- Outer tube roughness is stored in geometry but is not yet used in outside heat-transfer or pressure-drop calculations.
 
 ---
 ## [0.4.x] - Property Layer Foundation

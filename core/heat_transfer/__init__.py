@@ -25,9 +25,11 @@ from .internal_flow import (
     internal_length_correction,
 )
 
-from .internal_pressure_drop import (
+from core.pressure_drop.internal_pressure_drop import (
     FluidProps as InternalPressureDropFluidProps,
     TubeSideHydraulicPoint,
+    TubePassBoundaryHydraulicState,
+    TubeEndPressureDropResult,
     TubeBundleHydraulicResult,
     calculate_tube_bundle_hydraulics,
     tube_bundle_hydraulics,
@@ -47,7 +49,7 @@ from .outside_flow import (
     outside_flow_from_mass_flow,
 )
 
-from .outside_pressure_drop import (
+from core.pressure_drop.outside_pressure_drop import (
     EulerProvider,
     EulerRequest,
     EulerResult,
@@ -56,7 +58,7 @@ from .outside_pressure_drop import (
     check_outside_dp_applicability,
 )
 
-from .outside_pressure_drop_external import (
+from core.pressure_drop.outside_pressure_drop_external import (
     ExternalCliEulerProvider,
 )
 
@@ -99,6 +101,8 @@ __all__ = [
     # Internal pressure drop (component-based)
     "InternalPressureDropFluidProps",
     "TubeSideHydraulicPoint",
+    "TubePassBoundaryHydraulicState",
+    "TubeEndPressureDropResult",
     "TubeBundleHydraulicResult",
     "calculate_tube_bundle_hydraulics",
     "tube_bundle_hydraulics",

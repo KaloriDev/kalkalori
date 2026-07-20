@@ -56,7 +56,7 @@ import math
 from typing import TYPE_CHECKING, Any, Literal
 
 from core.common.warnings import ModelWarning, make_warning
-from .outside_pressure_drop import (
+from core.pressure_drop.outside_pressure_drop import (
     EulerProvider,
     EulerRequest,
     EulerResult,

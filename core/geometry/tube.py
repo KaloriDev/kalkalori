@@ -52,6 +52,19 @@ class BareTube(BaseTube):
         Total hydraulic length for tube-side pressure drop calculations [m]
     length_effective : float
         Effective length participating in heat transfer and outside flow exposure [m]
+    roughness_inner : float | None
+        Absolute roughness of the internal tube surface [m]. ``None`` means
+        unspecified (preserves the existing hydraulically smooth tube-side
+        pressure-drop calculation exactly); ``0.0`` explicitly specifies a
+        hydraulically smooth surface (numerically identical to ``None``);
+        a positive value is used as the absolute roughness in the
+        Colebrook-White rough-pipe friction-factor calculation. See
+        ``core.pressure_drop.straight_sections``.
+    roughness_outer : float | None
+        Absolute roughness of the external tube surface [m]. Same
+        interpretation as ``roughness_inner``, but currently stored only
+        for future use: no outside heat-transfer or tube-bank
+        pressure-drop correlation applies it in this commit.
 
     Notes
     -----
@@ -59,10 +72,15 @@ class BareTube(BaseTube):
     - a portion of tube length is in headers / inactive region for heat exchange,
     - but still contributes to tube-side frictional losses.
 
+    Roughness is never inferred from tube material, manufacturing method,
+    welded/seamless status, age, fouling, or corrosion; it must be supplied
+    explicitly.
+
     Constraints
     -----------
     0 < length_effective <= length_total
     D_o > D_i > 0
+    roughness_inner, roughness_outer: None, or finite and >= 0
     """
 
     D_i: float
@@ -70,6 +88,8 @@ class BareTube(BaseTube):
     length_total: float
     length_effective: float
     wall_k: float
+    roughness_inner: float | None = None
+    roughness_outer: float | None = None
 
     def __post_init__(self) -> None:
         if self.D_i <= 0.0 or self.D_o <= 0.0:
@@ -84,6 +104,8 @@ class BareTube(BaseTube):
             raise ValueError("length_effective must not exceed length_total.")
         if self.wall_k <= 0.0:
             raise ValueError("wall_k must be positive.")
+        _validate_roughness(self.roughness_inner, "roughness_inner")
+        _validate_roughness(self.roughness_outer, "roughness_outer")
 
     @property
     def flow_area(self) -> float:
@@ -104,6 +126,27 @@ class BareTube(BaseTube):
     def area_outer(self) -> float:
         """Outer heat transfer area using length_effective [m^2]."""
         return math.pi * self.D_o * self.length_effective
+
+    @property
+    def relative_roughness_inner(self) -> float | None:
+        """``roughness_inner / D_i``, or ``None`` if roughness_inner is unset."""
+        if self.roughness_inner is None:
+            return None
+        return self.roughness_inner / self.D_i
+
+    @property
+    def relative_roughness_outer(self) -> float | None:
+        """``roughness_outer / D_o``, or ``None`` if roughness_outer is unset."""
+        if self.roughness_outer is None:
+            return None
+        return self.roughness_outer / self.D_o
+
+
+def _validate_roughness(value: float | None, name: str) -> None:
+    if value is None:
+        return
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError(f"{name} must be None or a finite, non-negative value.")
 
 
 # TODO class FinnedTube(BaseTube):

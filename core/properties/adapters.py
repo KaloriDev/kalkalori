@@ -22,7 +22,7 @@ from typing import Any
 from core.properties.common import FluidTransportProperties
 
 from core.heat_transfer.internal_flow import FluidProps as InternalFluidProps
-from core.heat_transfer.internal_pressure_drop import FluidProps as InternalPressureDropFluidProps
+from core.pressure_drop.internal_pressure_drop import FluidProps as InternalPressureDropFluidProps
 from core.heat_transfer.outside_flow import FluidProps as OutsideFluidProps
 
 

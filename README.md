@@ -142,7 +142,9 @@ Typical usage:
 3. Solve using a heat exchanger model
 4. Inspect results from `HXResult`
 
-See the example notebooks for reference workflows.
+See the [local pressure-drop examples](tests/local_pressure_drop_examples.ipynb)
+for straight sections, transitions, elbows, planar obstructions, user-defined
+losses, and explicit path assembly.
 
 ---
 
