@@ -64,6 +64,11 @@ from core.pressure_drop.screens import (
     calculate_tube_sheet_entrance_loss,
     calculate_tube_sheet_exit_loss,
 )
+from core.pressure_drop.straight_sections import (
+    darcy_friction_factor,
+    darcy_friction_factor_method,
+    friction_factor_smooth,
+)
 
 if TYPE_CHECKING:
     from core.properties.common import FluidTransportProperties
@@ -82,8 +87,13 @@ HydraulicPosition = Literal["inlet", "midpoint", "outlet"]
 class TubeSideHydraulicPoint:
     """Bulk hydraulic state at one of the three tube-side evaluation points.
 
-    ``friction_factor`` is the Darcy friction factor from the existing smooth
-    tube implementation.
+    ``friction_factor`` is the Darcy friction factor from
+    ``core.pressure_drop.straight_sections.darcy_friction_factor``: the
+    existing smooth-tube (Petukhov) value when no positive relative
+    roughness is specified, or the Colebrook-White rough-tube value
+    otherwise (v0.5.6). ``friction_factor_method`` is a stable diagnostic
+    identifier for which branch was used: ``"laminar_64_over_re"``,
+    ``"petukhov_smooth"``, or ``"colebrook_white"``.
     """
 
     position: HydraulicPosition
@@ -95,6 +105,7 @@ class TubeSideHydraulicPoint:
     velocity: float
     reynolds: float
     friction_factor: float
+    friction_factor_method: str
     dynamic_pressure: float
     prandtl: float
 
@@ -195,6 +206,9 @@ class TubeBundleHydraulicResult:
     hydraulic_diameter: float
     hydraulic_length_total: float
     mean_f_over_rho: float
+
+    roughness_inner: float | None
+    relative_roughness_inner: float | None
 
     dp_straight_tube_friction: float
     dp_straight_tube_acceleration: float
@@ -314,6 +328,18 @@ class TubeBundleHydraulicResult:
         return self.outlet.friction_factor
 
     @property
+    def friction_factor_method_in(self) -> str:
+        return self.inlet.friction_factor_method
+
+    @property
+    def friction_factor_method_mid(self) -> str:
+        return self.midpoint.friction_factor_method
+
+    @property
+    def friction_factor_method_out(self) -> str:
+        return self.outlet.friction_factor_method
+
+    @property
     def Pr_in(self) -> float:
         return self.inlet.prandtl
 
@@ -336,6 +362,7 @@ def calculate_tube_bundle_hydraulics(
     tube_path_type: TubePathType = TubePathType.STRAIGHT,
     entrance_type: TubeSheetEntranceType = TubeSheetEntranceType.SHARP_EDGED,
     exit_type: TubeSheetExitType = TubeSheetExitType.NORMAL,
+    roughness_inner: float | None = None,
     provider: Any | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
@@ -361,6 +388,17 @@ def calculate_tube_bundle_hydraulics(
     Otherwise the same arithmetic-temperature fallback is used for every
     provider.
 
+    ``roughness_inner`` (absolute, [m]) is optional: ``None`` (default) or
+    ``0.0`` preserve the existing hydraulically smooth friction-factor
+    calculation exactly; a positive value is converted to
+    ``relative_roughness = roughness_inner / hydraulic_diameter`` and used
+    identically at the inlet, midpoint, and outlet points via
+    ``core.pressure_drop.straight_sections.darcy_friction_factor``
+    (Colebrook-White for turbulent flow; ``64/Re`` for laminar flow,
+    independent of roughness). Only distributed straight-tube friction
+    responds to roughness: acceleration, tube-sheet entrance/exit losses,
+    and pass-boundary states are unaffected.
+
     The point-property arguments are a deterministic test/compatibility hook.
     Production exchanger paths pass a provider and temperatures.
     """
@@ -379,6 +417,14 @@ def calculate_tube_bundle_hydraulics(
             "tube_bundle_hydraulics_invalid_u_tube_pass_count: "
             "tube_path_type=U_TUBE requires at least two tube passes."
         )
+    if roughness_inner is not None and (not math.isfinite(roughness_inner) or roughness_inner < 0.0):
+        raise ValueError(
+            "tube_bundle_hydraulics_invalid_roughness: roughness_inner must be "
+            "None or a finite, non-negative value."
+        )
+    relative_roughness = (
+        None if roughness_inner is None else roughness_inner / hydraulic_diameter
+    )
 
     if provider is None:
         if inlet_props is None:
@@ -431,14 +477,17 @@ def calculate_tube_bundle_hydraulics(
         _make_hydraulic_point(
             position="inlet", temperature=T_in, pressure=p, props=props_in,
             enthalpy=h_in, mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            relative_roughness=relative_roughness,
         ),
         _make_hydraulic_point(
             position="midpoint", temperature=T_mid, pressure=p, props=props_mid,
             enthalpy=h_mid, mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            relative_roughness=relative_roughness,
         ),
         _make_hydraulic_point(
             position="outlet", temperature=T_out, pressure=p, props=props_out,
             enthalpy=h_out, mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            relative_roughness=relative_roughness,
         ),
     )
 
@@ -538,6 +587,8 @@ def calculate_tube_bundle_hydraulics(
         hydraulic_diameter=float(hydraulic_diameter),
         hydraulic_length_total=float(hydraulic_length_total),
         mean_f_over_rho=mean_f_over_rho,
+        roughness_inner=roughness_inner,
+        relative_roughness_inner=relative_roughness,
         dp_straight_tube_friction=dp_straight_tube_friction,
         dp_straight_tube_acceleration=dp_straight_tube_acceleration,
         dp_tube_entrances=dp_tube_entrances,
@@ -628,6 +679,7 @@ def _make_hydraulic_point(
     *, position: HydraulicPosition, temperature: float, pressure: float,
     props: FluidTransportProperties, enthalpy: float | None,
     mass_flux: float, hydraulic_diameter: float,
+    relative_roughness: float | None = None,
 ) -> TubeSideHydraulicPoint:
     if not math.isfinite(props.rho) or props.rho <= 0.0:
         raise ValueError("tube_bundle_hydraulics_invalid_density: density must be finite and positive.")
@@ -637,7 +689,8 @@ def _make_hydraulic_point(
     reynolds = mass_flux * hydraulic_diameter / props.mu
     if not math.isfinite(reynolds) or reynolds <= 0.0:
         raise ValueError("tube_bundle_hydraulics_nonfinite_state: Reynolds number must be finite and positive.")
-    friction_factor = friction_factor_smooth(reynolds)
+    friction_factor = darcy_friction_factor(reynolds, relative_roughness)
+    friction_factor_method = darcy_friction_factor_method(reynolds, relative_roughness)
     if not math.isfinite(friction_factor) or friction_factor <= 0.0:
         raise ValueError("tube_bundle_hydraulics_invalid_friction_factor: friction factor must be finite and positive.")
     dynamic_pressure_value = mass_flux**2 / (2.0 * props.rho)
@@ -648,6 +701,7 @@ def _make_hydraulic_point(
         position=position, temperature=float(temperature), pressure=float(pressure),
         props=props, enthalpy=enthalpy, mass_flux=float(mass_flux),
         velocity=velocity, reynolds=reynolds, friction_factor=friction_factor,
+        friction_factor_method=friction_factor_method,
         dynamic_pressure=dynamic_pressure_value, prandtl=prandtl,
     )
 
@@ -901,20 +955,12 @@ def reynolds_number(rho: float, v: float, D: float, mu: float) -> float:
     return rho * v * D / mu
 
 
-def friction_factor_smooth(Re: float) -> float:
-    """
-    Darcy friction factor for smooth tubes.
-
-    - Laminar (Re < 2300): f = 64 / Re
-    - Turbulent: Petukhov explicit approximation (smooth pipe)
-
-    Ref: White (smooth pipe friction), widely used in engineering practice.
-    """
-    if Re <= 0.0:
-        raise ValueError("Re must be positive.")
-    if Re < 2300.0:
-        return 64.0 / Re
-    return 1.0 / (0.79 * math.log(Re) - 1.64) ** 2
+# NOTE: friction_factor_smooth is no longer defined here. It is imported
+# above from core.pressure_drop.straight_sections (the single canonical
+# pressure-drop friction-factor implementation, now also covering rough
+# tubes via darcy_friction_factor) and re-exported under this module's
+# namespace so that `from core.pressure_drop.internal_pressure_drop import
+# friction_factor_smooth` keeps resolving to the same object as before.
 
 
 def dynamic_pressure(rho: float, v: float) -> float:

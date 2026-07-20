@@ -573,6 +573,7 @@ def run_simulation(
             hydraulic_length_total=hx.bundle.internal_length_total,
             n_tube_passes=hx.bundle.n_passes_tube,
             tube_path_type=hx.bundle.tube_path_type,
+            roughness_inner=getattr(hx.bundle.tube, "roughness_inner", None),
             provider=inside.provider,
             temperature_in=inside.T_in,
             temperature_out=T_out_inside_calc,

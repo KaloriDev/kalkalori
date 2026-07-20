@@ -48,6 +48,12 @@ from .screens import (
     calculate_tube_sheet_exit_loss,
 )
 
+from .straight_sections import (
+    friction_factor_smooth,
+    darcy_friction_factor,
+    darcy_friction_factor_method,
+)
+
 from .outside_pressure_drop import (
     Layout,
     EulerProvider,
@@ -97,6 +103,11 @@ __all__ = [
     "tube_sheet_exit_loss_coefficient",
     "calculate_tube_sheet_entrance_loss",
     "calculate_tube_sheet_exit_loss",
+
+    # Straight circular-section friction factor (straight_sections.py)
+    "friction_factor_smooth",
+    "darcy_friction_factor",
+    "darcy_friction_factor_method",
 
     # Outside pressure drop
     "Layout",

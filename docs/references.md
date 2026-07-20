@@ -38,11 +38,24 @@ Used for:
 - Crane Co.  
   *Flow of Fluids Through Valves, Fittings, and Pipe*, Technical Paper No. 410.
 
+- Rennels, D. C., Hudson, H. M.  
+  *Pipe Flow: A Practical and Comprehensive Guide.*
+
+- Colebrook, C. F. (1939).  
+  "Turbulent Flow in Pipes, with Particular Reference to the Transition
+  Region Between the Smooth and Rough Pipe Laws", *Journal of the ICE*.
+
+- Haaland, S. E. (1983).  
+  "Simple and Explicit Formulas for the Friction Factor in Turbulent Pipe
+  Flow", *ASME J. Fluids Eng.* — used only as an explicit initial guess for
+  the iterative Colebrook-White solve, not as a replacement for it.
+
 Used for:
 - Reynolds number and flow-regime interpretation,
-- pipe friction,
+- pipe friction (smooth and rough, tube-side pressure drop),
 - local loss coefficients,
-- inlet/outlet/pass pressure-drop components.
+- inlet/outlet/pass pressure-drop components,
+- tube-sheet entrance and exit losses.
 
 ---
 
