@@ -6,7 +6,7 @@ The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
 ---
-## [0.5.x] - Simulation/Rating split, heat-balance closure, thermal-model updates
+## [0.5.x] - Simulation/Rating split, pressure-drop, heat-balance and thermal-model improvements
 
 ### Added
 
@@ -24,6 +24,9 @@ The project follows **Semantic Versioning (SemVer)**:
   tube-sheet entrance/exit losses, and clearer hydraulic diagnostics.
 - Optional tube roughness support for internal pressure drop, plus expanded
   tests, warnings, and notebook coverage for the updated workflows.
+- Added explicit local pressure-drop calculations for straight ducts, area changes, elbows, planar obstructions, screens, and user-defined elements.
+- Added circular and rectangular fitting geometry, including gradual and sudden transitions, smooth-radius and segmented elbows, and 45°, 90°, and 180° bends.
+- Added explicit tube-side and outside-side pressure-drop paths with separate reporting of irreversible loss, dynamic-pressure change, and static-pressure difference.
 
 ### Changed
 
@@ -43,18 +46,16 @@ The project follows **Semantic Versioning (SemVer)**:
 - Internal roughness now affects distributed straight-tube pressure drop when
   specified, while the previous smooth-tube behavior is preserved when
   roughness is omitted or zero.
+- Standard exchanger calculations no longer include local pressure-drop paths; these are now evaluated explicitly by the application layer, while standard bundle and tube-bank results remain unchanged.
+- Pressure-drop stage results now provide detailed flow and geometry diagnostics, with separate values for irreversible loss, dynamic-pressure change, and static-pressure difference.
 
 ### Notes
 
-- `solve()` remains the thermal snapshot kernel, while higher-level
-  Simulation/Rating workflows now consistently consume the shared iterative
-  thermal solution.
-- Scope remains 0D: there is still no condensation or latent modelling, and
-  full local-loss coverage for bends, chambers, ducts, nozzles, transitions,
-  and external pipework is not yet part of the standard calculation.
-- Unimplemented local hydraulic stages remain explicit and non-breaking, and
-  outer tube roughness is stored in geometry but is not yet used by the
-  outside heat-transfer or tube-bank pressure-drop models.
+- Scope remains 0D, with no condensation or latent-heat modelling.
+- Local pressure-drop paths are calculated explicitly and are not included automatically in `solve()`, `simulate()`, or `rate()`.
+- Elbow losses currently require a user-defined `K` or `Le/D`; return chambers, nozzles, and general external pipework remain unsupported.
+- Flat-obstruction losses use a simplified high-Re blockage-based model.
+- Outer tube roughness is stored in geometry but is not yet used in outside heat-transfer or pressure-drop calculations.
 
 ---
 ## [0.4.x] - Property Layer Foundation

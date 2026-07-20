@@ -16,13 +16,13 @@ side are determined entirely by where a geometry object is placed within a
 ``core.geometry.tube_side_pressure_drop_path`` and
 ``core.geometry.outside_pressure_drop_path``).
 
-This module defines geometry only. No pressure-drop calculation is
-implemented here; see ``core.pressure_drop`` for the (currently
-not-implemented) local-loss calculation layer.
+This module defines geometry only. Pressure-drop calculations live in
+``core.pressure_drop`` and are invoked explicitly by the local-path API.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -36,13 +36,117 @@ class FlowSectionShape(str, Enum):
     CUSTOM = "custom"
 
 
+# ---------------------------------------------------------------------------
+# Reusable cross-section geometry (v0.5.6 local pressure-drop paths)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CircularFlowSection:
+    """Circular flow cross-section.
+
+    Exposes ``flow_area``, ``hydraulic_diameter``,
+    ``equivalent_circular_diameter`` and ``section_shape`` consistently with
+    ``RectangularFlowSection``/``CustomFlowSection`` so callers never need to
+    compute area or hydraulic diameter outside the geometry layer.
+    """
+
+    diameter: float
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.diameter) or self.diameter <= 0.0:
+            raise ValueError("CircularFlowSection.diameter must be a positive, finite value.")
+
+    @property
+    def flow_area(self) -> float:
+        return math.pi * self.diameter ** 2 / 4.0
+
+    @property
+    def hydraulic_diameter(self) -> float:
+        return self.diameter
+
+    @property
+    def equivalent_circular_diameter(self) -> float:
+        return self.diameter
+
+    @property
+    def section_shape(self) -> FlowSectionShape:
+        return FlowSectionShape.CIRCULAR
+
+
+@dataclass(frozen=True)
+class RectangularFlowSection:
+    """Rectangular flow cross-section (e.g. duct, plenum opening)."""
+
+    width: float
+    height: float
+
+    def __post_init__(self) -> None:
+        for name, value in (("width", self.width), ("height", self.height)):
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"RectangularFlowSection.{name} must be a positive, finite value.")
+
+    @property
+    def flow_area(self) -> float:
+        return self.width * self.height
+
+    @property
+    def hydraulic_diameter(self) -> float:
+        return 2.0 * self.width * self.height / (self.width + self.height)
+
+    @property
+    def equivalent_circular_diameter(self) -> float:
+        return math.sqrt(4.0 * self.flow_area / math.pi)
+
+    @property
+    def section_shape(self) -> FlowSectionShape:
+        return FlowSectionShape.RECTANGULAR
+
+
+@dataclass(frozen=True)
+class CustomFlowSection:
+    """Explicit, directly-supplied area and hydraulic diameter.
+
+    For sections whose exact shape is not circular or rectangular (e.g. an
+    annulus, or a duct with a known hydraulic diameter from vendor data).
+    """
+
+    area: float
+    hydraulic_diameter: float
+
+    def __post_init__(self) -> None:
+        for name, value in (("area", self.area), ("hydraulic_diameter", self.hydraulic_diameter)):
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"CustomFlowSection.{name} must be a positive, finite value.")
+
+    @property
+    def flow_area(self) -> float:
+        return self.area
+
+    @property
+    def equivalent_circular_diameter(self) -> float:
+        return math.sqrt(4.0 * self.area / math.pi)
+
+    @property
+    def section_shape(self) -> FlowSectionShape:
+        return FlowSectionShape.CUSTOM
+
+
+FlowSectionGeometry = CircularFlowSection | RectangularFlowSection | CustomFlowSection
+"""Union of the supported reusable flow cross-section geometries."""
+
+
 class AreaChangeType(str, Enum):
-    """Geometric family of an area-change (expansion/contraction) stage."""
+    """Geometric family of an area-change (expansion/contraction) stage.
+
+    ``SUDDEN`` uses an implicit 180-degree included angle. ``GRADUAL``
+    covers both conical (circular) and pyramidal (rectangular) transitions:
+    the physical shape distinction does not change the Gibson/Crane
+    correlation used, only the (possibly approximated) included angle -- see
+    ``core.pressure_drop.area_changes``.
+    """
 
     SUDDEN = "sudden"
-    CONICAL = "conical"
-    PYRAMIDAL = "pyramidal"
-    CUSTOM = "custom"
+    GRADUAL = "gradual"
 
 
 class ScreenType(str, Enum):
@@ -75,12 +179,22 @@ class DirectionChangeType(str, Enum):
     CUSTOM = "custom"
 
 
+class PressureDropStageGeometry:
+    """Marker base for geometry accepted in a pressure-drop assembly.
+
+    Correlation-specific geometry classes may live in ``core.pressure_drop``
+    modules, but inherit this common marker so all supported stage types can
+    be carried by ``PressureDropAssemblyGeometry`` without a closed union or
+    a geometry-to-correlation import cycle.
+    """
+
+
 @dataclass(frozen=True)
-class StraightSectionGeometry:
+class StraightSectionGeometry(PressureDropStageGeometry):
     """Straight flow-section geometry (nozzle, duct, header, pipe, ...).
 
-    Pressure-drop calculation for this geometry is not implemented in this
-    commit; see ``core.pressure_drop``.
+    Explicit local-path pressure-drop calculation is implemented in
+    ``core.pressure_drop.straight_sections``.
     """
 
     flow_area: float
@@ -91,36 +205,57 @@ class StraightSectionGeometry:
 
 
 @dataclass(frozen=True)
-class AreaChangeGeometry:
+class AreaChangeGeometry(PressureDropStageGeometry):
     """Area-change (expansion/contraction) geometry.
 
     Direction is inferred from geometry, not declared explicitly:
-    ``downstream_area > upstream_area`` is an expansion/diffuser;
-    ``downstream_area < upstream_area`` is a contraction/confuser. The same
-    geometry represents tube-side nozzle/chamber transitions and
-    outside-side duct/plenum transitions alike.
+    ``downstream_section.flow_area > upstream_section.flow_area`` is an
+    expansion/diffuser; smaller is a contraction/confuser. The same geometry
+    represents tube-side nozzle/chamber transitions and outside-side
+    duct/plenum transitions alike, and either section may be circular,
+    rectangular, or a custom area/hydraulic-diameter pair -- e.g. a circular
+    duct expanding into a rectangular plenum.
 
-    Pressure-drop calculation for this geometry is not implemented in this
-    commit; see ``core.pressure_drop``.
+    Real pressure-drop calculation for this geometry is implemented in
+    ``core.pressure_drop.area_changes.calculate_area_change_pressure_drop``
+    (Gibson/Crane gradual and sudden expansion/contraction correlations).
     """
 
+    upstream_section: FlowSectionGeometry
+    downstream_section: FlowSectionGeometry
     change_type: AreaChangeType
-    upstream_area: float
-    downstream_area: float
     length: float | None = None
     included_angle_deg: float | None = None
 
+    def __post_init__(self) -> None:
+        if self.upstream_section.flow_area == self.downstream_section.flow_area:
+            raise ValueError(
+                "area_change_equal_areas: upstream_section and downstream_section "
+                "have equal flow_area; an area change requires a real area "
+                "difference (use a straight section for an equal-area "
+                "transition)."
+            )
+        if self.length is not None and (not math.isfinite(self.length) or self.length <= 0.0):
+            raise ValueError("AreaChangeGeometry.length must be None or a positive, finite value.")
+        if self.included_angle_deg is not None and (
+            not math.isfinite(self.included_angle_deg)
+            or not (0.0 < self.included_angle_deg <= 180.0)
+        ):
+            raise ValueError(
+                "AreaChangeGeometry.included_angle_deg must be None or within (0, 180]."
+            )
+
     @property
     def is_expansion(self) -> bool:
-        return self.downstream_area > self.upstream_area
+        return self.downstream_section.flow_area > self.upstream_section.flow_area
 
     @property
     def is_contraction(self) -> bool:
-        return self.downstream_area < self.upstream_area
+        return self.downstream_section.flow_area < self.upstream_section.flow_area
 
 
 @dataclass(frozen=True)
-class ScreenGeometry:
+class ScreenGeometry(PressureDropStageGeometry):
     """Screen / opening-array geometry (screen, mesh, perforated plate,
     flow straightener, tube-sheet opening array, parallel tube entrance or
     exit).
@@ -129,8 +264,14 @@ class ScreenGeometry:
     flow area, because screens/opening arrays require different geometric
     descriptors (opening count/diameter, plate thickness, edge treatment).
 
-    Pressure-drop calculation for this geometry is not implemented in this
-    commit; see ``core.pressure_drop``.
+    A geometry-based calculation for this stage is not implemented in this
+    commit. When ``loss_coefficient`` is explicitly supplied, though, it is
+    calculated (not a placeholder): ``dp = loss_coefficient * q``, referenced
+    to the velocity through ``open_flow_area``; see
+    ``core.pressure_drop.screens.calculate_screen_pressure_drop``. A screen
+    with no ``loss_coefficient`` remains ``not_implemented``. For a
+    blockage-only high-Re obstruction (bird net, wire mesh, grille, louver),
+    use ``FlatObstructionGeometry`` instead.
     """
 
     screen_type: ScreenType
@@ -143,9 +284,11 @@ class ScreenGeometry:
     edge_radius: float | None = None
     bevel_angle_deg: float | None = None
 
+    loss_coefficient: float | None = None
+
 
 @dataclass(frozen=True)
-class DirectionChangeGeometry:
+class DirectionChangeGeometry(PressureDropStageGeometry):
     """Direction-change geometry (elbow, miter bend, 180-degree elbow,
     U-bend, or a multi-tube return chamber).
 
@@ -169,7 +312,7 @@ class DirectionChangeGeometry:
 
 
 @dataclass(frozen=True)
-class ChamberGeometry:
+class ChamberGeometry(PressureDropStageGeometry):
     """General chamber/plenum geometry.
 
     A single geometry type covers inlet chambers, outlet chambers, return
@@ -187,32 +330,34 @@ class ChamberGeometry:
 
 
 @dataclass(frozen=True)
-class UserDefinedPressureDropGeometry:
+class UserDefinedPressureDropGeometry(PressureDropStageGeometry):
     """User-supplied pressure-drop stage.
 
-    ``pressure_drop`` (if supplied) is a direct fixed pressure drop and may
-    be reported as a ``user_defined`` calculated stage. ``loss_coefficient``
-    is retained for a future K-to-dp conversion; that conversion is not
-    implemented in this commit, so a stage that only supplies
-    ``loss_coefficient`` (no ``pressure_drop``) is reported as
-    ``not_implemented``.
+    Exactly one of the two following supply modes must be used:
+
+    - ``pressure_drop``: a direct fixed pressure drop, reported verbatim as
+      a ``user_defined`` calculated stage (``dp_irreversible=pressure_drop``,
+      ``delta_dynamic_pressure=0`` and ``dp_static=pressure_drop``).
+    - ``loss_coefficient`` + ``reference_area``: ``dp_irreversible =
+      loss_coefficient * rho * V_ref**2 / 2`` with ``V_ref = mass_flow /
+      (rho * reference_area)`` taken from the calling
+      ``PressureDropFlowState``; see
+      ``core.pressure_drop.screens.calculate_user_defined_pressure_drop``.
+
+    Construction itself stays permissive (a geometry with only
+    ``loss_coefficient`` and no ``reference_area`` may still be built --
+    e.g. while a path is being assembled incrementally); the supply-mode
+    validation above is enforced by
+    ``calculate_user_defined_pressure_drop`` when the stage is actually
+    calculated, not at construction time. A stage supplying neither
+    ``pressure_drop`` nor ``loss_coefficient`` is reported as
+    ``not_implemented`` rather than raising.
     """
 
     pressure_drop: float | None = None
     loss_coefficient: float | None = None
     reference_area: float | None = None
     description: str = ""
-
-
-PressureDropStageGeometry = (
-    StraightSectionGeometry
-    | AreaChangeGeometry
-    | ScreenGeometry
-    | DirectionChangeGeometry
-    | ChamberGeometry
-    | UserDefinedPressureDropGeometry
-)
-"""Union of the supported common pressure-drop stage geometries."""
 
 
 @dataclass(frozen=True)

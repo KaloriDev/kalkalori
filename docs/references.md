@@ -59,6 +59,76 @@ Used for:
 
 ---
 
+## Local Pressure-Drop Fittings (explicit local pressure-drop paths)
+
+- Gibson, A. H.
+  Gradual enlargement and contraction loss-coefficient correlations, as
+  reproduced in Crane TP-410 and standard fluid-mechanics references.
+
+- Borda, J.-C., Carnot, L.
+  Sudden-expansion pressure loss (the limiting case of the Gibson
+  expansion form at a 180-degree included angle).
+
+- Crane Co.
+  *Flow of Fluids Through Valves, Fittings, and Pipe*, Technical Paper
+  No. 410 -- gradual/sudden area changes and the equivalent-length (Le/D)
+  convention for fittings.
+
+- Idelchik, I. E.
+  *Handbook of Hydraulic Resistance* -- high-Reynolds-number
+  screen-equivalent blockage model for flat planar obstructions; general
+  reference for elbow and fitting resistance where an automatic
+  geometry-based correlation is actually implemented.
+
+- Miller, D. S.
+  *Internal Flow Systems* -- elbow/bend loss-coefficient reference
+  (background only; no automatic geometry-based elbow correlation is
+  implemented from this commit's elbow taxonomy -- see the module
+  docstring of `core.pressure_drop.direction_changes`).
+
+- ASHRAE Handbook -- Fundamentals.
+  Duct fitting loss-coefficient conventions (terminology and structure
+  only; the proprietary ASHRAE duct fitting database tables are not
+  reproduced in this repository).
+
+Pressure-result semantics for the explicitly invoked local paths:
+
+- `dp_irreversible` is the non-negative irreversible mechanical-energy loss,
+  equivalently the total-pressure or stagnation-pressure loss. It is the
+  quantity summed as hydraulic resistance.
+- `delta_dynamic_pressure = q_out - q_in`, where `q = rho * V**2 / 2`.
+  This signed quantity is positive for acceleration and negative for
+  deceleration.
+- `dp_static = p_in - p_out = dp_irreversible + delta_dynamic_pressure`.
+  It is a signed static-pressure difference, not an irreversible loss.
+- For a complete explicit path, `dp_core`, `dp_local`, and `dp_total` mean
+  irreversible total-pressure loss in the core, local stages, and their sum,
+  respectively. Dynamic-pressure changes and static-pressure differences are
+  aggregated and reported separately.
+
+A diffuser can therefore have a positive `dp_irreversible` while
+`delta_dynamic_pressure < 0` and `dp_static < 0`. The negative static-pressure
+difference means that static pressure rises through the diffuser; it is
+static-pressure recovery, not negative hydraulic resistance or negative
+total-pressure loss.
+
+The standard `solve()`/`simulate()`/`rate()` workflows do not evaluate
+explicit local-path geometry and continue to report `dp_local = 0`. Their
+legacy tube-bundle and tube-bank static-pressure-difference outputs remain
+numerically unchanged; the separate semantics above apply to the explicit
+path result API.
+
+Used for:
+- straight local-section Darcy-Weisbach pressure drop (nozzles, ducts,
+  headers),
+- gradual/sudden expansion and contraction pressure change,
+- circular and rectangular elbow pressure drop via user-defined K or
+  equivalent-length methods,
+- flat planar obstruction (bird net/wire mesh/grille/louver) pressure drop,
+- user-defined fixed or K-based local losses.
+
+---
+
 ## External Crossflow over Tube Banks
 
 - Incropera, F. P., DeWitt, D. P., Bergman, T. L., Lavine, A. S.  

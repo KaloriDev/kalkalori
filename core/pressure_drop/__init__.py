@@ -14,8 +14,7 @@ Canonical home for tube-side and outside-side pressure-drop code:
   external Euler-number provider.
 - ``flow_path``: generic stage/group/path result structures and the
   functions that aggregate the existing tube-bundle/tube-bank results with
-  (currently unimplemented) local-loss stages into a complete flow-path
-  result.
+  explicitly invoked local-loss stages into a complete flow-path result.
 
 The previous import locations under ``core.heat_transfer`` remain available
 as compatibility re-exports; this package is the single source of truth.
@@ -46,12 +45,33 @@ from .screens import (
     tube_sheet_exit_loss_coefficient,
     calculate_tube_sheet_entrance_loss,
     calculate_tube_sheet_exit_loss,
+    FlatObstructionType,
+    FlatObstructionGeometry,
+    calculate_flat_obstruction_pressure_drop,
+    calculate_screen_pressure_drop,
+    calculate_user_defined_pressure_drop,
 )
 
 from .straight_sections import (
     friction_factor_smooth,
     darcy_friction_factor,
     darcy_friction_factor_method,
+    calculate_straight_section_pressure_drop,
+)
+
+from .area_changes import (
+    calculate_area_change_pressure_drop,
+)
+
+from .direction_changes import (
+    ElbowCrossSection,
+    ElbowConstruction,
+    RectangularTurnPlane,
+    DirectionChangeMethod,
+    CircularElbowGeometry,
+    RectangularElbowGeometry,
+    calculate_circular_elbow_pressure_drop,
+    calculate_rectangular_elbow_pressure_drop,
 )
 
 from .outside_pressure_drop import (
@@ -72,12 +92,18 @@ from .outside_pressure_drop_external import (
 )
 
 from .flow_path import (
+    PressureDropFlowState,
+    SectionFlowResult,
+    evaluate_section_flow,
     PressureDropStageStatus,
     PressureDropStageResult,
     PressureDropStageGroupResult,
     PressureDropPathResult,
     build_tube_side_pressure_drop_result,
     build_outside_pressure_drop_result,
+    calculate_pressure_drop_assembly,
+    calculate_tube_side_pressure_drop_path,
+    calculate_outside_pressure_drop_path,
 )
 
 __all__ = [
@@ -104,10 +130,33 @@ __all__ = [
     "calculate_tube_sheet_entrance_loss",
     "calculate_tube_sheet_exit_loss",
 
-    # Straight circular-section friction factor (straight_sections.py)
+    # Flat planar obstructions, general screens, and user-defined local
+    # losses (screens.py; v0.5.6 local pressure-drop paths)
+    "FlatObstructionType",
+    "FlatObstructionGeometry",
+    "calculate_flat_obstruction_pressure_drop",
+    "calculate_screen_pressure_drop",
+    "calculate_user_defined_pressure_drop",
+
+    # Straight circular-section friction factor and local pressure drop
+    # (straight_sections.py)
     "friction_factor_smooth",
     "darcy_friction_factor",
     "darcy_friction_factor_method",
+    "calculate_straight_section_pressure_drop",
+
+    # Area-change (expansion/contraction) local pressure drop (area_changes.py)
+    "calculate_area_change_pressure_drop",
+
+    # Elbow/bend local pressure drop (direction_changes.py)
+    "ElbowCrossSection",
+    "ElbowConstruction",
+    "RectangularTurnPlane",
+    "DirectionChangeMethod",
+    "CircularElbowGeometry",
+    "RectangularElbowGeometry",
+    "calculate_circular_elbow_pressure_drop",
+    "calculate_rectangular_elbow_pressure_drop",
 
     # Outside pressure drop
     "Layout",
@@ -124,6 +173,12 @@ __all__ = [
     # Outside pressure drop external adapter
     "ExternalCliEulerProvider",
 
+    # Explicit pressure-drop flow state and reusable section-flow helpers
+    # (flow_path.py; v0.5.6 local pressure-drop paths)
+    "PressureDropFlowState",
+    "SectionFlowResult",
+    "evaluate_section_flow",
+
     # Flow-path stage/group/path result structures and aggregation
     "PressureDropStageStatus",
     "PressureDropStageResult",
@@ -131,4 +186,10 @@ __all__ = [
     "PressureDropPathResult",
     "build_tube_side_pressure_drop_result",
     "build_outside_pressure_drop_result",
+
+    # Generic and side-specific explicit local-loss calculation (v0.5.6
+    # local pressure-drop paths; never invoked by the standard solver)
+    "calculate_pressure_drop_assembly",
+    "calculate_tube_side_pressure_drop_path",
+    "calculate_outside_pressure_drop_path",
 ]

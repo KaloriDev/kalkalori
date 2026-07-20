@@ -606,10 +606,11 @@ def run_simulation(
             tube_bank=outside_bank_hydraulic,
         )
         # Refresh the pressure-drop flow-path aggregation to match the
-        # refreshed hydraulic snapshots (dp_core must track tube_bundle/
-        # tube_bank exactly). No specified local-loss path is threaded
-        # through Simulation in this commit, so this is always the
-        # core-only aggregation (dp_local=0).
+        # refreshed hydraulic snapshots. The path result decomposes each
+        # legacy signed core pressure difference into irreversible loss and
+        # dynamic-pressure change. No specified local-loss path is threaded
+        # through Simulation in this commit, so this is always core-only
+        # aggregation (dp_local=0).
         tube_side_pressure_drop = replace(
             result.tube_side_pressure_drop,
             tube_bundle=bundle_hydraulic,

@@ -22,6 +22,7 @@ from core.geometry.pressure_drop_stages import (
     AreaChangeGeometry,
     AreaChangeType,
     ChamberGeometry,
+    CircularFlowSection,
     DirectionChangeGeometry,
     DirectionChangeType,
     PressureDropAssemblyGeometry,
@@ -48,6 +49,13 @@ from core.pressure_drop.flow_path import (
     build_tube_side_pressure_drop_result,
 )
 from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
+from core.pressure_drop.direction_changes import (
+    CircularElbowGeometry,
+    ElbowConstruction,
+    RectangularElbowGeometry,
+    RectangularTurnPlane,
+)
+from core.pressure_drop.screens import FlatObstructionGeometry
 from core.properties.common import FluidTransportProperties
 
 
@@ -65,18 +73,36 @@ def _bundle(n_passes_tube: int = 1) -> TubeBundle:
     )
 
 
-def _tube_bundle_result(bundle: TubeBundle):
+def _tube_bundle_result(bundle: TubeBundle, *, variable_density: bool = False):
+    point_props = (
+        {
+            "inlet_props": _props(1000.0),
+            "midpoint_props": _props(900.0),
+            "outlet_props": _props(800.0),
+        }
+        if variable_density
+        else {"inlet_props": _props(1000.0)}
+    )
     return calculate_tube_bundle_hydraulics(
         m_dot=1.0,
         flow_area_per_pass=bundle.internal_flow_area_per_pass,
         hydraulic_diameter=bundle.internal_hydraulic_diameter,
         hydraulic_length_total=bundle.internal_length_total,
         n_tube_passes=bundle.n_passes_tube,
-        inlet_props=_props(1000.0),
+        **point_props,
     )
 
 
-def _tube_bank_result(bundle: TubeBundle):
+def _tube_bank_result(bundle: TubeBundle, *, variable_density: bool = False):
+    point_props = (
+        {
+            "inlet_props": _props(1.2, mu=1.8e-5, k=0.026, cp=1006.0),
+            "midpoint_props": _props(1.1, mu=1.8e-5, k=0.026, cp=1006.0),
+            "outlet_props": _props(1.0, mu=1.8e-5, k=0.026, cp=1006.0),
+        }
+        if variable_density
+        else {"inlet_props": _props(1.2, mu=1.8e-5, k=0.026, cp=1006.0)}
+    )
     return calculate_outside_tube_bank_hydraulics(
         m_dot=1.0,
         face_area=bundle.frontal_flow_area,
@@ -86,7 +112,7 @@ def _tube_bank_result(bundle: TubeBundle):
         layout=bundle.layout,
         n_rows=bundle.n_rows,
         n_tubes_per_row=bundle.n_tubes_per_row,
-        inlet_props=_props(1.2, mu=1.8e-5, k=0.026, cp=1006.0),
+        **point_props,
     )
 
 
@@ -150,7 +176,7 @@ def test_legacy_imports_resolve_to_same_implementation_objects() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 18.2 Numerical regression (dp_core == dp_tube_bundle/dp_tube_bank, dp_local == 0)
+# 18.2 Numerical regression and core semantic mapping
 # ---------------------------------------------------------------------------
 
 def test_tube_side_numerical_regression_against_v055_scope() -> None:
@@ -167,10 +193,25 @@ def test_tube_side_numerical_regression_against_v055_scope() -> None:
         outside_temperature_in=300.0, outside_temperature_out=310.0, outside_pressure=101325.0,
     )
     dp = result.tube_side_pressure_drop
-    assert dp.dp_core == result.inside_dp_tube_bundle
+    tube_bundle = result.tube_bundle_hydraulic
+    expected_irreversible = (
+        tube_bundle.dp_straight_tube_friction
+        + tube_bundle.dp_tube_entrances
+        + tube_bundle.dp_tube_exits
+    )
+    assert dp.dp_core == pytest.approx(expected_irreversible)
     assert dp.dp_local == 0.0
-    assert dp.dp_total == result.inside_dp_total
+    assert dp.delta_dynamic_pressure_core == pytest.approx(
+        tube_bundle.dp_straight_tube_acceleration
+    )
+    assert dp.delta_dynamic_pressure_local == 0.0
+    assert dp.dp_static_core == pytest.approx(result.inside_dp_tube_bundle)
+    assert dp.dp_static_local == 0.0
+    assert dp.dp_static_total == pytest.approx(result.inside_dp_total)
     assert dp.dp_total == dp.dp_core + dp.dp_local
+    # Legacy standard-solver result remains the signed core pressure
+    # difference and is unchanged by the explicit-path semantic correction.
+    assert result.inside_dp_total == result.inside_dp_tube_bundle
 
 
 def test_outside_numerical_regression_against_v055_scope() -> None:
@@ -187,10 +228,54 @@ def test_outside_numerical_regression_against_v055_scope() -> None:
         outside_temperature_in=300.0, outside_temperature_out=310.0, outside_pressure=101325.0,
     )
     dp = result.outside_side_pressure_drop
-    assert dp.dp_core == result.outside_dp_total
+    tube_bank = result.outside_tube_bank_hydraulic
+    assert tube_bank is not None
+    assert dp.dp_core == pytest.approx(tube_bank.dp_drag)
     assert dp.dp_local == 0.0
-    assert dp.dp_total == result.outside_dp_total
+    assert dp.delta_dynamic_pressure_core == pytest.approx(tube_bank.dp_acceleration)
+    assert dp.delta_dynamic_pressure_local == 0.0
+    assert dp.dp_static_core == pytest.approx(tube_bank.dp_total)
+    assert dp.dp_static_local == 0.0
+    assert dp.dp_static_total == pytest.approx(result.outside_dp_total)
     assert dp.dp_total == dp.dp_core + dp.dp_local
+    assert result.outside_dp_total == tube_bank.dp_total
+
+
+def test_tube_side_core_mapping_preserves_nonzero_acceleration_separately() -> None:
+    bundle = _bundle(n_passes_tube=1)
+    tube_bundle = _tube_bundle_result(bundle, variable_density=True)
+    result = build_tube_side_pressure_drop_result(
+        tube_bundle, n_tube_passes=bundle.n_passes_tube,
+    )
+    expected_irreversible = (
+        tube_bundle.dp_straight_tube_friction
+        + tube_bundle.dp_tube_entrances
+        + tube_bundle.dp_tube_exits
+    )
+
+    assert tube_bundle.dp_straight_tube_acceleration != 0.0
+    assert result.dp_core == pytest.approx(expected_irreversible)
+    assert result.delta_dynamic_pressure_core == pytest.approx(
+        tube_bundle.dp_straight_tube_acceleration
+    )
+    assert result.dp_static_core == pytest.approx(tube_bundle.dp_tube_bundle)
+    assert result.dp_total == pytest.approx(expected_irreversible)
+    assert result.dp_static_total == pytest.approx(tube_bundle.dp_tube_bundle)
+    assert result.dp_core != pytest.approx(result.dp_static_core)
+
+
+def test_outside_core_mapping_preserves_nonzero_acceleration_separately() -> None:
+    bundle = _bundle(n_passes_tube=1)
+    tube_bank = _tube_bank_result(bundle, variable_density=True)
+    result = build_outside_pressure_drop_result(tube_bank)
+
+    assert tube_bank.dp_acceleration != 0.0
+    assert result.dp_core == pytest.approx(tube_bank.dp_drag)
+    assert result.delta_dynamic_pressure_core == pytest.approx(tube_bank.dp_acceleration)
+    assert result.dp_static_core == pytest.approx(tube_bank.dp_total)
+    assert result.dp_total == pytest.approx(tube_bank.dp_drag)
+    assert result.dp_static_total == pytest.approx(tube_bank.dp_total)
+    assert result.dp_core != pytest.approx(result.dp_static_core)
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +320,32 @@ def test_representative_local_stages_are_not_implemented_and_zero() -> None:
     bundle = _bundle(n_passes_tube=1)
     inlet = PressureDropAssemblyGeometry(stages=(
         StraightSectionGeometry(flow_area=0.01, hydraulic_diameter=0.1, length=0.5),
-        AreaChangeGeometry(change_type=AreaChangeType.CONICAL, upstream_area=0.02, downstream_area=0.01),
+        AreaChangeGeometry(
+            change_type=AreaChangeType.SUDDEN,
+            upstream_section=CircularFlowSection(diameter=0.16),
+            downstream_section=CircularFlowSection(diameter=0.113),
+        ),
         ScreenGeometry(screen_type=ScreenType.SCREEN, upstream_area=0.02, open_flow_area=0.015),
         DirectionChangeGeometry(change_type=DirectionChangeType.ELBOW, angle_deg=90.0),
         ChamberGeometry(flow_area=0.03),
+        CircularElbowGeometry(
+            diameter=0.1,
+            angle_deg=90.0,
+            construction=ElbowConstruction.SMOOTH_RADIUS,
+            centerline_radius=0.15,
+        ),
+        RectangularElbowGeometry(
+            width=0.2,
+            height=0.1,
+            turn_plane=RectangularTurnPlane.WIDTH,
+            angle_deg=90.0,
+            construction=ElbowConstruction.SMOOTH_RADIUS,
+            centerline_radius=0.3,
+        ),
+        FlatObstructionGeometry(
+            face_section=CircularFlowSection(diameter=0.16),
+            blockage_ratio=0.2,
+        ),
     ))
     outlet = PressureDropAssemblyGeometry(stages=())
     path = SpecifiedTubeSidePressureDropPath(inlet=inlet, returns=(), outlet=outlet)
@@ -248,12 +355,12 @@ def test_representative_local_stages_are_not_implemented_and_zero() -> None:
     )
     inlet_group = result.group("inlet")
     assert inlet_group is not None
-    assert len(inlet_group.stages) == 5
+    assert len(inlet_group.stages) == 8
     for stage in inlet_group.stages:
         assert stage.status == PressureDropStageStatus.NOT_IMPLEMENTED
         assert stage.dp_irreversible == 0.0
-        assert stage.dp_acceleration == 0.0
-        assert stage.dp_total == 0.0
+        assert stage.delta_dynamic_pressure == 0.0
+        assert stage.dp_static == 0.0
         assert stage.method is None
         assert len(stage.warnings) == 1
     # Placeholder stages must not leak non-zero pressure drop into dp_local.
@@ -276,14 +383,43 @@ def test_user_defined_fixed_dp_is_calculated_not_placeholder() -> None:
     )
     inlet_stage = result.group("inlet").stages[0]
     assert inlet_stage.status == PressureDropStageStatus.USER_DEFINED
-    assert inlet_stage.dp_total == 250.0
+    assert inlet_stage.dp_irreversible == 250.0
+    assert inlet_stage.delta_dynamic_pressure == 0.0
+    assert inlet_stage.dp_static == 250.0
 
     outlet_stage = result.group("outlet").stages[0]
     assert outlet_stage.status == PressureDropStageStatus.NOT_IMPLEMENTED
-    assert outlet_stage.dp_total == 0.0
+    assert outlet_stage.dp_irreversible == 0.0
+    assert outlet_stage.delta_dynamic_pressure == 0.0
+    assert outlet_stage.dp_static == 0.0
 
     assert result.dp_local == 250.0
+    assert result.delta_dynamic_pressure_local == 0.0
+    assert result.dp_static_local == 250.0
     assert result.dp_total == result.dp_core + 250.0
+
+
+def test_geometry_only_user_defined_stage_rejects_ambiguous_modes() -> None:
+    bundle = _bundle(n_passes_tube=1)
+    ambiguous = PressureDropAssemblyGeometry(stages=(
+        UserDefinedPressureDropGeometry(
+            pressure_drop=25.0,
+            loss_coefficient=0.5,
+            reference_area=0.02,
+        ),
+    ))
+    path = SpecifiedTubeSidePressureDropPath(
+        inlet=ambiguous,
+        returns=(),
+        outlet=PressureDropAssemblyGeometry(stages=()),
+    )
+
+    with pytest.raises(ValueError, match="user_defined_pressure_drop_ambiguous"):
+        build_tube_side_pressure_drop_result(
+            _tube_bundle_result(bundle),
+            n_tube_passes=bundle.n_passes_tube,
+            path=path,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -323,18 +459,33 @@ def test_missing_tube_side_path_still_succeeds_with_v055_values() -> None:
     result = build_tube_side_pressure_drop_result(
         tube_bundle_result, n_tube_passes=bundle.n_passes_tube,
     )
-    assert result.dp_core == tube_bundle_result.dp_tube_bundle
+    expected_irreversible = (
+        tube_bundle_result.dp_straight_tube_friction
+        + tube_bundle_result.dp_tube_entrances
+        + tube_bundle_result.dp_tube_exits
+    )
+    assert result.dp_core == pytest.approx(expected_irreversible)
     assert result.dp_local == 0.0
-    assert result.dp_total == tube_bundle_result.dp_tube_bundle
+    assert result.delta_dynamic_pressure_core == pytest.approx(
+        tube_bundle_result.dp_straight_tube_acceleration
+    )
+    assert result.delta_dynamic_pressure_local == 0.0
+    assert result.dp_total == pytest.approx(expected_irreversible)
+    assert result.dp_static_total == pytest.approx(tube_bundle_result.dp_tube_bundle)
 
 
 def test_missing_outside_path_still_succeeds_with_v055_values() -> None:
     bundle = _bundle(n_passes_tube=1)
     tube_bank_result = _tube_bank_result(bundle)
     result = build_outside_pressure_drop_result(tube_bank_result)
-    assert result.dp_core == tube_bank_result.dp_total
+    assert result.dp_core == pytest.approx(tube_bank_result.dp_drag)
     assert result.dp_local == 0.0
-    assert result.dp_total == tube_bank_result.dp_total
+    assert result.delta_dynamic_pressure_core == pytest.approx(
+        tube_bank_result.dp_acceleration
+    )
+    assert result.delta_dynamic_pressure_local == 0.0
+    assert result.dp_total == pytest.approx(tube_bank_result.dp_drag)
+    assert result.dp_static_total == pytest.approx(tube_bank_result.dp_total)
 
 
 def test_outside_not_specified_produces_nan_core_not_a_crash() -> None:
@@ -342,7 +493,13 @@ def test_outside_not_specified_produces_nan_core_not_a_crash() -> None:
     assert result.groups == ()
     assert math.isnan(result.dp_core)
     assert result.dp_local == 0.0
+    assert math.isnan(result.delta_dynamic_pressure_core)
+    assert result.delta_dynamic_pressure_local == 0.0
     assert math.isnan(result.dp_total)
+    assert math.isnan(result.delta_dynamic_pressure_total)
+    assert math.isnan(result.dp_static_core)
+    assert result.dp_static_local == 0.0
+    assert math.isnan(result.dp_static_total)
 
 
 # ---------------------------------------------------------------------------

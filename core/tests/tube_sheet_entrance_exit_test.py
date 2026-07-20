@@ -306,9 +306,21 @@ def test_result_aggregation_dp_core_local_total() -> None:
     assert tube_bundle.dp_tube_bundle == tube_bundle.dp_straight_tubes + tube_bundle.dp_tube_entrances + tube_bundle.dp_tube_exits
 
     dp = result.tube_side_pressure_drop
-    assert dp.dp_core == result.inside_dp_tube_bundle
+    expected_irreversible = (
+        tube_bundle.dp_straight_tube_friction
+        + tube_bundle.dp_tube_entrances
+        + tube_bundle.dp_tube_exits
+    )
+    assert dp.dp_core == pytest.approx(expected_irreversible)
     assert dp.dp_local == 0.0
-    assert dp.dp_total == tube_bundle.dp_tube_bundle
+    assert dp.delta_dynamic_pressure_core == pytest.approx(
+        tube_bundle.dp_straight_tube_acceleration
+    )
+    assert dp.delta_dynamic_pressure_local == 0.0
+    assert dp.dp_total == pytest.approx(expected_irreversible)
+    assert dp.dp_static_core == pytest.approx(tube_bundle.dp_tube_bundle)
+    assert dp.dp_static_local == 0.0
+    assert dp.dp_static_total == pytest.approx(tube_bundle.dp_tube_bundle)
     assert result.inside_dp_total == result.inside_dp_tube_bundle
 
 
@@ -330,20 +342,39 @@ def test_simulate_and_rate_return_updated_tube_bundle_result_without_a_path() ->
     outside = HXSideInput(provider=outside_provider, m_dot=2.0, T_in=300.0, p=101325.0)
     simulated = hx.simulate(inside, outside, max_iter=5)
 
-    assert simulated.entrance_count == 2
-    assert simulated.exit_count == 2
-    assert simulated.inside_dp_tube_bundle == simulated.inside_dp_straight_tubes + simulated.inside_dp_tube_entrances + simulated.inside_dp_tube_exits
-    assert simulated.inside_dp_total == simulated.inside_dp_tube_bundle
-
     rating = hx.rate(
         BalanceSideSpec(provider=provider, m_dot=1.0, p=101325.0, T_in=350.0, T_out=340.0),
         BalanceSideSpec(provider=outside_provider, m_dot=2.0, p=101325.0, T_in=300.0, T_out=310.0),
         Q=1000.0,
     )
-    assert rating.entrance_count == 2
-    assert rating.exit_count == 2
-    assert rating.inside_dp_tube_bundle == rating.inside_dp_straight_tubes + rating.inside_dp_tube_entrances + rating.inside_dp_tube_exits
-    assert rating.inside_dp_total == rating.inside_dp_tube_bundle
+
+    for result in (simulated, rating):
+        assert result.entrance_count == 2
+        assert result.exit_count == 2
+        assert result.inside_dp_tube_bundle == (
+            result.inside_dp_straight_tubes
+            + result.inside_dp_tube_entrances
+            + result.inside_dp_tube_exits
+        )
+        # Preserve the established standard-solver signed core result.
+        assert result.inside_dp_total == result.inside_dp_tube_bundle
+
+        path = result.tube_side_pressure_drop
+        expected_irreversible = (
+            result.inside_dp_straight_tube_friction
+            + result.inside_dp_tube_entrances
+            + result.inside_dp_tube_exits
+        )
+        assert path.dp_core == pytest.approx(expected_irreversible)
+        assert path.dp_local == 0.0
+        assert path.dp_total == pytest.approx(expected_irreversible)
+        assert path.delta_dynamic_pressure_core == pytest.approx(
+            result.inside_dp_straight_tube_acceleration
+        )
+        assert path.delta_dynamic_pressure_local == 0.0
+        assert path.dp_static_core == pytest.approx(result.inside_dp_tube_bundle)
+        assert path.dp_static_local == 0.0
+        assert path.dp_static_total == pytest.approx(result.inside_dp_total)
 
 
 # ---------------------------------------------------------------------------

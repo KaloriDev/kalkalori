@@ -41,6 +41,11 @@ Literature references
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.geometry.pressure_drop_stages import StraightSectionGeometry
+    from core.pressure_drop.flow_path import PressureDropFlowState, PressureDropStageResult
 
 #: Convergence tolerance on the Colebrook-White fixed-point variable
 #: ``x = 1/sqrt(f)`` (dimensionless). Iteration stops once successive
@@ -172,3 +177,59 @@ def darcy_friction_factor(
     if method == "petukhov_smooth":
         return friction_factor_smooth(Re)
     return _colebrook_white(Re, relative_roughness)
+
+
+def calculate_straight_section_pressure_drop(
+    *,
+    geometry: "StraightSectionGeometry",
+    state: "PressureDropFlowState",
+    stage_id: str,
+) -> "PressureDropStageResult":
+    """
+    Explicit local-pressure-drop straight constant-area section
+    (nozzle/duct/header run, etc.), Darcy-Weisbach:
+
+        dp_irreversible = f_D * L / D_h * rho * V**2 / 2
+
+    Uses the canonical ``darcy_friction_factor`` above (same friction-factor
+    physics as the tube-side straight-tube-bundle calculation, applied here
+    to an explicitly invoked local straight section). An equal-area section
+    has no dynamic-pressure change (``delta_dynamic_pressure = 0``).
+
+    Local import of ``core.pressure_drop.flow_path`` avoids a circular
+    import: ``flow_path`` imports ``internal_pressure_drop``, which imports
+    this module, at module load time.
+    """
+    from core.pressure_drop.flow_path import (
+        PressureDropStageResult,
+        PressureDropStageStatus,
+        evaluate_section_flow,
+    )
+
+    flow = evaluate_section_flow(state, geometry)
+    relative_roughness = geometry.roughness / geometry.hydraulic_diameter
+    method = darcy_friction_factor_method(flow.reynolds, relative_roughness)
+    f = darcy_friction_factor(flow.reynolds, relative_roughness)
+
+    dp_irreversible = f * geometry.length / geometry.hydraulic_diameter * flow.dynamic_pressure
+
+    return PressureDropStageResult(
+        stage_id=stage_id,
+        stage_type="straight_section",
+        status=PressureDropStageStatus.CALCULATED,
+        dp_irreversible=dp_irreversible,
+        delta_dynamic_pressure=0.0,
+        method="darcy_weisbach",
+        warnings=(),
+        reference_area=geometry.flow_area,
+        reference_velocity=flow.velocity,
+        reference_dynamic_pressure=flow.dynamic_pressure,
+        upstream_area=geometry.flow_area,
+        downstream_area=geometry.flow_area,
+        upstream_velocity=flow.velocity,
+        downstream_velocity=flow.velocity,
+        reynolds=flow.reynolds,
+        friction_factor=f,
+        friction_factor_method=method,
+        relative_roughness=relative_roughness,
+    )
