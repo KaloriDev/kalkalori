@@ -38,8 +38,10 @@ import math
 from dataclasses import replace
 
 from core.common.warnings import ModelWarning, make_warning
+from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide, close_heat_balance
 from core.models.rating import run_rating
+from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 
 from core.phase_change import warning_codes as WC
 from core.phase_change.capability import detect_phase_change_capability
@@ -110,10 +112,12 @@ def apply_phase_change_to_rating(
             inside_phase_change=_build_capability_side_result(
                 side="inside", mode=inside.phase_change_mode, capability=inside_capability,
                 possible=False, near_onset=False, dew_point=None, p=inside.p,
+                m_dot_gas=inside.m_dot,
             ),
             outside_phase_change=_build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=False, near_onset=False, dew_point=None, p=outside.p,
+                m_dot_gas=outside.m_dot,
             ),
         )
 
@@ -152,6 +156,7 @@ def apply_phase_change_to_rating(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability,
         possible=inside_possible, near_onset=inside_near_onset,
         dew_point=inside_dew_point, p=inside.p,
+        m_dot_gas=inside.m_dot,
         onset=inside_onset, wall_temperature_min=inside_wall_min,
         wall_temperature_mean=inside_wall_mean, wall_temperature_max=inside_wall_max,
     )
@@ -161,6 +166,7 @@ def apply_phase_change_to_rating(
             side="outside", mode=outside.phase_change_mode, capability=outside_capability,
             possible=outside_possible, near_onset=outside_near_onset,
             dew_point=outside_dew_point, p=outside.p,
+            m_dot_gas=outside.m_dot,
             onset=outside_onset, wall_temperature_min=outside_wall_min,
             wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
         )
@@ -289,6 +295,58 @@ def apply_phase_change_to_rating(
         relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
     )
 
+    # ``run_rating`` intentionally uses the representative W_mean provider
+    # for its 0D thermal calculation. Refresh only its existing outside
+    # hydraulic snapshot so the public point diagnostics retain the real wet
+    # endpoints: W_in/inlet gas flow, W_mean/mean gas flow, and W_out/outlet
+    # gas flow. This mirrors Simulation and does not introduce a second state
+    # model or change the condensation/Rating equations.
+    m_dot_gas_mean = m_dot_dry_carrier * (1.0 + W_mean)
+    m_dot_gas_out = m_dot_dry_carrier + m_dot_water_vapor_out
+    outside_provider_inlet = wet_gas_provider_at_water_ratio(outside_capability, W_in)
+    outside_provider_outlet = wet_gas_provider_at_water_ratio(outside_capability, W_out)
+    T_mean_outside = 0.5 * (outside.T_in + outside.T_out)
+    outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+        m_dot=m_dot_gas_mean,
+        face_area=hx.bundle.frontal_flow_area,
+        tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
+        tube_pitch_transverse=hx.bundle.pitch_transverse,
+        tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
+        layout=hx.bundle.layout,
+        n_rows=hx.bundle.n_rows,
+        n_tubes_per_row=hx.bundle.n_tubes_per_row,
+        inlet_props=outside_provider_inlet.at(T=outside.T_in, p=outside.p),
+        midpoint_props=outside_provider_mean.at(T=T_mean_outside, p=outside.p),
+        outlet_props=outside_provider_outlet.at(T=outside.T_out, p=outside.p),
+        temperature_in=outside.T_in,
+        temperature_out=outside.T_out,
+        pressure=outside.p,
+        euler_provider=euler_provider,
+        m_dot_inlet=outside.m_dot,
+        m_dot_midpoint=m_dot_gas_mean,
+        m_dot_outlet=m_dot_gas_out,
+    )
+    outside_bank_hydraulic = replace(
+        outside_bank_hydraulic,
+        midpoint_method="arithmetic_temperature_and_water_ratio",
+    )
+    wet_final_result = replace(
+        wet_rating_result.final_result,
+        outside_side_hydraulic=replace(
+            wet_rating_result.final_result.outside_side_hydraulic,
+            dp_total=outside_bank_hydraulic.dp_total,
+            Re=outside_bank_hydraulic.midpoint.reynolds,
+            v=outside_bank_hydraulic.midpoint.face_velocity,
+            tube_bank=outside_bank_hydraulic,
+        ),
+        outside_side_pressure_drop=replace(
+            wet_rating_result.final_result.outside_side_pressure_drop,
+            tube_bank=outside_bank_hydraulic,
+            flow_path=build_outside_pressure_drop_result(outside_bank_hydraulic),
+        ),
+    )
+    wet_rating_result = replace(wet_rating_result, final_result=wet_final_result)
+
     h_fg_representative = water_latent_heat_of_vaporization(T=T_representative)
     Q_latent = m_dot_condensate * h_fg_representative
     Q_sensible = Q_required - Q_latent
@@ -308,7 +366,6 @@ def apply_phase_change_to_rating(
 
     alfa_o_dry = wet_rating_result.alfa_o
     T_wall_outside_repr = wet_rating_result.thermal_state.outside_wall_temperature
-    T_mean_outside = 0.5 * (outside.T_in + outside.T_out)
     delta_T_film = T_mean_outside - T_wall_outside_repr
     if abs(delta_T_film) < 1e-3:
         alfa_o_effective = alfa_o_dry
@@ -374,7 +431,7 @@ def apply_phase_change_to_rating(
         m_dot_water_vapor_out=m_dot_water_vapor_out,
         m_dot_condensate=m_dot_condensate,
         m_dot_gas_in=outside.m_dot,
-        m_dot_gas_out=m_dot_dry_carrier + m_dot_water_vapor_out,
+        m_dot_gas_out=m_dot_gas_out,
         dew_point_in=outside_dew_point,
         dew_point_out=_dew_point_at_ratio(outside_capability, W_out, p=outside.p),
         wall_temperature_mean=T_wall_outside_repr,

@@ -57,6 +57,8 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - signed inlet-to-outlet acceleration pressure change
 - Outside reference-velocity, Euler-number, and inlet/midpoint/outlet
   hydraulic diagnostics
+- Public inside/outside inlet, midpoint, and outlet fluid-property
+  diagnostics on `HXResult`, `HXSimulationResult`, and `HXRatingResult`
 - Explicit geometry modelling:
   - tube dimensions
   - effective vs total length

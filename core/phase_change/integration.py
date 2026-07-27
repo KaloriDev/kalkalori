@@ -319,6 +319,7 @@ def apply_phase_change(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability,
         possible=inside_possible, near_onset=inside_near_onset,
         dew_point=inside_dew_point, p=inside.p,
+        m_dot_gas=inside.m_dot,
         onset=inside_onset, wall_temperature_min=inside_wall_min,
         wall_temperature_mean=inside_wall_mean, wall_temperature_max=inside_wall_max,
     )
@@ -328,6 +329,7 @@ def apply_phase_change(
             side="outside", mode=outside.phase_change_mode, capability=outside_capability,
             possible=outside_possible, near_onset=outside_near_onset,
             dew_point=outside_dew_point, p=outside.p,
+            m_dot_gas=outside.m_dot,
             onset=outside_onset, wall_temperature_min=outside_wall_min,
             wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
         )
@@ -342,6 +344,7 @@ def apply_phase_change(
             _build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=True, near_onset=False, dew_point=None, p=outside.p,
+                m_dot_gas=outside.m_dot,
                 onset=outside_onset, wall_temperature_min=outside_wall_min,
                 wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
             ),
@@ -394,6 +397,7 @@ def apply_phase_change(
             _build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=True, near_onset=False, dew_point=outside_dew_point, p=outside.p,
+                m_dot_gas=outside.m_dot,
                 onset=outside_onset, wall_temperature_min=outside_wall_min,
                 wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
             ),
@@ -552,8 +556,19 @@ def apply_phase_change(
     T_mean_inside = mean_temperature(inside.T_in, solution.T_out_inside)
     T_mean_outside = mean_temperature(outside.T_in, solution.T_out_outside)
 
+    W_mean = 0.5 * (outside_capability.W_in + solution.W_out)
+    outside_provider_inlet = wet_gas_provider_at_water_ratio(
+        outside_capability, outside_capability.W_in
+    )
     outside_provider_final = wet_gas_provider_at_water_ratio(
-        outside_capability, 0.5 * (outside_capability.W_in + solution.W_out)
+        outside_capability, W_mean
+    )
+    outside_provider_outlet = wet_gas_provider_at_water_ratio(
+        outside_capability, solution.W_out
+    )
+    outside_props_inlet = outside_provider_inlet.at(T=outside.T_in, p=outside.p)
+    outside_props_outlet = outside_provider_outlet.at(
+        T=solution.T_out_outside, p=outside.p
     )
 
     # hot_stream/cold_stream only feed this snapshot's OWN (non-authoritative,
@@ -569,9 +584,7 @@ def apply_phase_change(
         C=inside.m_dot * solution.inside_bulk_props.cp, T_in=inside.T_in
     )
     outside_stream = SensibleHeatStream(
-        C=m_dot_dry_carrier
-        * (1.0 + 0.5 * (outside_capability.W_in + solution.W_out))
-        * solution.outside_bulk_props.cp,
+        C=m_dot_dry_carrier * (1.0 + W_mean) * solution.outside_bulk_props.cp,
         T_in=outside.T_in,
     )
     hot_stream, cold_stream = (
@@ -587,7 +600,7 @@ def apply_phase_change(
         tube_side_temperature_in=inside.T_in,
         tube_side_temperature_out=solution.T_out_inside,
         tube_side_pressure=inside.p,
-        m_dot_outside=m_dot_dry_carrier * (1.0 + 0.5 * (outside_capability.W_in + solution.W_out)),
+        m_dot_outside=m_dot_dry_carrier * (1.0 + W_mean),
         outside_props=to_outside_fluid_props(solution.outside_bulk_props),
         outside_provider=outside_provider_final,
         outside_temperature_in=outside.T_in,
@@ -597,22 +610,19 @@ def apply_phase_change(
         euler_provider=euler_provider,
     )
 
-    # Refresh the outside hydraulic snapshot using the actual inlet/outlet
-    # *gas-phase* mass flow (spec section 29): m_dot_gas_in > m_dot_gas_out
-    # once condensate has been removed. Reynolds/Euler-provider dispatch and
-    # the drag integral keep using the bulk-mean reference mass flow (same
-    # convention as the dry driver); only the reported per-point face
-    # velocity/flux and the signed acceleration term reflect the remaining
-    # gas phase at each end -- the condensate is never added to this
-    # gas-phase basis. Mirrors the same hydraulics-refresh pattern
-    # ``core.models.simulation.run_simulation`` already uses after its own
-    # thermal pass determines the actual outlet temperature.
+    # Refresh the outside hydraulic snapshot using the exact wet states
+    # already established by the coupled solve: W_in at inlet, arithmetic
+    # (T, W) means at midpoint, and W_out at outlet. The midpoint transport
+    # properties are the wet solver's own final bulk properties rather than
+    # a presentation-layer re-evaluation. Actual per-point gas-phase mass
+    # flow is used for the reported face flux and signed acceleration term;
+    # drag/Reynolds retain the existing bulk-mean reference-flow convention.
     from dataclasses import replace as _replace
 
     from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 
     outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
-        m_dot=m_dot_dry_carrier * (1.0 + 0.5 * (outside_capability.W_in + solution.W_out)),
+        m_dot=m_dot_dry_carrier * (1.0 + W_mean),
         face_area=hx.bundle.frontal_flow_area,
         tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
         tube_pitch_transverse=hx.bundle.pitch_transverse,
@@ -620,13 +630,20 @@ def apply_phase_change(
         layout=hx.bundle.layout,
         n_rows=hx.bundle.n_rows,
         n_tubes_per_row=hx.bundle.n_tubes_per_row,
-        provider=outside_provider_final,
+        inlet_props=outside_props_inlet,
+        midpoint_props=solution.outside_bulk_props,
+        outlet_props=outside_props_outlet,
         temperature_in=outside.T_in,
         temperature_out=solution.T_out_outside,
         pressure=outside.p,
         euler_provider=euler_provider,
         m_dot_inlet=m_dot_gas_in,
+        m_dot_midpoint=m_dot_dry_carrier * (1.0 + W_mean),
         m_dot_outlet=m_dot_gas_out,
+    )
+    outside_bank_hydraulic = _replace(
+        outside_bank_hydraulic,
+        midpoint_method="arithmetic_temperature_and_water_ratio",
     )
     final_result = _replace(
         final_result,
@@ -647,7 +664,7 @@ def apply_phase_change(
     envelope_wet = estimate_wall_temperature_envelope(
         hx,
         m_dot_inside=inside.m_dot,
-        m_dot_outside=m_dot_dry_carrier * (1.0 + 0.5 * (outside_capability.W_in + solution.W_out)),
+        m_dot_outside=m_dot_dry_carrier * (1.0 + W_mean),
         inside_provider=inside.provider,
         outside_provider=outside_provider_final,
         inside_inlet_temperature=inside.T_in,
@@ -696,6 +713,14 @@ def apply_phase_change(
         iterations=solution.iterations,
         T_mean_inside=T_mean_inside,
         T_mean_outside=T_mean_outside,
+        inside_props_mean=solution.inside_bulk_props,
+        outside_props_mean=solution.outside_bulk_props,
+        inside_velocity_mean=final_result.tube_side_thermal.v,
+        outside_velocity_mean=final_result.outside_side_thermal.v,
+        inside_Re_mean=final_result.tube_side_thermal.Re,
+        outside_Re_mean=final_result.outside_side_thermal.Re,
+        inside_Pr_mean=final_result.tube_side_thermal.Pr,
+        outside_Pr_mean=final_result.outside_side_thermal.Pr,
         inside_alfa_mean=wet_thermal_state.alfa_i,
         outside_alfa_mean=wet_thermal_state.alfa_o,
         U_mean=wet_thermal_state.U,
@@ -740,6 +765,7 @@ def _build_capability_side_result(
     near_onset: bool,
     dew_point: float | None,
     p: float,
+    m_dot_gas: float | None = None,
     onset: OnsetDecision | None = None,
     wall_temperature_min: float | None = None,
     wall_temperature_mean: float | None = None,
@@ -788,6 +814,17 @@ def _build_capability_side_result(
                 severity="warning",
             )
         )
+    m_dot_dry_carrier = None
+    m_dot_water_vapor = None
+    if (
+        m_dot_gas is not None
+        and capability.W_in is not None
+        and math.isfinite(m_dot_gas)
+        and m_dot_gas > 0.0
+    ):
+        m_dot_dry_carrier = m_dot_gas / (1.0 + capability.W_in)
+        m_dot_water_vapor = m_dot_dry_carrier * capability.W_in
+
     return PhaseChangeResult(
         side=side,
         mode=mode,
@@ -802,7 +839,12 @@ def _build_capability_side_result(
         onset_temperature_method=ONSET_TEMPERATURE_METHOD if onset is not None else None,
         W_in=capability.W_in,
         W_out=capability.W_in,
+        m_dot_dry_carrier=m_dot_dry_carrier,
+        m_dot_water_vapor_in=m_dot_water_vapor,
+        m_dot_water_vapor_out=m_dot_water_vapor,
         m_dot_condensate=0.0,
+        m_dot_gas_in=m_dot_gas,
+        m_dot_gas_out=m_dot_gas,
         dew_point_in=dew_point,
         dew_point_out=dew_point,
         wall_temperature_min=wall_temperature_min,
@@ -825,5 +867,3 @@ def _deduplicate_warnings(warnings: list[ModelWarning]) -> list[ModelWarning]:
             seen.add(identity)
             unique.append(warning)
     return unique
-
-
