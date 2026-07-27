@@ -144,10 +144,21 @@ class PhaseChangeResult:
     capable: bool
     possible: bool
     active: bool
+    near_onset: bool = False
 
     converged: bool = True
     iterations: int = 0
     method: str = "sensible_only"
+
+    # Onset diagnostics (fix, v0.6.0 patch): the coldest estimated wall
+    # point and the margin used to decide possible/active/near_onset (see
+    # core.phase_change.regime.evaluate_condensation_onset). Populated from
+    # the dry baseline even when the wet solver was never run (capable but
+    # dry, near-onset, disabled), not left as None just because active is
+    # False.
+    onset_margin_K: float | None = None
+    onset_wall_temperature: float | None = None
+    onset_temperature_method: str | None = None
 
     # Water/vapor mass basis: kg / kg dry carrier gas [-], and kg/s.
     W_in: float | None = None
@@ -168,6 +179,8 @@ class PhaseChangeResult:
 
     wet_surface_fraction: float | None = None
     wet_surface_fraction_method: str | None = None
+    wet_area: float | None = None
+    outside_total_area: float | None = None
 
     alfa_dry: float | None = None
     alfa_effective: float | None = None
