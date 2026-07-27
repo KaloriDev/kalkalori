@@ -90,6 +90,7 @@ from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_p
 from core.common.warnings import ModelWarning
 
 from core.models.heat_balance import ClosedBalance
+from core.phase_change.types import PhaseChangeResult
 
 if TYPE_CHECKING:
     from core.models.bare_tube import BareTubeHeatExchanger, HXResult
@@ -111,6 +112,7 @@ class HXRatingResult:
     UA_required: float         # [W/K]
     UA_actual: float           # [W/K] at the closed balance's working conditions (== thermal_state.UA)
     U_mean: float              # [W/(m2*K)] referenced to A_o (== thermal_state.U)
+    EMTD: float                # [K] effective mean temperature difference, Q_required/UA_required
 
     alfa_i: float              # [W/(m2*K)] wall/length-corrected (== thermal_state.alfa_i)
     alfa_o: float              # [W/(m2*K)] wall-corrected (== thermal_state.alfa_o)
@@ -132,6 +134,37 @@ class HXRatingResult:
     wall_temperature_envelope: WallTemperatureEnvelope
 
     warnings: list[ModelWarning] | None = None
+
+    # Phase-change results (v0.6.0); see HXSimulationResult for the field
+    # semantics -- same meaning here. ``None`` only if this HXRatingResult
+    # was constructed directly by ``run_rating`` (the sensible-only driver)
+    # rather than through ``BareTubeHeatExchanger.rate``.
+    inside_phase_change: "PhaseChangeResult | None" = None
+    outside_phase_change: "PhaseChangeResult | None" = None
+
+    @property
+    def phase_change_active(self) -> bool:
+        return bool(self.outside_phase_change is not None and self.outside_phase_change.active)
+
+    @property
+    def outside_condensate_mass_flow(self) -> float:
+        return self.outside_phase_change.m_dot_condensate if self.outside_phase_change is not None else 0.0
+
+    @property
+    def outside_water_ratio_in(self) -> float | None:
+        return None if self.outside_phase_change is None else self.outside_phase_change.W_in
+
+    @property
+    def outside_water_ratio_out(self) -> float | None:
+        return None if self.outside_phase_change is None else self.outside_phase_change.W_out
+
+    @property
+    def outside_Q_sensible(self) -> float:
+        return self.outside_phase_change.Q_sensible if self.outside_phase_change is not None else self.Q_required
+
+    @property
+    def outside_Q_latent(self) -> float:
+        return self.outside_phase_change.Q_latent if self.outside_phase_change is not None else 0.0
 
     @property
     def inside_wall_temperature_mean(self) -> float:
@@ -443,6 +476,7 @@ def run_rating(
         UA_required=UA_req,
         UA_actual=UA_actual,
         U_mean=U_mean,
+        EMTD=closed_balance.Q / UA_req,
         alfa_i=thermal_state.alfa_i,
         alfa_o=thermal_state.alfa_o,
         Q_required=closed_balance.Q,

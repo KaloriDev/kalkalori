@@ -5,6 +5,19 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.6.0] — Outside water condensation
+
+### Added
+
+- Added automatic partial H2O condensation for water-containing gas outside bare tubes.
+- Added sensible/latent heat and condensate mass-balance results.
+- Added a dry-only override with condensation warnings.
+
+### Notes
+
+- The model remains 0D and supports one phase-changing side.
+- Inside condensation, evaporation, film effects, freezing and two-phase hydraulics are not yet included.
+
 ---
 ## [0.5.x] - Simulation/Rating split, pressure-drop, heat-balance and thermal-model improvements
 

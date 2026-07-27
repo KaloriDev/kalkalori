@@ -781,3 +781,103 @@ acid dew point matters.
 Do not add a misleading `HumidGasProvider` in `v0.4.5`.
 
 High-temperature humid gas should remain an explicit user-defined gas mixture until a real wet-process / wet-economizer solver is implemented.
+
+---
+
+## 15. v0.6.0 — Outside Water Condensation
+
+The wet-process / wet-economizer solver referenced as future work in
+sections 8 and 14 above is now available, scoped as follows: **partial
+H2O condensation from a `GasMixtureSpec`-based gas mixture flowing outside
+a bare-tube bank**, solved by `BareTubeHeatExchanger.simulate()` /
+`.rate()`. It does not replace the property-path decision tree above --
+you still choose `GasMixtureSpec` (with H2O as a component) exactly as
+sections 4 and 7 describe. What changes is what the *heat-exchanger
+solver* does with that composition once the wall runs below the dew point.
+
+### 15.1 `imposed_phase` vs. `PhaseChangeMode` -- two different knobs
+
+These control two unrelated things and must not be confused:
+
+- **`GasMixtureSpec.imposed_phase`** (default `"gas"`) tells the CoolProp
+  backend how to evaluate *properties at one (T, p) state point* -- it
+  avoids PT-flash failures for known gas-phase states (section 2 above).
+  It says nothing about whether the exchanger solver removes water from
+  the stream.
+- **`PhaseChangeMode`** (`core.phase_change.types`, set per side via
+  `HXSideInput.phase_change_mode` / `BalanceSideSpec.phase_change_mode`,
+  default `AUTO`) tells the *heat-exchanger solver* whether it is allowed
+  to solve an active condensation case.
+
+Setting `imposed_phase="gas"` does **not** disable solver-level
+condensation, and setting `PhaseChangeMode.DISABLED` does **not** change
+how `imposed_phase` is used for property evaluation. A capable medium
+(H2O present) with `imposed_phase="gas"` and `PhaseChangeMode.AUTO` (the
+default for both) is exactly the intended v0.6.0 configuration.
+
+### 15.2 Capability vs. possibility vs. activity
+
+`core.phase_change.capability.detect_phase_change_capability` is the
+single place that decides whether a provider is phase-change *capable*:
+currently, a `GasMixturePropertyProvider` whose spec has a positive H2O
+mole/volume/mass fraction (with a nonzero non-condensable dry-gas
+remainder). Capability alone never changes solver behavior.
+
+Given a capable side, the solver runs an ordinary sensible-only ("dry")
+baseline first, and only from that baseline's wall temperature vs. the
+medium's own dew point decides whether condensation is **possible** at
+this operating point. Only when it is possible *and* `PhaseChangeMode.AUTO`
+is set does the solver actually make phase change **active** and run the
+coupled solve (`core.phase_change.outside_condensation_solver`). A capable
+medium that never reaches its dew point produces an ordinary sensible-only
+result under `AUTO`, bit-for-bit identical to not having this feature at
+all.
+
+### 15.3 `PhaseChangeMode.DISABLED`
+
+Forces the sensible-only ("dry") result on that side even when
+condensation would be possible: H2O is not removed from the stream,
+`m_dot_condensate = 0`, `Q_latent = 0`, the outlet water content equals the
+inlet water content. The solver still checks whether condensation *would*
+have been possible from the dry baseline and attaches a
+`PHASE_CHANGE_DISABLED_BUT_POSSIBLE` warning when it would -- this is a
+forced approximation, not a "this case has no condensation" statement; the
+true duty and outlet temperature may differ from the dry result.
+
+### 15.4 Scope (v0.6.0)
+
+- Only H2O condenses; only the **outside** stream may have an active
+  phase-changing side (inside condensation is detected but rejected with
+  `INSIDE_CONDENSATION_NOT_SUPPORTED` under `AUTO` -- see the roadmap for
+  v0.6.1).
+- Only **partial** condensation (0 <= W_out <= W_in); full steam
+  condensation is out of scope.
+- At most **one** active phase-changing side per call
+  (`MULTIPLE_PHASE_CHANGE_SIDES_NOT_SUPPORTED` otherwise).
+- Condensate is treated as **fully drained**, leaving as saturated liquid
+  at a representative interface temperature -- it is never re-added to the
+  gas-phase stream or its hydraulics.
+- The model remains **0D**: no axial/segmented resolution. `.simulate()`
+  requires `iterate=True` for an active outside-condensation case (the
+  `iterate=False` single-pass escape hatch cannot represent condensation).
+- `wet_surface_fraction` is a 0D endpoint estimate (compares the existing
+  four-probe wall-temperature envelope against the local dew point), not a
+  spatially resolved wetted-area fraction.
+- The Chilton-Colburn heat/mass-transfer analogy uses `lewis_number=1.0`
+  by default -- a configurable first-model assumption, not a universal
+  constant (see `docs/references.md`).
+- Condensate film thermal resistance, film hydraulics, carryover/
+  re-entrainment, evaporation, and freezing/frost are not modelled (frost
+  conditions are detected and rejected with `FROSTING_NOT_SUPPORTED` rather
+  than silently clamped).
+- Two-phase gas/liquid pressure drop is not modelled; the outside gas-phase
+  hydraulics contract gains an optional per-point gas-phase mass-flow input
+  (`core.heat_transfer.outside_flow.calculate_outside_tube_bank_hydraulics`,
+  `m_dot_inlet`/`m_dot_midpoint`/`m_dot_outlet`) so the signed acceleration
+  term reflects the reduced gas mass flow once condensate has been removed,
+  without adding any liquid-phase hydraulics.
+
+See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
+and heat/mass-transfer model details, and
+`core/tests/outside_water_condensation_examples.ipynb` for a worked
+example.

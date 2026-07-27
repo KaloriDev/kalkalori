@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
 from core.common.warnings import ModelWarning, make_warning
+from core.phase_change.types import PhaseChangeMode
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,9 @@ class BalanceSideSpec:
         m_dot: Mass flow through this side [kg/s], or None if unknown.
         T_in: Inlet bulk temperature [K]. Required by ``close_heat_balance``.
         T_out: Outlet bulk temperature [K], or None if unknown.
+        phase_change_mode: See ``core.models.simulation.HXSideInput.
+            phase_change_mode``; same AUTO/DISABLED semantics, consumed by
+            ``core.phase_change.rating_integration`` for Rating.
     """
 
     provider: PropertyProvider
@@ -71,6 +75,7 @@ class BalanceSideSpec:
     m_dot: float | None = None
     T_in: float | None = None
     T_out: float | None = None
+    phase_change_mode: PhaseChangeMode = PhaseChangeMode.AUTO
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.p) or self.p <= 0.0:
@@ -78,6 +83,8 @@ class BalanceSideSpec:
         for name, value in (("m_dot", self.m_dot), ("T_in", self.T_in), ("T_out", self.T_out)):
             if value is not None and (not math.isfinite(value) or value <= 0.0):
                 raise ValueError(f"{name} must be a positive finite value when provided.")
+        if not isinstance(self.phase_change_mode, PhaseChangeMode):
+            raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
 
 
 # ---------------------------------------------------------------------------
