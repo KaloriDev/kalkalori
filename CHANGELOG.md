@@ -18,6 +18,7 @@ The project follows **Semantic Versioning (SemVer)**:
 
 - Fixed condensation onset detection and partial wet-area handling.
 - Fixed outlet gas properties after partial condensation.
+- Improved partial outside-condensation heat and mass transfer using the representative wet-surface temperature.
 
 ### Notes
 
