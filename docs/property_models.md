@@ -855,13 +855,13 @@ true duty and outlet temperature may differ from the dry result.
 - At most **one** active phase-changing side per call
   (`MULTIPLE_PHASE_CHANGE_SIDES_NOT_SUPPORTED` otherwise).
 - Condensate is treated as **fully drained**, leaving as saturated liquid
-  at the representative wet-surface temperature `T_wall_wet_mean` -- it is
-  never re-added to the gas-phase stream or its hydraulics.
+  at a representative interface temperature -- it is never re-added to the
+  gas-phase stream or its hydraulics.
 - The model remains **0D**: no axial/segmented resolution. `.simulate()`
   requires `iterate=True` for an active outside-condensation case (the
   `iterate=False` single-pass escape hatch cannot represent condensation).
-- `wet_surface_fraction` is a linear 0D estimate from the active solve's
-  `T_wall_min`/`T_wall_max` envelope and the local dew point, not a
+- `wet_surface_fraction` is a 0D endpoint estimate (compares the existing
+  four-probe wall-temperature envelope against the local dew point), not a
   spatially resolved wetted-area fraction.
 - The Chilton-Colburn heat/mass-transfer analogy uses `lewis_number=1.0`
   by default -- a configurable first-model assumption, not a universal
@@ -882,10 +882,9 @@ and heat/mass-transfer model details, and
 `core/tests/outside_water_condensation_examples.ipynb` for a worked
 example.
 
-### 15.5 Condensation onset, partial wet area, and wet-zone temperature (fix)
+### 15.5 Condensation onset and partial wet-area handling (fix)
 
-The v0.6.0 model keeps the onset, whole-surface heat-transfer, and wet-zone
-temperatures separate:
+Two refinements to the v0.6.0 model above:
 
 - **Onset uses the minimum estimated wall temperature, not the mean.**
   Condensation onset (`possible`/`active` on `PhaseChangeResult`) is
@@ -895,88 +894,22 @@ temperatures separate:
   bulk-mean or averaged wall temperature. A mean-based check can miss
   condensation that has already started on the locally coldest part of the
   surface while the bulk-averaged wall is still nominally above the dew
-  point.
+  point. The mean wall temperature remains the representative value for
+  everything else in the 0D model (condensate temperature, mean
+  properties, reporting).
 - **Only the estimated wet fraction of the surface participates in mass
   transfer.** Once condensation is active, `wet_surface_fraction` is
-  estimated linearly from `T_wall_min`, `T_wall_max`, and `T_dew`. For a
-  nondegenerate partially wet envelope it is
-  `(T_dew - T_wall_min) / (T_wall_max - T_wall_min)`, bounded by the dry
-  and fully wet limits. The shared
-  `core.phase_change.wet_surface_fraction.estimate_wet_surface_fraction`
-  helper provides this estimate, and only
-  `A_wet = A_outside * wet_surface_fraction` (reported as `wet_area`) is used
-  for the condensation mass-transfer rate and hence `Q_latent`. Sensible
-  heat transfer always uses the full `A_outside` -- the dry part of the
-  surface still exchanges sensible heat, it just is not estimated to be
+  estimated as a linear interpolation of the dew point between the
+  estimated minimum and maximum wall temperature
+  (`core.phase_change.wet_surface_fraction.estimate_wet_surface_fraction`),
+  and only `wet_area = A_outside * wet_surface_fraction` is used for the
+  condensation mass-transfer rate (and hence `Q_latent`). Sensible heat
+  transfer always uses the full `A_outside` -- the dry part of the surface
+  still exchanges sensible heat, it just is not estimated to be
   condensing.
-- **The wet part has a separate representative temperature.** For a wet,
-  nondegenerate linear envelope,
-  `T_wall_wet_mean = 0.5 * (T_wall_min + min(T_dew, T_wall_max))`; a
-  degenerate wet envelope falls back to `T_wall_mean` (and a dry surface
-  has no wet-surface temperature). `T_wall_wet_mean` is used for
-  `W_sat_wet_surface`, the mass-transfer driving force, `h_fg`, and the
-  saturated-liquid enthalpy of the drained condensate.
-
-The global `T_wall_mean` remains the whole-surface temperature used for
-full-area sensible heat transfer, the global thermal-resistance balance,
-`U`, `UA`, and wall-temperature reporting. It is not the condensate or
-representative wet-surface temperature. Rating retains the span of its
-final four-probe wall envelope, centres the active wet-model bounds on the
-global wall mean, and derives `T_wall_wet_mean` from those bounds. It does
-not use the outside outlet bulk temperature as the condensate/wet-surface
-temperature; the public four-probe envelope remains unchanged and
-probe-consistent.
-
-These envelope and wet-zone quantities are lumped **0D estimates**, not a
-local 1D or segmented wall/film solution.
 
 `possible`, `active`, and `near_onset` are three distinct booleans (not a
 single enum): `possible=True, near_onset=True, active=False` is an
 expected combination for an operating point close to onset, where the
 solver deliberately stays on the dry path (see spec section 7 /
 `core.phase_change.regime`).
-
-### 15.6 Inlet, midpoint, and outlet property diagnostics
-
-`HXResult`, `HXSimulationResult`, and `HXRatingResult` expose the fluid
-property points already calculated for hydraulics:
-
-```python
-result.inside_properties_inlet
-result.inside_properties_midpoint
-result.inside_properties_outlet
-
-result.outside_properties_inlet
-result.outside_properties_midpoint
-result.outside_properties_outlet
-```
-
-These accessors are direct views of the existing tube-bundle and outside
-tube-bank hydraulic results, not a second property-state model. Each point
-provides `T`, `p`, `rho`, `cp`, `mu`, `k`, and `Pr` (plus the existing
-hydraulic diagnostics). The representative pressure is constant across the
-three points in the current 0D model.
-
-For sensible-only calculations, `midpoint_method` on the corresponding
-hydraulic result records whether the midpoint temperature came from mean
-inlet/outlet enthalpy or from the arithmetic-temperature fallback. For active
-outside condensation, the midpoint is the state used by the wet 0D solver:
-arithmetic mean temperature, arithmetic `W_mean = (W_in + W_out) / 2`, and
-the corresponding mean remaining-gas mass flow. Its method is reported as
-`"arithmetic_temperature_and_water_ratio"`.
-
-The three point states must not be confused with representative 0D thermal
-properties such as `HXSimulationResult.inside_props_mean`,
-`HXSimulationResult.outside_props_mean`, or the bulk properties on
-`thermal_state`. Those representative values remain available because they
-are the properties used by the lumped thermal model; they are not substitutes
-for inlet or outlet diagnostics.
-
-When outside condensation is active, the outside inlet point uses `W_in` and
-the inlet gas composition/mass flow, while the outlet point uses `W_out`, the
-reduced H2O fraction, and `m_dot_gas_out`. Thus outlet density and transport
-properties describe the final remaining gas phase rather than the inlet
-composition, a dry baseline, or the mean-composition provider. Water ratios,
-dew points, vapor/condensate mass flows, sensible/latent duty, wet-surface
-fraction, and wall-temperature diagnostics remain on
-`outside_phase_change`.

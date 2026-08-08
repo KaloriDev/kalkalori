@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""0D linear wet-surface estimate for partial outside condensation.
+"""0D linear wet-surface-fraction estimate (spec sections 8-9, v0.6.0 fix).
 
 This is a diagnostic *and* modelling estimate: it also scales the mass-
 transfer area used inside ``core.phase_change.outside_condensation_solver``
@@ -22,17 +22,6 @@ temperature distribution between the two estimated extremes -- a
 deliberate 0D simplification (see ``docs/property_models.md``), not a
 spatially resolved (1D/segmented) result.
 
-For the same linear envelope, the representative temperature of the wet
-part is the mean of its lower and upper temperature bounds:
-
-    T_wall_wet_mean = 0.5 * (T_wall_min + min(T_dew, T_wall_max))
-
-It is ``None`` for a dry surface.  For a degenerate, effectively uniform
-envelope, the existing mean-based wet-fraction fallback is retained and a
-wet result uses ``T_wall_mean``.  The temperature is intended for
-wet-surface equilibrium and condensate properties; it does not replace the
-global wall mean used by the sensible heat-transfer resistance network.
-
 No 1D/segmented model, row-by-row interpolation, endpoint-area weighting,
 or statistical temperature-distribution model is added here.
 """
@@ -51,9 +40,6 @@ DEGENERATE_METHOD_NAME = "uniform_wall_temperature_fallback"
 class WetSurfaceFractionEstimate:
     wet_surface_fraction: float
     method: str
-    # Appended with a default so the existing two-argument constructor and
-    # the original fields retain their API/positional meaning.
-    wall_temperature_wet_mean: float | None = None
 
 
 def _clamp01(value: float) -> float:
@@ -89,9 +75,7 @@ def estimate_wet_surface_fraction(
 
     Returns:
         WetSurfaceFractionEstimate with ``wet_surface_fraction`` always a
-        finite value in ``[0, 1]`` (never NaN/infinity),
-        ``wall_temperature_wet_mean`` equal to a finite representative
-        wet-zone temperature or ``None`` for a dry surface, and ``method``
+        finite value in ``[0, 1]`` (never NaN/infinity) and ``method``
         naming which branch was used
         (``"linear_wall_temperature_envelope"`` or
         ``"uniform_wall_temperature_fallback"``).
@@ -108,11 +92,6 @@ def estimate_wet_surface_fraction(
     ):
         if not math.isfinite(value):
             raise ValueError(f"{name} must be a finite value, got {value!r}.")
-    if wall_temperature_max < wall_temperature_min:
-        raise ValueError(
-            "wall_temperature_max must be greater than or equal to "
-            "wall_temperature_min."
-        )
 
     span = wall_temperature_max - wall_temperature_min
 
@@ -128,33 +107,17 @@ def estimate_wet_surface_fraction(
             fraction = 0.0
         else:
             fraction = _clamp01(0.5 + margin / activation_band_K)
-        wall_temperature_wet_mean = wall_temperature_mean if fraction > 0.0 else None
-        return WetSurfaceFractionEstimate(
-            wet_surface_fraction=fraction,
-            wall_temperature_wet_mean=wall_temperature_wet_mean,
-            method=DEGENERATE_METHOD_NAME,
-        )
+        return WetSurfaceFractionEstimate(wet_surface_fraction=fraction, method=DEGENERATE_METHOD_NAME)
 
     if dew_point_temperature <= wall_temperature_min:
         fraction = 0.0
-        wall_temperature_wet_mean = None
     elif dew_point_temperature >= wall_temperature_max:
         fraction = 1.0
-        wall_temperature_wet_mean = 0.5 * (
-            wall_temperature_min + wall_temperature_max
-        )
     else:
         fraction = (dew_point_temperature - wall_temperature_min) / span
-        wall_temperature_wet_mean = 0.5 * (
-            wall_temperature_min + dew_point_temperature
-        )
 
     # Numerical safety clamp only (span > tolerance > 0 already guarantees
     # fraction in [0, 1] analytically); never used to mask a sign error.
     fraction = _clamp01(fraction)
 
-    return WetSurfaceFractionEstimate(
-        wet_surface_fraction=fraction,
-        wall_temperature_wet_mean=wall_temperature_wet_mean,
-        method=LINEAR_METHOD_NAME,
-    )
+    return WetSurfaceFractionEstimate(wet_surface_fraction=fraction, method=LINEAR_METHOD_NAME)
