@@ -87,11 +87,6 @@ HydraulicPosition = Literal["inlet", "midpoint", "outlet"]
 class TubeSideHydraulicPoint:
     """Bulk hydraulic state at one of the three tube-side evaluation points.
 
-    The point is also the public fluid-property diagnostic for its position.
-    ``T``/``p`` and ``rho``/``cp``/``mu``/``k`` are convenience aliases for
-    the already stored temperature, pressure, and transport-property object;
-    no second property evaluation or duplicate state is created.
-
     ``friction_factor`` is the Darcy friction factor from
     ``core.pressure_drop.straight_sections.darcy_friction_factor``: the
     existing smooth-tube (Petukhov) value when no positive relative
@@ -117,30 +112,6 @@ class TubeSideHydraulicPoint:
     @property
     def Pr(self) -> float:
         return self.prandtl
-
-    @property
-    def T(self) -> float:
-        return self.temperature
-
-    @property
-    def p(self) -> float:
-        return self.pressure
-
-    @property
-    def rho(self) -> float:
-        return self.props.rho
-
-    @property
-    def cp(self) -> float:
-        return self.props.cp
-
-    @property
-    def mu(self) -> float:
-        return self.props.mu
-
-    @property
-    def k(self) -> float:
-        return self.props.k
 
     @property
     def darcy_friction_factor(self) -> float:

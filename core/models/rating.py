@@ -102,14 +102,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class HXRatingResult:
-    """Result of a heat-exchanger rating (overdesign / surface margin).
-
-    ``inside_properties_inlet/midpoint/outlet`` and the corresponding
-    ``outside_*`` accessors expose the existing hydraulic point states from
-    ``final_result``. They are distinct from the representative 0D properties
-    on ``thermal_state``. For active outside condensation, the outlet point
-    uses the final ``W_out`` gas composition and remaining gas mass flow.
-    """
+    """Result of a heat-exchanger rating (overdesign / surface margin)."""
 
     overdesign_factor: float   # [-] A_o/A_required - 1
     ua_margin: float           # [-] UA_actual/UA_required - 1
@@ -201,30 +194,6 @@ class HXRatingResult:
     def tube_side_hydraulic(self):
         """Nested straight tube-bundle hydraulic result."""
         return self.final_result.tube_side_hydraulic
-
-    @property
-    def inside_properties_inlet(self):
-        return self.final_result.inside_properties_inlet
-
-    @property
-    def inside_properties_midpoint(self):
-        return self.final_result.inside_properties_midpoint
-
-    @property
-    def inside_properties_outlet(self):
-        return self.final_result.inside_properties_outlet
-
-    @property
-    def outside_properties_inlet(self):
-        return self.final_result.outside_properties_inlet
-
-    @property
-    def outside_properties_midpoint(self):
-        return self.final_result.outside_properties_midpoint
-
-    @property
-    def outside_properties_outlet(self):
-        return self.final_result.outside_properties_outlet
 
     @property
     def inside_dp_friction(self) -> float:

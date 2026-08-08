@@ -25,12 +25,7 @@ from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
-from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change.types import PhaseChangeDirection
-from core.phase_change.wet_gas_composition import (
-    wet_gas_provider_at_water_ratio,
-    wet_gas_spec_at_water_ratio,
-)
 
 
 @pytest.fixture(scope="module")
@@ -93,82 +88,6 @@ def test_gas_phase_mass_flow_decreases_dry_carrier_conserved(result) -> None:
     # m_dot_condensate each converged to their own phase_change_* tolerance,
     # so this reproduces to solver-convergence precision, not machine eps).
     assert pc.m_dot_gas_out == pytest.approx(pc.m_dot_gas_in - pc.m_dot_condensate, rel=1e-6)
-
-
-def test_public_fluid_property_points_use_final_wet_states(result) -> None:
-    pc = result.outside_phase_change
-    hydraulic = result.outside_tube_bank_hydraulic
-    capability = detect_phase_change_capability(
-        GasMixturePropertyProvider(
-            GasMixtureSpec(
-                components={"N2": 0.65, "O2": 0.10, "CO2": 0.08, "H2O": 0.17},
-                basis="mole",
-            )
-        )
-    )
-    W_mid = 0.5 * (pc.W_in + pc.W_out)
-    expected_providers = (
-        wet_gas_provider_at_water_ratio(capability, pc.W_in),
-        wet_gas_provider_at_water_ratio(capability, W_mid),
-        wet_gas_provider_at_water_ratio(capability, pc.W_out),
-    )
-
-    states = (
-        result.outside_properties_inlet,
-        result.outside_properties_midpoint,
-        result.outside_properties_outlet,
-    )
-    assert states == (hydraulic.inlet, hydraulic.midpoint, hydraulic.outlet)
-    assert hydraulic.midpoint_method == "arithmetic_temperature_and_water_ratio"
-    assert states[0].T == 420.0
-    assert states[1].T == pytest.approx(0.5 * (420.0 + result.T_out_outside))
-    assert states[2].T == result.T_out_outside
-    assert states[1].props == result.outside_props_mean
-
-    for index, (state, provider) in enumerate(zip(states, expected_providers)):
-        expected = provider.at(T=state.T, p=state.p)
-        for name in ("rho", "cp", "mu", "k"):
-            # The midpoint deliberately preserves the wet solver's last
-            # actually-used bulk props; its converged relaxed endpoint can
-            # differ infinitesimally from a fresh post-solve evaluation.
-            tolerance = 1e-6 if index == 1 else 1e-10
-            assert getattr(state, name) == pytest.approx(
-                getattr(expected, name), rel=tolerance
-            )
-        assert state.Pr == pytest.approx(state.mu * state.cp / state.k, rel=1e-12)
-
-    inlet_composition = wet_gas_spec_at_water_ratio(capability, pc.W_in).to_mole_fractions()
-    midpoint_composition = wet_gas_spec_at_water_ratio(capability, W_mid).to_mole_fractions()
-    outlet_composition = wet_gas_spec_at_water_ratio(capability, pc.W_out).to_mole_fractions()
-    water_fraction = lambda composition: next(
-        value for name, value in composition.items() if name.lower() in {"h2o", "water"}
-    )
-    assert (
-        water_fraction(outlet_composition)
-        < water_fraction(midpoint_composition)
-        < water_fraction(inlet_composition)
-    )
-    assert pc.dew_point_out < pc.dew_point_in
-
-    point_mass_flows = tuple(state.face_mass_flux * hydraulic.face_area for state in states)
-    assert point_mass_flows[0] == pytest.approx(pc.m_dot_gas_in, rel=1e-12)
-    assert point_mass_flows[1] == pytest.approx(
-        pc.m_dot_dry_carrier * (1.0 + W_mid), rel=1e-12
-    )
-    assert point_mass_flows[2] == pytest.approx(pc.m_dot_gas_out, rel=1e-12)
-
-    inside_states = (
-        result.inside_properties_inlet,
-        result.inside_properties_midpoint,
-        result.inside_properties_outlet,
-    )
-    assert inside_states[0].T == 290.0
-    assert inside_states[2].T == result.T_out_inside
-    for state in inside_states:
-        assert all(
-            math.isfinite(value)
-            for value in (state.T, state.p, state.rho, state.cp, state.mu, state.k, state.Pr)
-        )
 
 
 def test_h2o_mass_balance_closed(result) -> None:

@@ -227,18 +227,6 @@ class HXSideInput:
 class HXSimulationResult:
     """Result of a heat-exchanger simulation (mean-property or single-pass).
 
-    ``inside_properties_inlet/midpoint/outlet`` and their ``outside_*``
-    counterparts are direct views of ``final_result``'s solver-owned
-    hydraulic points. They are point diagnostics, not aliases for
-    ``inside_props_mean``/``outside_props_mean``, which remain the
-    representative 0D thermal properties.
-
-    For a sensible provider, the hydraulic result records whether midpoint
-    temperature came from mean enthalpy or the arithmetic-temperature
-    fallback. For active outside condensation, midpoint is the wet solver's
-    arithmetic mean temperature and water ratio; outlet properties use the
-    remaining gas composition at ``W_out``.
-
     All ``*_mean`` diagnostics are reported at the converged mean bulk state of
     the respective side. Naming follows the tube/outside geometry role:
     ``inside`` is the tube side, ``outside`` is the bundle side.
@@ -385,30 +373,6 @@ class HXSimulationResult:
     def tube_side_hydraulic(self):
         """Nested straight tube-bundle hydraulic result."""
         return self.final_result.tube_side_hydraulic
-
-    @property
-    def inside_properties_inlet(self):
-        return self.final_result.inside_properties_inlet
-
-    @property
-    def inside_properties_midpoint(self):
-        return self.final_result.inside_properties_midpoint
-
-    @property
-    def inside_properties_outlet(self):
-        return self.final_result.inside_properties_outlet
-
-    @property
-    def outside_properties_inlet(self):
-        return self.final_result.outside_properties_inlet
-
-    @property
-    def outside_properties_midpoint(self):
-        return self.final_result.outside_properties_midpoint
-
-    @property
-    def outside_properties_outlet(self):
-        return self.final_result.outside_properties_outlet
 
     @property
     def inside_dp_friction(self) -> float:
