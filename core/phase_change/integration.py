@@ -46,7 +46,6 @@ from dataclasses import dataclass, replace
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.thermal_iteration import (
-    IterativeThermalState,
     estimate_wall_temperature_envelope,
     solve_iterative_thermal_state,
 )
@@ -62,20 +61,17 @@ from core.phase_change.outside_condensation_solver import (
     solve_outside_condensation,
 )
 from core.phase_change.regime import (
-    OnsetDecision,
     decide_regime,
-    evaluate_condensation_onset,
     representative_wall_temperature,
     validate_onset_settings,
 )
 from core.phase_change.types import PhaseChangeCapability, PhaseChangeDirection, PhaseChangeMode, PhaseChangeResult
 from core.phase_change.water_equilibrium import is_frost_regime, water_dew_point, water_partial_pressure
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
+from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 
 DEFAULT_ONSET_TOLERANCE_K = 0.0
 DEFAULT_ACTIVATION_BAND_K = 0.5
-
-ONSET_TEMPERATURE_METHOD = "wall_temperature_min_envelope_estimate"
 
 
 class InsideCondensationNotSupportedError(RuntimeError):
@@ -114,7 +110,6 @@ class PhaseChangeSettings:
     water_ratio_tolerance: float = 1e-6
     condensate_tolerance_kg_s: float = 1e-8
     wall_temperature_tolerance_K: float = 0.05
-    wet_fraction_tolerance: float = 1e-3
     relaxation_factor: float = 0.5
 
     def __post_init__(self) -> None:
@@ -133,8 +128,6 @@ class PhaseChangeSettings:
             raise ValueError("phase_change_condensate_tolerance_kg_s must be >= 0.")
         if not math.isfinite(self.wall_temperature_tolerance_K) or self.wall_temperature_tolerance_K <= 0.0:
             raise ValueError("phase_change_wall_temperature_tolerance_K must be > 0.")
-        if not math.isfinite(self.wet_fraction_tolerance) or self.wet_fraction_tolerance <= 0.0:
-            raise ValueError("phase_change_wet_fraction_tolerance must be > 0.")
         if not (0.0 < self.relaxation_factor <= 1.0):
             raise ValueError("phase_change_relaxation_factor must be in (0, 1].")
 
@@ -196,47 +189,6 @@ def _capability_only_result(side: str, mode: PhaseChangeMode, capability: PhaseC
     )
 
 
-def _evaluate_side_onset(
-    *,
-    side: str,
-    mode: PhaseChangeMode,
-    capability: PhaseChangeCapability,
-    p: float,
-    thermal_state,
-    envelope,
-    settings: "PhaseChangeSettings",
-):
-    """Return ``(onset, dew_point, wall_min, wall_mean, wall_max)`` for one
-    side, or all-``None`` if the side is not capable or has no valid dew
-    point.
-
-    Fix (v0.6.0 patch, spec section 6.1): onset is decided from
-    ``wall_envelope.<side>_min`` -- the dry baseline's *minimum* estimated
-    wall temperature -- never from the mean/representative wall
-    temperature. ``wall_mean`` is still computed (via
-    ``representative_wall_temperature``) purely for reporting (spec
-    section 6.3: condensate temperature, mean properties, etc.), not for
-    the onset decision itself.
-    """
-    if not capability.capable:
-        return None, None, None, None, None
-    dew_point = _dew_point_for(capability, p=p)
-    if dew_point is None:
-        return None, None, None, None, None
-
-    wall_min = envelope.outside_min if side == "outside" else envelope.inside_min
-    wall_max = envelope.outside_max if side == "outside" else envelope.inside_max
-    wall_mean = representative_wall_temperature(side=side, thermal_state=thermal_state, wall_envelope=envelope)
-
-    onset = evaluate_condensation_onset(
-        dew_point_temperature=dew_point,
-        wall_temperature_min=wall_min,
-        onset_tolerance_K=settings.onset_tolerance_K,
-        activation_band_K=settings.activation_band_K,
-    )
-    return onset, dew_point, wall_min, wall_mean, wall_max
-
-
 def _dew_point_for(capability: PhaseChangeCapability, *, p: float) -> float | None:
     if not capability.capable or capability.W_in is None:
         return None
@@ -289,29 +241,41 @@ def apply_phase_change(
     thermal_state = dry_result.thermal_state
     envelope = dry_result.wall_temperature_envelope
 
-    inside_onset, inside_dew_point, inside_wall_min, inside_wall_mean, inside_wall_max = _evaluate_side_onset(
-        side="inside", mode=inside.phase_change_mode, capability=inside_capability, p=inside.p,
-        thermal_state=thermal_state, envelope=envelope, settings=settings,
-    )
-    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = _evaluate_side_onset(
-        side="outside", mode=outside.phase_change_mode, capability=outside_capability, p=outside.p,
-        thermal_state=thermal_state, envelope=envelope, settings=settings,
-    )
+    inside_regime = None
+    inside_dew_point = None
+    if inside_capability.capable:
+        inside_dew_point = _dew_point_for(inside_capability, p=inside.p)
+        if inside_dew_point is not None:
+            inside_regime = decide_regime(
+                dew_point_K=inside_dew_point,
+                wall_temperature_representative_K=representative_wall_temperature(
+                    side="inside", thermal_state=thermal_state, wall_envelope=envelope
+                ),
+                onset_tolerance_K=settings.onset_tolerance_K,
+                activation_band_K=settings.activation_band_K,
+            )
 
-    inside_possible = bool(inside_onset is not None and inside_onset.possible)
-    outside_possible = bool(outside_onset is not None and outside_onset.possible)
-    inside_near_onset = bool(inside_onset is not None and inside_onset.near_onset)
-    outside_near_onset = bool(outside_onset is not None and outside_onset.near_onset)
+    outside_regime = None
+    outside_dew_point = None
+    if outside_capability.capable:
+        outside_dew_point = _dew_point_for(outside_capability, p=outside.p)
+        if outside_dew_point is not None:
+            outside_regime = decide_regime(
+                dew_point_K=outside_dew_point,
+                wall_temperature_representative_K=representative_wall_temperature(
+                    side="outside", thermal_state=thermal_state, wall_envelope=envelope
+                ),
+                onset_tolerance_K=settings.onset_tolerance_K,
+                activation_band_K=settings.activation_band_K,
+            )
 
-    # "Auto possible" here means "clearly past onset" (OnsetDecision.active),
-    # not merely "possible" (which also covers the near-onset band that must
-    # stay on the dry path -- see core.phase_change.regime).
-    inside_auto_possible = (
-        inside_onset is not None and inside_onset.active and inside.phase_change_mode is PhaseChangeMode.AUTO
-    )
-    outside_auto_possible = (
-        outside_onset is not None and outside_onset.active and outside.phase_change_mode is PhaseChangeMode.AUTO
-    )
+    inside_possible = bool(inside_regime is not None and inside_regime.is_condensing)
+    outside_possible = bool(outside_regime is not None and outside_regime.is_condensing)
+    inside_near_onset = bool(inside_regime is not None and inside_regime.is_near_onset)
+    outside_near_onset = bool(outside_regime is not None and outside_regime.is_near_onset)
+
+    inside_auto_possible = inside_possible and inside.phase_change_mode is PhaseChangeMode.AUTO
+    outside_auto_possible = outside_possible and outside.phase_change_mode is PhaseChangeMode.AUTO
 
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=iterate)
 
@@ -319,8 +283,6 @@ def apply_phase_change(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability,
         possible=inside_possible, near_onset=inside_near_onset,
         dew_point=inside_dew_point, p=inside.p,
-        onset=inside_onset, wall_temperature_min=inside_wall_min,
-        wall_temperature_mean=inside_wall_mean, wall_temperature_max=inside_wall_max,
     )
 
     if not outside_auto_possible:
@@ -328,8 +290,6 @@ def apply_phase_change(
             side="outside", mode=outside.phase_change_mode, capability=outside_capability,
             possible=outside_possible, near_onset=outside_near_onset,
             dew_point=outside_dew_point, p=outside.p,
-            onset=outside_onset, wall_temperature_min=outside_wall_min,
-            wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
         )
         return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
 
@@ -342,8 +302,6 @@ def apply_phase_change(
             _build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=True, near_onset=False, dew_point=None, p=outside.p,
-                onset=outside_onset, wall_temperature_min=outside_wall_min,
-                wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
             ),
             warnings=(
                 make_warning(
@@ -379,14 +337,12 @@ def apply_phase_change(
             T_out_outside_init=dry_result.T_out_outside,
             euler_provider=euler_provider,
             lewis_number=settings.lewis_number,
-            activation_band_K=settings.activation_band_K,
             max_iterations=settings.max_iterations,
             temperature_tolerance_K=settings.temperature_tolerance_K,
             relative_Q_tolerance=settings.relative_Q_tolerance,
             water_ratio_tolerance=settings.water_ratio_tolerance,
             condensate_tolerance_kg_s=settings.condensate_tolerance_kg_s,
             wall_temperature_tolerance_K=settings.wall_temperature_tolerance_K,
-            wet_fraction_tolerance=settings.wet_fraction_tolerance,
             relaxation_factor=settings.relaxation_factor,
         )
     except FrostingNotSupportedError as exc:
@@ -394,8 +350,6 @@ def apply_phase_change(
             _build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=True, near_onset=False, dew_point=outside_dew_point, p=outside.p,
-                onset=outside_onset, wall_temperature_min=outside_wall_min,
-                wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
             ),
             warnings=(
                 make_warning(
@@ -416,25 +370,25 @@ def apply_phase_change(
     mass_balance_error = m_dot_water_vapor_in - (m_dot_water_vapor_out + solution.m_dot_condensate)
     energy_balance_error = solution.Q_total - (solution.Q_sensible + solution.Q_latent)
 
-    # wall_temperature_min/max/wet_surface_fraction come straight from the
-    # solver's own converged, per-iteration estimate (fix, v0.6.0 patch) --
-    # the same numbers that actually drove A_wet during the solve, rather
-    # than a separately (and more expensively) recomputed post-hoc
-    # four-probe envelope that could disagree with what the solver used.
-    warnings_list: list[ModelWarning] = list(solution.warnings)
-    warnings_list.append(
-        make_warning(
-            code=WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
-            message=(
-                "outside: wet_surface_fraction is a 0D linear estimate "
-                f"({solution.wet_surface_fraction_method}) based on a cheap "
-                "two-point (inlet/outlet) wall-temperature estimate, not a "
-                "spatially resolved (1D/segmented) wetted-area fraction."
-            ),
-            source="phase_change_integration",
-            severity="info",
-        )
+    wet_surface = estimate_wet_surface_fraction(
+        hx,
+        inside_provider=inside.provider,
+        outside_capability=outside_capability,
+        m_dot_inside=inside.m_dot,
+        m_dot_dry_carrier=m_dot_dry_carrier,
+        T_in_inside=inside.T_in,
+        T_out_inside=solution.T_out_inside,
+        T_in_outside=outside.T_in,
+        T_out_outside=solution.T_out_outside,
+        W_in=outside_capability.W_in,
+        W_out=solution.W_out,
+        p_inside=inside.p,
+        p_outside=outside.p,
+        euler_provider=euler_provider,
+        activation_band_K=settings.activation_band_K,
     )
+
+    warnings_list: list[ModelWarning] = list(solution.warnings) + list(wet_surface.warnings)
     warnings_list.append(
         make_warning(
             code=WC.OUTSIDE_CONDENSATION_DETECTED,
@@ -506,10 +460,6 @@ def apply_phase_change(
         capable=True,
         possible=True,
         active=True,
-        near_onset=False,
-        onset_margin_K=None if outside_onset is None else outside_onset.margin_K,
-        onset_wall_temperature=outside_wall_min,
-        onset_temperature_method=ONSET_TEMPERATURE_METHOD,
         converged=solution.converged,
         iterations=solution.iterations,
         method="outside_condensation_0d_bulk_mean",
@@ -524,12 +474,10 @@ def apply_phase_change(
         dew_point_in=outside_dew_point,
         dew_point_out=_dew_point_at_ratio(outside_capability, solution.W_out, p=outside.p),
         wall_temperature_mean=solution.T_wall_outside,
-        wall_temperature_min=solution.wall_temperature_min,
-        wall_temperature_max=solution.wall_temperature_max,
-        wet_surface_fraction=solution.wet_surface_fraction,
-        wet_surface_fraction_method=solution.wet_surface_fraction_method,
-        wet_area=solution.wet_area,
-        outside_total_area=solution.outside_total_area,
+        wall_temperature_min=wet_surface.wall_temperature_min,
+        wall_temperature_max=wet_surface.wall_temperature_max,
+        wet_surface_fraction=wet_surface.wet_surface_fraction,
+        wet_surface_fraction_method=wet_surface.method,
         alfa_dry=solution.alfa_o_dry,
         alfa_effective=solution.alfa_o_effective,
         lewis_number=settings.lewis_number,
@@ -544,7 +492,6 @@ def apply_phase_change(
             "fully_drained_liquid_condensate",
             "lewis_number_chilton_colburn_analogy",
             "dry_gas_composition_unchanged_by_condensation",
-            "wet_surface_fraction_two_point_inlet_outlet_estimate",
         ),
         warnings=tuple(warnings_list),
     )
@@ -659,54 +606,23 @@ def apply_phase_change(
         euler_provider=euler_provider,
     )
 
-    # Fix (v0.6.0 patch, spec section 16): build a thermal_state consistent
-    # with the wet solution itself -- previously this field was left as the
-    # *dry baseline's* thermal_state while wall_temperature_envelope and
-    # outside_phase_change already reflected the wet solution, an internal
-    # inconsistency. alfa_o here is the *effective* (latent-inclusive)
-    # coefficient, not alfa_dry, so that UA/U reconstruct from alfa_i/alfa_o
-    # exactly as thermal_iteration.solve_iterative_thermal_state's own
-    # reconstruction self-check expects; alfa_outside_dry remains separately
-    # available on outside_phase_change.alfa_dry.
-    wet_thermal_state = IterativeThermalState(
-        inside_bulk_temperature=T_mean_inside,
-        outside_bulk_temperature=T_mean_outside,
-        inside_wall_temperature=solution.T_wall_inside,
-        outside_wall_temperature=solution.T_wall_outside,
-        inside_bulk_props=solution.inside_bulk_props,
-        inside_wall_props=solution.inside_wall_props,
-        outside_bulk_props=solution.outside_bulk_props,
-        outside_wall_props=solution.outside_wall_props,
-        alfa_i=solution.alfa_i,
-        alfa_o=solution.alfa_o_effective,
-        U=solution.U_effective,
-        UA=solution.UA_effective,
-        iterations=solution.iterations,
-        converged=solution.converged,
-        residual=solution.residuals.get("T_wall_outside_K", math.inf),
-        diagnostics=solution.diagnostics,
-        inside_provider_name=type(inside.provider).__name__,
-        outside_provider_name=type(outside_provider_final).__name__,
-        warnings=solution.warnings,
-    )
-
     return replace(
         dry_result,
         converged=solution.converged,
         iterations=solution.iterations,
         T_mean_inside=T_mean_inside,
         T_mean_outside=T_mean_outside,
-        inside_alfa_mean=wet_thermal_state.alfa_i,
-        outside_alfa_mean=wet_thermal_state.alfa_o,
-        U_mean=wet_thermal_state.U,
-        UA=wet_thermal_state.UA,
+        inside_alfa_mean=solution.alfa_i,
+        outside_alfa_mean=solution.alfa_o_dry,
+        U_mean=solution.U_effective,
+        UA=solution.UA_effective,
         q=solution.Q_total,
         T_out_inside=solution.T_out_inside,
         T_out_outside=solution.T_out_outside,
         Q_full=solution.Q_total,
         Q_derated=solution.Q_total,
         final_result=final_result,
-        thermal_state=wet_thermal_state,
+        thermal_state=dry_result.thermal_state,
         wall_temperature_envelope=envelope_wet,
         inside_phase_change=inside_result,
         outside_phase_change=outside_result,
@@ -740,32 +656,17 @@ def _build_capability_side_result(
     near_onset: bool,
     dew_point: float | None,
     p: float,
-    onset: OnsetDecision | None = None,
-    wall_temperature_min: float | None = None,
-    wall_temperature_mean: float | None = None,
-    wall_temperature_max: float | None = None,
 ) -> PhaseChangeResult:
-    """Build a non-active (capable-but-dry / near-onset / disabled)
-    ``PhaseChangeResult``.
-
-    ``onset``/``wall_temperature_*`` are optional so existing call sites
-    (and the ``not capability.capable`` case, which never has a dew point)
-    keep working, but every capable-with-a-dew-point caller should supply
-    them (fix, v0.6.0 patch, spec section 15: "do not leave onset/wall-
-    temperature diagnostics as None just because the wet solver was not
-    run, if the data was available from the dry baseline").
-    """
     warnings: list[ModelWarning] = []
     if near_onset:
         warnings.append(
             make_warning(
                 code=WC.PHASE_CHANGE_NEAR_ONSET,
                 message=(
-                    f"{side}: the dry-baseline minimum wall temperature is "
-                    "within the phase-change activation band of the dew "
-                    "point; the regime is held at sensible-only (dry) to "
-                    "avoid oscillating between dry and wet solves near "
-                    "onset."
+                    f"{side}: the dry-baseline wall temperature is within the "
+                    "phase-change activation band of the dew point; the "
+                    "regime is held at sensible-only (dry) to avoid "
+                    "oscillating between dry and wet solves near onset."
                 ),
                 source="phase_change_integration",
                 severity="warning",
@@ -777,12 +678,12 @@ def _build_capability_side_result(
                 code=WC.PHASE_CHANGE_DISABLED_BUT_POSSIBLE,
                 message=(
                     f"{side}: phase_change_mode=DISABLED forced a sensible-"
-                    "only result, but the dry baseline's minimum estimated "
-                    "wall temperature runs below the dew point -- "
-                    "condensation would be thermodynamically possible here. "
-                    "This result is a forced single-phase approximation: it "
-                    "does not remove condensate from the stream, and the "
-                    "true heat duty and outlet temperature may differ."
+                    "only result, but the dry baseline shows the wall "
+                    "temperature running below the dew point -- condensation "
+                    "would be thermodynamically possible here. This result "
+                    "is a forced single-phase approximation: it does not "
+                    "remove condensate from the stream, and the true heat "
+                    "duty and outlet temperature may differ."
                 ),
                 source="phase_change_integration",
                 severity="warning",
@@ -796,18 +697,11 @@ def _build_capability_side_result(
         capable=capability.capable,
         possible=possible,
         active=False,
-        near_onset=near_onset,
-        onset_margin_K=None if onset is None else onset.margin_K,
-        onset_wall_temperature=wall_temperature_min,
-        onset_temperature_method=ONSET_TEMPERATURE_METHOD if onset is not None else None,
         W_in=capability.W_in,
         W_out=capability.W_in,
         m_dot_condensate=0.0,
         dew_point_in=dew_point,
         dew_point_out=dew_point,
-        wall_temperature_min=wall_temperature_min,
-        wall_temperature_mean=wall_temperature_mean,
-        wall_temperature_max=wall_temperature_max,
         Q_sensible=0.0,
         Q_latent=0.0,
         Q_total=0.0,

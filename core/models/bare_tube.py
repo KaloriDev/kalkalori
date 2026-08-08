@@ -982,7 +982,6 @@ class BareTubeHeatExchanger:
         phase_change_water_ratio_tolerance: float = 1e-6,
         phase_change_condensate_tolerance_kg_s: float = 1e-8,
         phase_change_wall_temperature_tolerance_K: float = 0.05,
-        phase_change_wet_fraction_tolerance: float = 1e-3,
         phase_change_relaxation_factor: float = 0.5,
     ) -> "HXSimulationResult":
         """Simulate this exchanger, converging the wall/length-corrected
@@ -1060,7 +1059,6 @@ class BareTubeHeatExchanger:
             water_ratio_tolerance=phase_change_water_ratio_tolerance,
             condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
             wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
-            wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
             relaxation_factor=phase_change_relaxation_factor,
         )
         return apply_phase_change(
@@ -1095,7 +1093,6 @@ class BareTubeHeatExchanger:
         phase_change_water_ratio_tolerance: float = 1e-6,
         phase_change_condensate_tolerance_kg_s: float = 1e-8,
         phase_change_wall_temperature_tolerance_K: float = 0.05,
-        phase_change_wet_fraction_tolerance: float = 1e-3,
         phase_change_relaxation_factor: float = 0.5,
     ) -> "HXRatingResult":
         """Rate this exchanger against a closed heat balance (overdesign).
@@ -1146,7 +1143,6 @@ class BareTubeHeatExchanger:
             water_ratio_tolerance=phase_change_water_ratio_tolerance,
             condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
             wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
-            wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
             relaxation_factor=phase_change_relaxation_factor,
         )
         return apply_phase_change_to_rating(

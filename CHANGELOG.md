@@ -13,10 +13,6 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added sensible/latent heat and condensate mass-balance results.
 - Added a dry-only override with condensation warnings.
 
-### Fixed
-
-- Fixed condensation onset detection and partial wet-area handling.
-
 ### Notes
 
 - The model remains 0D and supports one phase-changing side.
