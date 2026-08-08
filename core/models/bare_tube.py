@@ -32,11 +32,13 @@ from core.heat_transfer.internal_flow import (
 
 from core.pressure_drop.internal_pressure_drop import (
     TubeBundleHydraulicResult,
+    TubeSideHydraulicPoint,
     calculate_tube_bundle_hydraulics,
 )
 
 from core.heat_transfer.outside_flow import (
     FluidProps as OutsideFlowFluidProps,
+    OutsideHydraulicPoint,
     OutsideTubeBankHydraulicResult,
     calculate_outside_tube_bank_hydraulics,
     outside_flow_from_mass_flow,
@@ -341,6 +343,19 @@ class HXOutsidePressureDropResults:
 
 @dataclass(frozen=True)
 class HXResult:
+    """Single-pass exchanger result and its solver-owned diagnostics.
+
+    ``inside_properties_*`` and ``outside_properties_*`` expose the existing
+    inlet/midpoint/outlet hydraulic points. Each point contains the exact
+    temperature, representative pressure, transport properties, and Prandtl
+    number used by the hydraulic calculation. The midpoint definition is
+    recorded on ``tube_bundle_hydraulic.midpoint_method`` or
+    ``outside_tube_bank_hydraulic.midpoint_method``.
+
+    These point states are distinct from representative 0D thermal
+    properties reported by higher-level Simulation/Rating results.
+    """
+
     # Geometry / areas
     A_i: float          # [m^2] inner heat transfer area (effective)
     A_o: float          # [m^2] outer heat transfer area (effective)
@@ -372,6 +387,33 @@ class HXResult:
     @property
     def tube_bundle_hydraulic(self) -> TubeBundleHydraulicResult:
         return self.tube_side_hydraulic.tube_bundle
+
+    @property
+    def inside_properties_inlet(self) -> TubeSideHydraulicPoint:
+        return self.tube_bundle_hydraulic.inlet
+
+    @property
+    def inside_properties_midpoint(self) -> TubeSideHydraulicPoint:
+        return self.tube_bundle_hydraulic.midpoint
+
+    @property
+    def inside_properties_outlet(self) -> TubeSideHydraulicPoint:
+        return self.tube_bundle_hydraulic.outlet
+
+    @property
+    def outside_properties_inlet(self) -> OutsideHydraulicPoint | None:
+        hydraulic = self.outside_tube_bank_hydraulic
+        return None if hydraulic is None else hydraulic.inlet
+
+    @property
+    def outside_properties_midpoint(self) -> OutsideHydraulicPoint | None:
+        hydraulic = self.outside_tube_bank_hydraulic
+        return None if hydraulic is None else hydraulic.midpoint
+
+    @property
+    def outside_properties_outlet(self) -> OutsideHydraulicPoint | None:
+        hydraulic = self.outside_tube_bank_hydraulic
+        return None if hydraulic is None else hydraulic.outlet
 
     @property
     def inside_dp_friction(self) -> float:
@@ -982,6 +1024,7 @@ class BareTubeHeatExchanger:
         phase_change_water_ratio_tolerance: float = 1e-6,
         phase_change_condensate_tolerance_kg_s: float = 1e-8,
         phase_change_wall_temperature_tolerance_K: float = 0.05,
+        phase_change_wet_fraction_tolerance: float = 1e-3,
         phase_change_relaxation_factor: float = 0.5,
     ) -> "HXSimulationResult":
         """Simulate this exchanger, converging the wall/length-corrected
@@ -1059,6 +1102,7 @@ class BareTubeHeatExchanger:
             water_ratio_tolerance=phase_change_water_ratio_tolerance,
             condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
             wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
+            wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
             relaxation_factor=phase_change_relaxation_factor,
         )
         return apply_phase_change(
@@ -1093,6 +1137,7 @@ class BareTubeHeatExchanger:
         phase_change_water_ratio_tolerance: float = 1e-6,
         phase_change_condensate_tolerance_kg_s: float = 1e-8,
         phase_change_wall_temperature_tolerance_K: float = 0.05,
+        phase_change_wet_fraction_tolerance: float = 1e-3,
         phase_change_relaxation_factor: float = 0.5,
     ) -> "HXRatingResult":
         """Rate this exchanger against a closed heat balance (overdesign).
@@ -1143,6 +1188,7 @@ class BareTubeHeatExchanger:
             water_ratio_tolerance=phase_change_water_ratio_tolerance,
             condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
             wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
+            wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
             relaxation_factor=phase_change_relaxation_factor,
         )
         return apply_phase_change_to_rating(

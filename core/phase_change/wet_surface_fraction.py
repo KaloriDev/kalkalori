@@ -1,23 +1,40 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""0D wet-surface-fraction diagnostic (spec section 24).
+"""0D linear wet-surface estimate for partial outside condensation.
 
-This is a diagnostic estimate only -- a 0D model has no spatial resolution
-to report an exact wetted fraction of the outside tube-bank surface.
-Method: reuse the existing four-endpoint 0D wall-temperature envelope
-(``core.heat_transfer.thermal_iteration.estimate_wall_temperature_envelope``,
-the same tool the dry solver already uses for
-``wall_temperature_envelope``), compare each probe's outside wall
-temperature against the dew point appropriate to its position (inlet-
-paired probes against the inlet dew point, outlet-paired probes against the
-outlet dew point -- water content, and therefore dew point, differs between
-the two ends once condensation has removed some water), ramp each
-comparison to a bounded [0, 1] indicator across the same activation band
-used for regime deciding, and average the available indicators.
+This is a diagnostic *and* modelling estimate: it also scales the mass-
+transfer area used inside ``core.phase_change.outside_condensation_solver``
+(``A_wet = A_outside * wet_surface_fraction``), so unlike a purely
+cosmetic diagnostic it must be cheap enough to evaluate every wet-solver
+iteration -- see that module for how ``wall_temperature_min``/``_max`` are
+obtained inexpensively per iteration (a closed-form two-point estimate,
+not the full four-probe ``WallTemperatureEnvelope``).
 
-No 1D/segmented model is implied or added; see
-``docs/property_models.md`` for the stated limitations of this estimate.
+Model: linear interpolation of the local dew point between the estimated
+minimum and maximum wall temperature (spec section 8):
+
+    wet_surface_fraction = (T_dew - T_wall_min) / (T_wall_max - T_wall_min)
+
+clamped to ``[0, 1]``, with ``T_dew <= T_wall_min -> 0`` and
+``T_dew >= T_wall_max -> 1``. This assumes an approximately linear surface-
+temperature distribution between the two estimated extremes -- a
+deliberate 0D simplification (see ``docs/property_models.md``), not a
+spatially resolved (1D/segmented) result.
+
+For the same linear envelope, the representative temperature of the wet
+part is the mean of its lower and upper temperature bounds:
+
+    T_wall_wet_mean = 0.5 * (T_wall_min + min(T_dew, T_wall_max))
+
+It is ``None`` for a dry surface.  For a degenerate, effectively uniform
+envelope, the existing mean-based wet-fraction fallback is retained and a
+wet result uses ``T_wall_mean``.  The temperature is intended for
+wet-surface equilibrium and condensate properties; it does not replace the
+global wall mean used by the sensible heat-transfer resistance network.
+
+No 1D/segmented model, row-by-row interpolation, endpoint-area weighting,
+or statistical temperature-distribution model is added here.
 """
 
 from __future__ import annotations
@@ -25,41 +42,18 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from core.common.warnings import ModelWarning, make_warning
-from core.heat_transfer.thermal_iteration import estimate_wall_temperature_envelope
 
-from core.phase_change import warning_codes as WC
-from core.phase_change.types import PhaseChangeCapability
-from core.phase_change.water_equilibrium import (
-    is_frost_regime,
-    water_dew_point,
-    water_mole_fraction_from_ratio,
-    water_partial_pressure,
-)
-from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
-
-METHOD_NAME = "0d_endpoint_wet_fraction_estimate"
-
-SOURCE = "wet_surface_fraction"
+LINEAR_METHOD_NAME = "linear_wall_temperature_envelope"
+DEGENERATE_METHOD_NAME = "uniform_wall_temperature_fallback"
 
 
 @dataclass(frozen=True)
 class WetSurfaceFractionEstimate:
     wet_surface_fraction: float
     method: str
-    wall_temperature_min: float
-    wall_temperature_max: float
-    warnings: tuple[ModelWarning, ...] = ()
-
-
-def _dew_point_or_none(capability: PhaseChangeCapability, W: float, *, p: float) -> float | None:
-    if W <= 0.0:
-        return None
-    y = water_mole_fraction_from_ratio(W, M_dry=capability.M_dry, M_h2o=capability.M_condensable)
-    p_h2o = water_partial_pressure(y, p)
-    if is_frost_regime(p_h2o):
-        return None
-    return water_dew_point(p_h2o)
+    # Appended with a default so the existing two-argument constructor and
+    # the original fields retain their API/positional meaning.
+    wall_temperature_wet_mean: float | None = None
 
 
 def _clamp01(value: float) -> float:
@@ -67,101 +61,100 @@ def _clamp01(value: float) -> float:
 
 
 def estimate_wet_surface_fraction(
-    hx,
     *,
-    inside_provider,
-    outside_capability: PhaseChangeCapability,
-    m_dot_inside: float,
-    m_dot_dry_carrier: float,
-    T_in_inside: float,
-    T_out_inside: float,
-    T_in_outside: float,
-    T_out_outside: float,
-    W_in: float,
-    W_out: float,
-    p_inside: float,
-    p_outside: float,
-    euler_provider: str = "zukauskas",
+    dew_point_temperature: float,
+    wall_temperature_min: float,
+    wall_temperature_mean: float,
+    wall_temperature_max: float,
+    temperature_span_tolerance_K: float = 1e-3,
     activation_band_K: float = 0.5,
 ) -> WetSurfaceFractionEstimate:
-    W_mean = 0.5 * (W_in + W_out)
-    outside_provider = wet_gas_provider_at_water_ratio(outside_capability, W_mean)
-    m_dot_gas_mean = m_dot_dry_carrier * (1.0 + W_mean)
+    """Return the linear 0D wet-surface-fraction estimate.
 
-    envelope = estimate_wall_temperature_envelope(
-        hx,
-        m_dot_inside=m_dot_inside,
-        m_dot_outside=m_dot_gas_mean,
-        inside_provider=inside_provider,
-        outside_provider=outside_provider,
-        inside_inlet_temperature=T_in_inside,
-        inside_outlet_temperature=T_out_inside,
-        outside_inlet_temperature=T_in_outside,
-        outside_outlet_temperature=T_out_outside,
-        p_inside=p_inside,
-        p_outside=p_outside,
-        euler_provider=euler_provider,
-    )
+    Args:
+        dew_point_temperature: Local dew point [K] for the current wet-gas
+            composition (spec section 10: use the dew point matching the
+            *current* state, not a fixed inlet value, inside the wet
+            solver's iteration).
+        wall_temperature_min, wall_temperature_mean, wall_temperature_max:
+            Estimated wall-temperature extrema and mean [K].
+            ``wall_temperature_max`` must be >= ``wall_temperature_min``.
+        temperature_span_tolerance_K: Guard against dividing by a
+            near-zero ``(wall_temperature_max - wall_temperature_min)``
+            span (spec section 9). Must be > 0.
+        activation_band_K: Only used in the degenerate (near-zero span)
+            fallback, to decide "clearly wet"/"clearly dry"/"near onset"
+            relative to ``wall_temperature_mean``; same meaning as
+            ``core.phase_change.regime``'s activation band. Must be > 0.
 
-    dew_point_in = _dew_point_or_none(outside_capability, W_in, p=p_outside)
-    dew_point_out = _dew_point_or_none(outside_capability, W_out, p=p_outside)
-
-    warnings: list[ModelWarning] = [
-        make_warning(
-            code=WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
-            message=(
-                "outside: wet_surface_fraction is a 0D endpoint estimate "
-                f"({METHOD_NAME}), not a spatially resolved (1D/segmented) "
-                "wetted-area fraction."
-            ),
-            source=SOURCE,
-            severity="info",
+    Returns:
+        WetSurfaceFractionEstimate with ``wet_surface_fraction`` always a
+        finite value in ``[0, 1]`` (never NaN/infinity),
+        ``wall_temperature_wet_mean`` equal to a finite representative
+        wet-zone temperature or ``None`` for a dry surface, and ``method``
+        naming which branch was used
+        (``"linear_wall_temperature_envelope"`` or
+        ``"uniform_wall_temperature_fallback"``).
+    """
+    if not math.isfinite(temperature_span_tolerance_K) or temperature_span_tolerance_K <= 0.0:
+        raise ValueError("temperature_span_tolerance_K must be a positive finite value.")
+    if not math.isfinite(activation_band_K) or activation_band_K <= 0.0:
+        raise ValueError("activation_band_K must be a positive finite value.")
+    for name, value in (
+        ("dew_point_temperature", dew_point_temperature),
+        ("wall_temperature_min", wall_temperature_min),
+        ("wall_temperature_mean", wall_temperature_mean),
+        ("wall_temperature_max", wall_temperature_max),
+    ):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite value, got {value!r}.")
+    if wall_temperature_max < wall_temperature_min:
+        raise ValueError(
+            "wall_temperature_max must be greater than or equal to "
+            "wall_temperature_min."
         )
-    ]
 
-    fractions: list[float] = []
-    for probe in envelope.probes:
-        if not probe.converged or not math.isfinite(probe.outside_wall_temperature):
-            continue
-        is_inlet_probe = math.isclose(
-            probe.outside_bulk_temperature, T_in_outside, rel_tol=0.0, abs_tol=1e-6
-        )
-        dew_local = dew_point_in if is_inlet_probe else dew_point_out
-        if dew_local is None:
-            continue
-        margin = dew_local - probe.outside_wall_temperature
-        fractions.append(_clamp01(0.5 + margin / activation_band_K))
+    span = wall_temperature_max - wall_temperature_min
 
-    if fractions:
-        wet_fraction = sum(fractions) / len(fractions)
-    else:
-        # No usable probe: fall back to a coarse mean/min/max-based estimate
-        # using only the min/max envelope extrema (spec section 24: "if the
-        # current model does not have enough points, apply a minimal
-        # estimate based on the available mean/min/max temperatures").
-        warnings.append(
-            make_warning(
-                code="wet_surface_fraction_fallback_estimate",
-                message=(
-                    "outside: no wall-temperature endpoint probe could be "
-                    "compared against a dew point; wet_surface_fraction "
-                    "falls back to a coarse min/max-based estimate."
-                ),
-                source=SOURCE,
-                severity="warning",
-            )
-        )
-        dew_ref = dew_point_out or dew_point_in
-        if dew_ref is None or not math.isfinite(envelope.outside_min) or not math.isfinite(envelope.outside_max):
-            wet_fraction = 1.0
+    if abs(span) <= temperature_span_tolerance_K:
+        # Degenerate envelope (near-uniform wall temperature): fall back to
+        # a mean-based ramp across the activation band -- never divide by
+        # the near-zero span (spec section 9).
+        margin = dew_point_temperature - wall_temperature_mean
+        half_band = activation_band_K / 2.0
+        if margin >= half_band:
+            fraction = 1.0
+        elif margin <= -half_band:
+            fraction = 0.0
         else:
-            wall_mean = 0.5 * (envelope.outside_min + envelope.outside_max)
-            wet_fraction = _clamp01(0.5 + (dew_ref - wall_mean) / activation_band_K)
+            fraction = _clamp01(0.5 + margin / activation_band_K)
+        wall_temperature_wet_mean = wall_temperature_mean if fraction > 0.0 else None
+        return WetSurfaceFractionEstimate(
+            wet_surface_fraction=fraction,
+            wall_temperature_wet_mean=wall_temperature_wet_mean,
+            method=DEGENERATE_METHOD_NAME,
+        )
+
+    if dew_point_temperature <= wall_temperature_min:
+        fraction = 0.0
+        wall_temperature_wet_mean = None
+    elif dew_point_temperature >= wall_temperature_max:
+        fraction = 1.0
+        wall_temperature_wet_mean = 0.5 * (
+            wall_temperature_min + wall_temperature_max
+        )
+    else:
+        fraction = (dew_point_temperature - wall_temperature_min) / span
+        wall_temperature_wet_mean = 0.5 * (
+            wall_temperature_min + dew_point_temperature
+        )
+
+    # Numerical safety clamp only (span > tolerance > 0 already guarantees
+    # fraction in [0, 1] analytically); never used to mask a sign error.
+    fraction = _clamp01(fraction)
 
     return WetSurfaceFractionEstimate(
-        wet_surface_fraction=wet_fraction,
-        method=METHOD_NAME,
-        wall_temperature_min=envelope.outside_min,
-        wall_temperature_max=envelope.outside_max,
-        warnings=tuple(warnings),
+        wet_surface_fraction=fraction,
+        wall_temperature_wet_mean=wall_temperature_wet_mean,
+        method=LINEAR_METHOD_NAME,
     )

@@ -21,6 +21,7 @@ from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
+from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change.integration import (
     InsideCondensationNotSupportedError,
     MultiplePhaseChangeSidesError,
@@ -28,6 +29,7 @@ from core.phase_change.integration import (
 )
 from core.phase_change.regime import ThermalRegime, decide_regime
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
+from core.phase_change.wet_gas_composition import wet_gas_spec_at_water_ratio
 
 
 def _hx(n_rows: int = 20, n_tubes_per_row: int = 30) -> BareTubeHeatExchanger:
@@ -137,7 +139,21 @@ def test_wet_gas_outside_disabled_gives_sensible_only_with_warning() -> None:
     assert pc.possible is True
     assert pc.m_dot_condensate == 0.0
     assert pc.W_out == pc.W_in
+    assert pc.m_dot_gas_in == outside.m_dot
+    assert pc.m_dot_gas_out == outside.m_dot
+    assert pc.m_dot_water_vapor_out == pc.m_dot_water_vapor_in
     assert pc.Q_latent == 0.0
+    hydraulic = result.outside_tube_bank_hydraulic
+    assert hydraulic.inlet.face_mass_flux == hydraulic.midpoint.face_mass_flux
+    assert hydraulic.midpoint.face_mass_flux == hydraulic.outlet.face_mass_flux
+    assert result.outside_properties_outlet.props == outside.provider.at(
+        T=result.T_out_outside, p=outside.p
+    )
+    capability = detect_phase_change_capability(outside.provider)
+    assert (
+        wet_gas_spec_at_water_ratio(capability, pc.W_out).to_mole_fractions()
+        == wet_gas_spec_at_water_ratio(capability, pc.W_in).to_mole_fractions()
+    )
     assert any(w.code == PHASE_CHANGE_DISABLED_BUT_POSSIBLE for w in pc.warnings)
 
 
