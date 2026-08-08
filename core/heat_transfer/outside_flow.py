@@ -86,7 +86,12 @@ OutsideHydraulicPosition = Literal["inlet", "midpoint", "outlet"]
 
 @dataclass(frozen=True)
 class OutsideHydraulicPoint:
-    """Three-state outside tube-bank hydraulic point."""
+    """Three-state outside tube-bank hydraulic and fluid-property point.
+
+    ``T``/``p`` and ``rho``/``cp``/``mu``/``k`` are convenience aliases for
+    data already stored for the hydraulic calculation. They do not trigger a
+    provider call or create a parallel property state.
+    """
 
     position: OutsideHydraulicPosition
     temperature: float
@@ -106,6 +111,30 @@ class OutsideHydraulicPoint:
     @property
     def Pr(self) -> float:
         return self.prandtl
+
+    @property
+    def T(self) -> float:
+        return self.temperature
+
+    @property
+    def p(self) -> float:
+        return self.pressure
+
+    @property
+    def rho(self) -> float:
+        return self.props.rho
+
+    @property
+    def cp(self) -> float:
+        return self.props.cp
+
+    @property
+    def mu(self) -> float:
+        return self.props.mu
+
+    @property
+    def k(self) -> float:
+        return self.props.k
 
     @property
     def h(self) -> float | None:
