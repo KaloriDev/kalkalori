@@ -973,16 +973,6 @@ class BareTubeHeatExchanger:
         relative_duty_tolerance: float = 1e-4,
         relaxation_factor: float = 0.5,
         relative_alfa_tolerance: float = 1e-3,
-        phase_change_onset_tolerance_K: float = 0.0,
-        phase_change_activation_band_K: float = 0.5,
-        lewis_number: float = 1.0,
-        phase_change_max_iterations: int = 50,
-        phase_change_temperature_tolerance_K: float = 0.05,
-        phase_change_relative_Q_tolerance: float = 1e-4,
-        phase_change_water_ratio_tolerance: float = 1e-6,
-        phase_change_condensate_tolerance_kg_s: float = 1e-8,
-        phase_change_wall_temperature_tolerance_K: float = 0.05,
-        phase_change_relaxation_factor: float = 0.5,
     ) -> "HXSimulationResult":
         """Simulate this exchanger, converging the wall/length-corrected
         iterative thermal state by default (v0.5.3).
@@ -1012,26 +1002,10 @@ class BareTubeHeatExchanger:
 
         See ``core.models.simulation.run_simulation`` for the full algorithm,
         arguments and result fields.
-
-        Phase change (v0.6.0)
-        ----------------------
-        After the sensible-only dry baseline above, this method calls
-        ``core.phase_change.integration.apply_phase_change``, which detects
-        H2O phase-change capability (``inside.provider``/``outside.provider``)
-        and, when ``phase_change_mode=PhaseChangeMode.AUTO`` (the default,
-        set per side on ``HXSideInput``) shows the dry baseline's outside
-        wall running below the water dew point, solves partial outside H2O
-        condensation (``core.phase_change.outside_condensation_solver``).
-        See that module and ``core.phase_change.types.PhaseChangeMode`` for
-        the full AUTO/DISABLED semantics, and ``docs/property_models.md``
-        for the physical model. The ``phase_change_*`` keyword arguments
-        here control only the phase-change onset/iteration; they have no
-        effect for a call where neither side is phase-change capable.
         """
         from core.models.simulation import run_simulation
-        from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
 
-        dry_result = run_simulation(
+        return run_simulation(
             self,
             inside,
             outside,
@@ -1047,23 +1021,6 @@ class BareTubeHeatExchanger:
             relative_duty_tolerance=relative_duty_tolerance,
             relaxation_factor=relaxation_factor,
             relative_alfa_tolerance=relative_alfa_tolerance,
-        )
-
-        settings = PhaseChangeSettings(
-            onset_tolerance_K=phase_change_onset_tolerance_K,
-            activation_band_K=phase_change_activation_band_K,
-            lewis_number=lewis_number,
-            max_iterations=phase_change_max_iterations,
-            temperature_tolerance_K=phase_change_temperature_tolerance_K,
-            relative_Q_tolerance=phase_change_relative_Q_tolerance,
-            water_ratio_tolerance=phase_change_water_ratio_tolerance,
-            condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
-            wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
-            relaxation_factor=phase_change_relaxation_factor,
-        )
-        return apply_phase_change(
-            self, inside, outside, dry_result,
-            iterate=iterate, euler_provider=euler_provider, settings=settings,
         )
 
     def rate(
@@ -1084,16 +1041,6 @@ class BareTubeHeatExchanger:
         wall_temperature_tolerance_K: float = 0.05,
         relative_alfa_tolerance: float = 1e-3,
         relaxation_factor: float = 0.5,
-        phase_change_onset_tolerance_K: float = 0.0,
-        phase_change_activation_band_K: float = 0.5,
-        lewis_number: float = 1.0,
-        phase_change_max_iterations: int = 50,
-        phase_change_temperature_tolerance_K: float = 0.05,
-        phase_change_relative_Q_tolerance: float = 1e-4,
-        phase_change_water_ratio_tolerance: float = 1e-6,
-        phase_change_condensate_tolerance_kg_s: float = 1e-8,
-        phase_change_wall_temperature_tolerance_K: float = 0.05,
-        phase_change_relaxation_factor: float = 0.5,
     ) -> "HXRatingResult":
         """Rate this exchanger against a closed heat balance (overdesign).
 
@@ -1119,45 +1066,31 @@ class BareTubeHeatExchanger:
 
         For Simulation (computing achievable outlet temperatures from known
         inlets), see ``.simulate(...)``.
-
-        Phase change (v0.6.0)
-        ----------------------
-        See
-        ``core.phase_change.rating_integration.apply_phase_change_to_rating``
-        for the outside-H2O-condensation rating algorithm and its scope
-        (requires an unambiguous closed balance: an explicit ``Q`` or a
-        fully specified, non-condensing inside side, plus a fully specified
-        outside temperature program and mass flow). ``phase_change_mode`` is
-        set per side on ``BalanceSideSpec``.
         """
-        from core.phase_change.rating_integration import apply_phase_change_to_rating
-        from core.phase_change.integration import PhaseChangeSettings
+        from core.models.heat_balance import close_heat_balance
+        from core.models.rating import run_rating
 
-        settings = PhaseChangeSettings(
-            onset_tolerance_K=phase_change_onset_tolerance_K,
-            activation_band_K=phase_change_activation_band_K,
-            lewis_number=lewis_number,
-            max_iterations=phase_change_max_iterations,
-            temperature_tolerance_K=phase_change_temperature_tolerance_K,
-            relative_Q_tolerance=phase_change_relative_Q_tolerance,
-            water_ratio_tolerance=phase_change_water_ratio_tolerance,
-            condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
-            wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
-            relaxation_factor=phase_change_relaxation_factor,
+        closed_balance = close_heat_balance(
+            inside,
+            outside,
+            Q=Q,
+            effectiveness=effectiveness,
+            over_specified_tolerance=over_specified_tolerance,
         )
-        return apply_phase_change_to_rating(
-            self, inside, outside,
-            Q=Q, effectiveness=effectiveness,
+
+        return run_rating(
+            self,
+            closed_balance,
             flow_arrangement=flow_arrangement,
-            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            K_inlet=K_inlet,
+            K_outlet=K_outlet,
+            K_turn=K_turn,
             euler_provider=euler_provider,
             include_simulation=include_simulation,
-            over_specified_tolerance=over_specified_tolerance,
             max_iterations=max_iterations,
             wall_temperature_tolerance_K=wall_temperature_tolerance_K,
             relative_alfa_tolerance=relative_alfa_tolerance,
             relaxation_factor=relaxation_factor,
-            settings=settings,
         )
 
     def solve_thermal_state(

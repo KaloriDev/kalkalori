@@ -214,55 +214,6 @@ Used for:
 
 ---
 
-## Outside Water Condensation (v0.6.0)
-
-- IAPWS.
-  *Revised Release on the IAPWS Industrial Formulation 1997 for the
-  Thermodynamic Properties of Water and Steam.* Used for the water
-  saturation curve (dew point, saturated liquid/vapor enthalpy, latent
-  heat) via `core.properties.water`; the sole source of water-property
-  data used by `core.phase_change`.
-
-- Chilton, T. H., Colburn, A. P. (1934).
-  "Mass Transfer (Absorption) Coefficients", *Ind. Eng. Chem.*, 26(11).
-  Heat/mass-transfer analogy used by
-  `core.phase_change.mass_heat_transfer` to derive a condensation
-  mass-transfer coefficient from the existing dry outside heat-transfer
-  coefficient.
-
-- Lewis, W. K. (1922).
-  Relation between heat- and mass-transfer coefficients for air-water
-  systems ("Lewis relation"). The `lewis_number=1.0` default in
-  `core.phase_change` is this classic air-water simplification, exposed as
-  a **configurable** assumption (`lewis_number`), not asserted as a
-  universal constant for arbitrary gas mixtures.
-
-- Bosnjakovic, F.; Merkel, F.
-  Enthalpy-potential ("Merkel") method for combined heat/mass transfer in
-  the presence of a non-condensable carrier gas, as used in cooling-tower
-  and wet-cooling-coil literature. Background for expressing the
-  condensation driving force directly on the W = kg H2O / kg dry-carrier
-  basis used throughout `core.phase_change`, rather than a molar/volume
-  concentration basis.
-
-- Incropera et al.
-  *Fundamentals of Heat and Mass Transfer* -- heat-mass transfer analogy
-  chapter (Chilton-Colburn / Lewis-relation background), and the same
-  Zukauskas tube-bank correlation already used for dry outside heat
-  transfer (`core.heat_transfer.outside_flow`), reused unchanged as
-  `alfa_outside_dry` -- v0.6.0 does not introduce or calibrate a separate
-  wet-surface heat-transfer correlation.
-
-Used for:
-- H2O dew point and saturated water content of a general (non-air) carrier
-  gas mixture,
-- the wet-gas specific-enthalpy balance (`core.phase_change.
-  wet_gas_enthalpy`),
-- the condensation mass-transfer coefficient
-  (`core.phase_change.mass_heat_transfer`).
-
----
-
 ## Notes on Applicability
 
 The references listed here are not a substitute for validation.

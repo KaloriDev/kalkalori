@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.6.0`
+**Current version:** `v0.5.5`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -47,58 +47,38 @@ return losses remain future work.
 
 ---
 
+### v0.5.x - Iterative Mean-Property HX Simulation & Rating
+
+**Goal:**  
+Add an iterative mean-property heat exchanger simulation, and split
+Simulation from Rating along design-practice lines.
+
+**Focus areas:**
+- Replace inlet-property-only evaluation with mean-bulk-property iteration
+  (`simulate()`, formerly named `rate()`).
+- (v0.5.1) Separate **Simulation** (known inlets -> achievable outlets) from
+  **Rating** (closed heat balance -> overdesign / surface margin), with a
+  heat-balance closure helper and an inverted eps-NTU relation.
+- (v0.5.5) Use universal inlet/midpoint/outlet bulk states for straight
+  tube-bundle friction with Simpson integration and signed acceleration change.
+- (v0.5.5) Keep nozzle, chamber, tube-sheet, return, bend, header, and
+  collector local losses outside the current 0D scope.
+
+---
+
 ### v0.6.x — Phase Change (0D)
 
-**Goal:**
+**Goal:**  
 Support phase-change phenomena within a lumped-parameter framework.
 
-**Notes:**
+**Focus areas:**
+- condensation of steam on tube side
+- moisture condensation from humid air on outside
+- sensible + latent heat balance
+- effective heat transfer coefficients
+
+**Notes:**  
 This is a major functional extension, but **not** a new modelling paradigm.
-The patch list below is a plan, not a commitment: later patch numbering and
-scope may be adjusted based on validation results as each step lands.
-
-#### v0.6.0 — Outside water condensation (this release)
-
-- Partial H2O condensation from a water-containing gas outside bare tubes.
-- Automatic phase-change detection with a dry-only override
-  (`PhaseChangeMode.AUTO` / `PhaseChangeMode.DISABLED`).
-- Sensible/latent duty and condensate mass balance.
-- At most one active phase-changing side per call; inside condensation is
-  detected but not solved (see v0.6.1).
-
-#### v0.6.1 — Inside condensation, full steam condensation
-
-- H2O condensation inside tubes.
-- Partial wet-gas condensation inside tubes.
-- Full steam-condensation mode.
-- Still one active phase-changing side per call.
-
-#### v0.6.2 — Evaporation
-
-- Partial evaporation from an explicitly specified liquid or droplet
-  inventory in a gas stream.
-- One active evaporating side.
-
-#### v0.6.3 — Condensate film and carryover
-
-- Condensate film retention and drainage.
-- Carryover, re-entrainment and re-evaporation.
-
-#### v0.6.4 — Freezing
-
-- Freezing and solid water deposits.
-
-#### v0.6.5 — Multiple condensable species
-
-- Multiple condensable species.
-- Replaceable acid-dew-point and phase-equilibrium providers.
-
-#### v0.6.6 — Two-phase hydraulics
-
-- Two-phase and condensate-related hydraulic corrections.
-
-**Out of scope for the whole v0.6.x line:** corrosion and material
-selection remain outside the solver's scope.
 
 ---
 

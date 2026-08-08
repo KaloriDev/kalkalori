@@ -327,9 +327,6 @@ def calculate_outside_tube_bank_hydraulics(
     outlet_props: Any | None = None,
     use_vmax_for_dp: bool = True,
     pressure_drop_geometry_meta: dict | None = None,
-    m_dot_inlet: float | None = None,
-    m_dot_midpoint: float | None = None,
-    m_dot_outlet: float | None = None,
 ) -> OutsideTubeBankHydraulicResult:
     """Calculate three-state variable-property crossflow tube-bank hydraulics.
 
@@ -345,18 +342,6 @@ def calculate_outside_tube_bank_hydraulics(
     because inlet and outlet are the same physical face reference sections in
     this 0D model.  Pressure is held at one representative value for all
     three property evaluations; no pressure-property iteration is performed.
-
-    ``m_dot_inlet``/``m_dot_midpoint``/``m_dot_outlet`` (v0.6.0, all default
-    ``None``): optional per-point *gas-phase* mass flow override [kg/s], for
-    the case where the remaining gas-phase stream itself loses mass along
-    the flow path (partial condensate removal --
-    ``core.phase_change.outside_condensation_solver``); the liquid
-    condensate is never added to this gas-phase velocity/Reynolds basis.
-    When none are given (the default, and every pre-v0.6.0 call site), the
-    single ``m_dot`` is used everywhere exactly as before -- this is a
-    strictly additive extension, not a behavior change, for the
-    non-condensing default path (``dp_drag``, ``dp_acceleration``, and every
-    other field are bit-for-bit identical to prior versions in that case).
     """
     _validate_outside_hydraulic_inputs(
         m_dot=m_dot,
@@ -381,19 +366,6 @@ def calculate_outside_tube_bank_hydraulics(
     )
     face_mass_flux = m_dot / face_area
     reference_mass_flux = m_dot / reference_area
-
-    # Per-point *face* mass flux for the remaining gas phase (v0.6.0).
-    # Reynolds/Euler-provider dispatch and the drag integral below
-    # deliberately keep using the single shared reference_mass_flux (see the
-    # docstring: this stays a bulk/reference-property calculation, matching
-    # the existing three-state contract); only the reported per-point face
-    # velocity/flux and the signed acceleration term (below) use the
-    # per-point gas-phase mass flow when it differs from point to point.
-    face_mass_flux_points = {
-        "inlet": m_dot_inlet / face_area if m_dot_inlet is not None else face_mass_flux,
-        "midpoint": m_dot_midpoint / face_area if m_dot_midpoint is not None else face_mass_flux,
-        "outlet": m_dot_outlet / face_area if m_dot_outlet is not None else face_mass_flux,
-    }
 
     warnings: list[ModelWarning] = []
     if provider is None:
@@ -533,9 +505,8 @@ def calculate_outside_tube_bank_hydraulics(
                 "outside_bank_hydraulics_invalid_euler: Euler number must be finite and non-negative."
             )
 
-        point_face_mass_flux = face_mass_flux_points[position]
         reference_velocity = reference_mass_flux / props.rho
-        face_velocity = point_face_mass_flux / props.rho
+        face_velocity = face_mass_flux / props.rho
         dynamic_pressure_reference = reference_mass_flux**2 / (2.0 * props.rho)
         prandtl = props.mu * props.cp / props.k
         if not all(
@@ -560,7 +531,7 @@ def calculate_outside_tube_bank_hydraulics(
                 pressure=float(p),
                 props=props,
                 enthalpy=enthalpy,
-                face_mass_flux=point_face_mass_flux,
+                face_mass_flux=face_mass_flux,
                 face_velocity=face_velocity,
                 reference_area=reference_area,
                 reference_mass_flux=reference_mass_flux,
@@ -595,19 +566,7 @@ def calculate_outside_tube_bank_hydraulics(
     # The inlet and outlet are the same face-flow reference sections in this
     # 0D bank model, so acceleration uses face mass flux rather than V_max mass
     # flux.  Refs: White, Fluid Mechanics; Idelchik; Crane TP-410.
-    #
-    # v0.6.0: generalized to independent inlet/outlet face mass flux, for the
-    # remaining-gas-phase momentum change when the gas stream itself loses
-    # mass along the path (condensate removal -- the condensate is never
-    # part of this gas-phase flux). When m_dot_inlet/m_dot_outlet are not
-    # given (every pre-v0.6.0 call site), points[2]/points[0] face_mass_flux
-    # are both the same shared face_mass_flux, so this reduces to exactly
-    # the prior expression bit-for-bit (same single value squared, factored
-    # the same way as before).
-    dp_acceleration = (
-        points[2].face_mass_flux**2 / points[2].props.rho
-        - points[0].face_mass_flux**2 / points[0].props.rho
-    ) if (m_dot_inlet is not None or m_dot_outlet is not None) else face_mass_flux**2 * (
+    dp_acceleration = face_mass_flux**2 * (
         1.0 / points[2].props.rho - 1.0 / points[0].props.rho
     )
     dp_total = dp_drag + dp_acceleration
