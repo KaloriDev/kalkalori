@@ -261,22 +261,6 @@ Used for:
 - the condensation mass-transfer coefficient
   (`core.phase_change.mass_heat_transfer`).
 
-The implementation applies these references in a lumped 0D model. Onset
-uses `T_wall_min`; the wet fraction is estimated linearly from
-`T_wall_min`, `T_wall_max`, and `T_dew`, and
-`A_wet = A_outside * wet_surface_fraction` is used only for mass transfer
-and latent duty. For a wet, nondegenerate envelope, the representative
-wet-surface temperature is
-`T_wall_wet_mean = 0.5 * (T_wall_min + min(T_dew, T_wall_max))`; a
-degenerate wet envelope falls back to `T_wall_mean`. This wet temperature
-sets the surface saturation ratio and mass-transfer driving force, `h_fg`,
-and the saturated-liquid enthalpy of drained condensate.
-
-The global `T_wall_mean` and full `A_outside` remain in the whole-surface
-sensible-heat, resistance, `U`, and `UA` calculations and in reporting.
-Neither the linear wet-zone estimate nor the cited heat/mass-transfer
-analogy is a local 1D wall or condensate-film solution.
-
 ---
 
 ## Notes on Applicability

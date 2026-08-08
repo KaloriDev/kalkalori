@@ -19,17 +19,10 @@ from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.heat_balance import BalanceSideSpec
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
 from core.phase_change.capability import detect_phase_change_capability
-from core.phase_change.integration import _dew_point_at_ratio
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
 from core.phase_change.wet_gas_composition import (
     wet_gas_provider_at_water_ratio,
     wet_gas_spec_at_water_ratio,
-)
-from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
-from core.phase_change.water_equilibrium import saturated_water_ratio
-from core.properties.water import (
-    water_latent_heat_of_vaporization,
-    water_saturation_liquid_enthalpy,
 )
 
 
@@ -73,20 +66,8 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
     assert pc.Q_total == pytest.approx(pc.Q_sensible + pc.Q_latent, rel=1e-9)
     assert abs(pc.mass_balance_error) < 1e-6
     assert abs(pc.energy_balance_error) < 1e-6
-    assert pc.converged is True
-    assert 2 <= pc.iterations <= 12
-    assert pc.method == "outside_condensation_rating_wet_wall_fixed_point"
     assert math.isfinite(result.overdesign_factor)
     assert math.isfinite(result.UA_required)
-
-    envelope = result.wall_temperature_envelope
-    assert all(probe.converged for probe in envelope.probes)
-    assert envelope.outside_min == min(
-        probe.outside_wall_temperature for probe in envelope.probes
-    )
-    assert envelope.outside_max == max(
-        probe.outside_wall_temperature for probe in envelope.probes
-    )
 
     hydraulic = result.outside_tube_bank_hydraulic
     states = (
@@ -102,63 +83,6 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
 
     capability = detect_phase_change_capability(outside.provider)
     W_mid = 0.5 * (pc.W_in + pc.W_out)
-    dew_point_mid = _dew_point_at_ratio(capability, W_mid, p=outside.p)
-    assert dew_point_mid is not None
-    assert pc.wall_temperature_wet_mean is not None
-    assert pc.W_sat_wet_surface is not None
-    assert 0.0 < pc.wet_surface_fraction <= 1.0
-    assert pc.wet_area == pytest.approx(
-        pc.outside_total_area * pc.wet_surface_fraction, rel=1e-12
-    )
-    assert pc.wall_temperature_min <= pc.wall_temperature_mean <= pc.wall_temperature_max
-    assert pc.wall_temperature_mean == pytest.approx(
-        0.5 * (pc.wall_temperature_min + pc.wall_temperature_max),
-        abs=1e-12,
-    )
-    assert pc.wall_temperature_min <= pc.wall_temperature_wet_mean
-    assert pc.wall_temperature_wet_mean <= min(
-        dew_point_mid, pc.wall_temperature_max
-    )
-    expected_wet_wall_temperature = 0.5 * (
-        pc.wall_temperature_min + min(dew_point_mid, pc.wall_temperature_max)
-    )
-    assert pc.wall_temperature_wet_mean == pytest.approx(
-        expected_wet_wall_temperature, abs=1e-8
-    )
-    assert pc.wall_temperature_wet_mean != pytest.approx(outside.T_out)
-
-    expected_W_sat = saturated_water_ratio(
-        p_total=outside.p,
-        T=pc.wall_temperature_wet_mean,
-        M_dry=capability.M_dry,
-        M_h2o=capability.M_condensable,
-    )
-    assert pc.W_sat_wet_surface == pytest.approx(expected_W_sat, rel=1e-12)
-    assert pc.W_sat_wet_surface < W_mid
-    assert pc.Q_latent == pytest.approx(
-        pc.m_dot_condensate
-        * water_latent_heat_of_vaporization(T=pc.wall_temperature_wet_mean),
-        rel=1e-12,
-    )
-
-    h_in = h_wet_gas_dry_basis(
-        outside.T_in, outside.p, pc.W_in, capability
-    )
-    h_out = h_wet_gas_dry_basis(
-        outside.T_out, outside.p, pc.W_out, capability
-    )
-    h_drained = (
-        (pc.W_in - pc.W_out)
-        * water_saturation_liquid_enthalpy(T=pc.wall_temperature_wet_mean)
-    )
-    Q_from_outside_enthalpy = pc.m_dot_dry_carrier * (
-        h_in - h_out - h_drained
-    )
-    assert Q_from_outside_enthalpy == pytest.approx(pc.Q_total, abs=1e-5)
-    assert pc.residuals["W_out"] < 1e-6
-    assert pc.residuals["T_wall_wet_mean_K"] < 0.05
-    assert pc.residuals["outside_enthalpy_balance_W"] < 1e-5
-
     for state, W in zip(states, (pc.W_in, W_mid, pc.W_out)):
         expected = wet_gas_provider_at_water_ratio(capability, W).at(T=state.T, p=state.p)
         for name in ("rho", "cp", "mu", "k"):

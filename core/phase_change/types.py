@@ -134,13 +134,6 @@ class PhaseChangeResult:
     not need to branch on ``active`` before reading them; the exceptions are
     per-solve diagnostics that are meaningless without an active solve
     (``iterations``, ``residuals``) which default to ``0``/an empty mapping.
-
-    For active outside condensation, ``wall_temperature_mean`` is the
-    global whole-surface mean used by the sensible resistance network,
-    whereas ``wall_temperature_wet_mean`` represents only the active wet
-    zone. ``W_sat_wet_surface`` is saturation at that wet-zone temperature;
-    latent heat and the drained saturated-liquid condensate enthalpy use the
-    same temperature.
     """
 
     side: str  # "inside" | "outside"
@@ -180,9 +173,6 @@ class PhaseChangeResult:
     dew_point_in: float | None = None
     dew_point_out: float | None = None
 
-    # Global mean for the whole side surface.  Active outside condensation
-    # additionally reports the representative temperature of only the wet
-    # part below.
     wall_temperature_mean: float | None = None
     wall_temperature_min: float | None = None
     wall_temperature_max: float | None = None
@@ -206,13 +196,6 @@ class PhaseChangeResult:
     residuals: Mapping[str, float] = field(default_factory=dict)
     assumptions: tuple[str, ...] = ()
     warnings: tuple[ModelWarning, ...] = ()
-
-    # Appended diagnostics preserve the positional order of every field
-    # that existed before the wet-zone-temperature extension.
-    wall_temperature_wet_mean: float | None = None
-    # Saturated water ratio evaluated at wall_temperature_wet_mean.  It is
-    # deliberately distinct from saturation at the global wall mean.
-    W_sat_wet_surface: float | None = None
 
     @property
     def is_condensing(self) -> bool:

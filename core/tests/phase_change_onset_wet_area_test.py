@@ -130,7 +130,6 @@ def test_wet_fraction_dry_surface() -> None:
         wall_temperature_min=310.0, wall_temperature_mean=320.0, wall_temperature_max=330.0,
     )
     assert result.wet_surface_fraction == 0.0
-    assert result.wall_temperature_wet_mean is None
     assert result.method == LINEAR_METHOD_NAME
 
 
@@ -140,7 +139,6 @@ def test_wet_fraction_fully_wet_surface() -> None:
         wall_temperature_min=310.0, wall_temperature_mean=320.0, wall_temperature_max=330.0,
     )
     assert result.wet_surface_fraction == 1.0
-    assert result.wall_temperature_wet_mean == pytest.approx(320.0)
 
 
 def test_wet_fraction_half_surface() -> None:
@@ -149,7 +147,6 @@ def test_wet_fraction_half_surface() -> None:
         wall_temperature_min=310.0, wall_temperature_mean=320.0, wall_temperature_max=330.0,
     )
     assert result.wet_surface_fraction == pytest.approx(0.5)
-    assert result.wall_temperature_wet_mean == pytest.approx(315.0)
 
 
 def test_wet_fraction_one_third_surface() -> None:
@@ -158,7 +155,6 @@ def test_wet_fraction_one_third_surface() -> None:
         wall_temperature_min=313.15, wall_temperature_mean=328.15, wall_temperature_max=343.15,
     )
     assert result.wet_surface_fraction == pytest.approx(1.0 / 3.0, abs=1e-9)
-    assert result.wall_temperature_wet_mean == pytest.approx(318.15)
 
 
 def test_wet_fraction_degenerate_envelope_no_nan_or_infinity() -> None:
@@ -169,8 +165,6 @@ def test_wet_fraction_degenerate_envelope_no_nan_or_infinity() -> None:
     )
     assert math.isfinite(result.wet_surface_fraction)
     assert 0.0 <= result.wet_surface_fraction <= 1.0
-    assert result.wall_temperature_wet_mean is not None
-    assert math.isfinite(result.wall_temperature_wet_mean)
     assert result.method == DEGENERATE_METHOD_NAME
 
 
@@ -181,7 +175,6 @@ def test_wet_fraction_degenerate_envelope_falls_back_to_mean() -> None:
         temperature_span_tolerance_K=1e-3, activation_band_K=0.5,
     )
     assert clearly_wet.wet_surface_fraction == 1.0
-    assert clearly_wet.wall_temperature_wet_mean == pytest.approx(320.0)
 
     clearly_dry = estimate_wet_surface_fraction(
         dew_point_temperature=300.0,
@@ -189,7 +182,6 @@ def test_wet_fraction_degenerate_envelope_falls_back_to_mean() -> None:
         temperature_span_tolerance_K=1e-3, activation_band_K=0.5,
     )
     assert clearly_dry.wet_surface_fraction == 0.0
-    assert clearly_dry.wall_temperature_wet_mean is None
 
 
 def test_wet_fraction_rejects_bad_tolerances() -> None:
@@ -204,11 +196,6 @@ def test_wet_fraction_rejects_bad_tolerances() -> None:
             dew_point_temperature=320.0, wall_temperature_min=310.0,
             wall_temperature_mean=320.0, wall_temperature_max=330.0,
             activation_band_K=-1.0,
-        )
-    with pytest.raises(ValueError, match="wall_temperature_max"):
-        estimate_wet_surface_fraction(
-            dew_point_temperature=320.0, wall_temperature_min=330.0,
-            wall_temperature_mean=320.0, wall_temperature_max=310.0,
         )
 
 
@@ -233,106 +220,43 @@ def test_condensate_scales_with_wet_area() -> None:
 def test_sensible_heat_uses_full_area_regardless_of_wet_fraction() -> None:
     from core.phase_change.outside_condensation_solver import _solve_interface_state
 
-    # The representative wet-zone temperature is below the ~322 K dew
-    # point implied by W_bulk=0.08, M_dry=0.03 kg/mol at 1 atm.  The global
-    # wall mean remains the separate resistance-balance unknown.
+    # Parameters chosen so the interface genuinely condenses (T_s below the
+    # ~322 K dew point implied by W_bulk=0.08, M_dry=0.03 kg/mol at 1 atm):
+    # a small alfa_o_dry*A_o (large outside-film resistance relative to the
+    # removal network) pulls T_s well below T_bulk_outside.
     common = dict(
         alfa_o_dry=10.0, A_o=100.0, T_bulk_outside=350.0, T_bulk_inside=290.0,
         R_downstream=0.0001, cp_gas=1100.0, W_bulk=0.08, p_outside=101325.0,
         M_dry=0.0300, m_dot_water_vapor_available=0.5, lewis_number=1.0,
     )
-    T_wall_mean_full, q_sens_full, q_lat_full, m_full, W_sat_full = _solve_interface_state(
-        A_wet=100.0, T_wall_wet_mean=310.0, **common
-    )
-    T_wall_mean_partial, q_sens_partial, q_lat_partial, m_partial, W_sat_partial = (
-        _solve_interface_state(
-            A_wet=30.0, T_wall_wet_mean=310.0, **common
-        )
-    )
+    T_s_full, q_sens_full, q_lat_full, m_full = _solve_interface_state(A_wet=100.0, **common)
+    T_s_partial, q_sens_partial, q_lat_partial, m_partial = _solve_interface_state(A_wet=30.0, **common)
 
     assert q_lat_full > 0.0 and q_lat_partial > 0.0  # confirm both runs actually condense
-    assert W_sat_full == pytest.approx(W_sat_partial)
 
     # In both runs, q_sensible must reconstruct exactly from the FULL A_o
-    # (never A_wet), at each run's global wall mean.
-    assert q_sens_full == pytest.approx(
-        10.0 * 100.0 * (350.0 - T_wall_mean_full), rel=1e-6
-    )
-    assert q_sens_partial == pytest.approx(
-        10.0 * 100.0 * (350.0 - T_wall_mean_partial), rel=1e-6
-    )
-    # A smaller wet area means less latent heat, so the coupled global wall
-    # mean is colder and sensible heat picks up the shortfall.
-    assert T_wall_mean_partial < T_wall_mean_full
+    # (never A_wet), at whatever T_s that run converged to.
+    assert q_sens_full == pytest.approx(10.0 * 100.0 * (350.0 - T_s_full), rel=1e-6)
+    assert q_sens_partial == pytest.approx(10.0 * 100.0 * (350.0 - T_s_partial), rel=1e-6)
+    # A smaller wet area means less latent heat generated at any given T_s,
+    # so the coupled balance settles at a *colder* interface (sensible heat
+    # transfer must pick up the shortfall) -- confirms A_wet actually
+    # changed the coupled solution between the two runs, in the physically
+    # correct direction.
+    assert T_s_partial < T_s_full
     assert q_lat_partial < q_lat_full
 
 
 def test_zero_wet_area_gives_zero_condensate() -> None:
     from core.phase_change.outside_condensation_solver import _solve_interface_state
 
-    T_wall_mean, q_sensible, q_latent, m_dot_cond, W_sat = _solve_interface_state(
-        alfa_o_dry=90.0, A_o=100.0, A_wet=0.0, T_wall_wet_mean=None,
-        T_bulk_outside=400.0, T_bulk_inside=310.0,
+    T_s, q_sensible, q_latent, m_dot_cond = _solve_interface_state(
+        alfa_o_dry=90.0, A_o=100.0, A_wet=0.0, T_bulk_outside=400.0, T_bulk_inside=310.0,
         R_downstream=0.02, cp_gas=1100.0, W_bulk=0.12, p_outside=101325.0,
         M_dry=0.0300, m_dot_water_vapor_available=0.5, lewis_number=1.0,
     )
     assert q_latent == 0.0
     assert m_dot_cond == 0.0
-    assert W_sat is None
-    assert q_sensible > 0.0
-    assert math.isfinite(T_wall_mean)
-
-
-def test_wet_zone_temperature_condenses_when_global_wall_mean_is_above_dew_point() -> None:
-    """Regression for Tmin < Tdew < Tmean < Tmax.
-
-    Saturation at the global mean would make the driving force negative.
-    Saturation at the colder representative wet zone must remain positive.
-    """
-    from core.phase_change.outside_condensation_solver import _solve_interface_state
-    from core.phase_change.water_equilibrium import saturated_water_ratio
-
-    T_wall_min = 313.15
-    T_wall_max = 343.15
-    T_dew = 323.15
-    wet = estimate_wet_surface_fraction(
-        dew_point_temperature=T_dew,
-        wall_temperature_min=T_wall_min,
-        wall_temperature_mean=330.0,
-        wall_temperature_max=T_wall_max,
-    )
-    A_outside = 100.0
-    A_wet = A_outside * wet.wet_surface_fraction
-    W_bulk = saturated_water_ratio(
-        p_total=101_325.0,
-        T=T_dew,
-        M_dry=0.0300,
-    )
-
-    T_wall_mean, q_sensible, q_latent, m_dot_cond, W_sat_wet = (
-        _solve_interface_state(
-            alfa_o_dry=10.0,
-            A_o=A_outside,
-            A_wet=A_wet,
-            T_wall_wet_mean=wet.wall_temperature_wet_mean,
-            T_bulk_outside=350.0,
-            T_bulk_inside=310.0,
-            R_downstream=0.001,
-            cp_gas=1100.0,
-            W_bulk=W_bulk,
-            p_outside=101_325.0,
-            M_dry=0.0300,
-            m_dot_water_vapor_available=0.5,
-            lewis_number=1.0,
-        )
-    )
-
-    assert T_wall_min < T_dew < T_wall_mean < T_wall_max
-    assert wet.wall_temperature_wet_mean < T_dew
-    assert A_wet > 0.0
-    assert W_sat_wet < W_bulk
-    assert m_dot_cond > 0.0
-    assert q_latent > 0.0
     assert q_sensible > 0.0
 
 
