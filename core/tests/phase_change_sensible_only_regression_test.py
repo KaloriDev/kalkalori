@@ -25,8 +25,6 @@ Run:
 
 from __future__ import annotations
 
-import math
-
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
@@ -70,13 +68,6 @@ def _assert_fields_match(a, b) -> None:
     assert a.outside_dp_acceleration == b.outside_dp_acceleration
 
 
-def _assert_finite_property_state(state) -> None:
-    assert all(
-        math.isfinite(value)
-        for value in (state.T, state.p, state.rho, state.cp, state.mu, state.k, state.Pr)
-    )
-
-
 def test_simulate_matches_run_simulation_bit_for_bit_when_not_capable() -> None:
     hx = BareTubeHeatExchanger(_bundle())
     inside = HXSideInput(provider=_inside_provider(), m_dot=5.06, T_in=303.15, p=101_325.0)
@@ -88,43 +79,6 @@ def test_simulate_matches_run_simulation_bit_for_bit_when_not_capable() -> None:
     _assert_fields_match(actual, expected)
     assert actual.outside_phase_change.capable is False
     assert actual.inside_phase_change.capable is False
-
-    # Public endpoint accessors are direct views of the hydraulic source of
-    # truth; no presentation-layer provider evaluation is involved.
-    assert actual.inside_properties_inlet is actual.final_result.tube_bundle_hydraulic.inlet
-    assert actual.inside_properties_midpoint is actual.final_result.tube_bundle_hydraulic.midpoint
-    assert actual.inside_properties_outlet is actual.final_result.tube_bundle_hydraulic.outlet
-    assert actual.inside_properties_inlet.T == inside.T_in
-    assert actual.inside_properties_outlet.T == actual.T_out_inside
-    assert actual.inside_properties_midpoint.T == 0.5 * (
-        actual.inside_properties_inlet.T + actual.inside_properties_outlet.T
-    )
-    for state in (
-        actual.inside_properties_inlet,
-        actual.inside_properties_midpoint,
-        actual.inside_properties_outlet,
-    ):
-        _assert_finite_property_state(state)
-        assert state.props == inside.provider.at(T=state.T, p=state.p)
-
-    outside_hydraulic = actual.outside_tube_bank_hydraulic
-    assert actual.outside_properties_inlet is outside_hydraulic.inlet
-    assert actual.outside_properties_midpoint is outside_hydraulic.midpoint
-    assert actual.outside_properties_outlet is outside_hydraulic.outlet
-    assert actual.outside_properties_inlet.T == outside.T_in
-    assert actual.outside_properties_outlet.T == actual.T_out_outside
-    for state in (
-        actual.outside_properties_inlet,
-        actual.outside_properties_midpoint,
-        actual.outside_properties_outlet,
-    ):
-        _assert_finite_property_state(state)
-        assert state.props == outside.provider.at(T=state.T, p=state.p)
-        assert math.isclose(
-            state.face_mass_flux * outside_hydraulic.face_area,
-            outside.m_dot,
-            rel_tol=1e-12,
-        )
 
 
 def test_simulate_iterate_false_matches_run_simulation_bit_for_bit() -> None:
@@ -161,7 +115,3 @@ def test_rate_matches_run_rating_bit_for_bit_when_not_capable() -> None:
     assert actual.outside_dp_acceleration == expected.outside_dp_acceleration
     assert actual.outside_phase_change.capable is False
     assert actual.inside_phase_change.capable is False
-    assert actual.inside_properties_inlet is actual.final_result.tube_bundle_hydraulic.inlet
-    assert actual.inside_properties_outlet.T == inside.T_out
-    assert actual.outside_properties_inlet is actual.final_result.outside_tube_bank_hydraulic.inlet
-    assert actual.outside_properties_outlet.T == actual.closed_balance.outside.T_out

@@ -158,6 +158,7 @@ from core.pressure_drop.flow_path import (
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.common.warnings import ModelWarning, make_warning
+from core.phase_change.types import PhaseChangeMode, PhaseChangeResult
 
 
 # ---------------------------------------------------------------------------
@@ -181,17 +182,32 @@ class HXSideInput:
             ``ConstantPropertyProvider`` (forced/averaged properties),
             ``DryAirPropertyProvider``, ``GasMixturePropertyProvider``,
             ``IAPWS97WaterSteamProvider``, etc.
-        m_dot: Total mass flow through this side [kg/s].
+        m_dot: Total mass flow through this side [kg/s]. For a
+            phase-change-capable ``GasMixturePropertyProvider``, this is the
+            total wet-gas mass flow (dry carrier + water vapor) at the
+            inlet, unchanged from prior versions -- see
+            ``core.phase_change`` for how it is normalized internally.
         T_in: Inlet bulk temperature [K].
         p: Bulk pressure used for property evaluation [Pa]. Constant along the
             side in this 0D simulation (pressure drop does not feed back into
             properties here).
+        phase_change_mode: ``PhaseChangeMode.AUTO`` (default) lets
+            ``BareTubeHeatExchanger.simulate`` detect phase-change capability
+            (``core.phase_change.capability``) and solve outside H2O
+            condensation automatically when the dry baseline shows it is
+            possible. ``PhaseChangeMode.DISABLED`` forces a sensible-only
+            result on this side even when phase change would be possible
+            (see ``core.phase_change.integration`` for the exact semantics
+            and the ``PHASE_CHANGE_DISABLED_BUT_POSSIBLE`` warning). This
+            field is a no-op for any provider that is not phase-change
+            capable, so existing callers are unaffected.
     """
 
     provider: PropertyProvider
     m_dot: float
     T_in: float
     p: float
+    phase_change_mode: PhaseChangeMode = PhaseChangeMode.AUTO
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.m_dot) or self.m_dot <= 0.0:
@@ -200,6 +216,8 @@ class HXSideInput:
             raise ValueError("T_in must be a positive finite value [K].")
         if not math.isfinite(self.p) or self.p <= 0.0:
             raise ValueError("p must be a positive finite value [Pa].")
+        if not isinstance(self.phase_change_mode, PhaseChangeMode):
+            raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +290,7 @@ class HXSimulationResult:
     # Overall performance (of the real, undegraded geometry)
     U_mean: float          # [W/(m2*K)] referenced to outer area A_o; == thermal_state.U
     UA: float              # [W/K]; == thermal_state.UA
+    EMTD: float            # [K] effective mean temperature difference, q / UA_effective
 
     # Achieved duty and outlet temperatures (after surface_margin derating)
     q: float                # [W]
@@ -302,6 +321,41 @@ class HXSimulationResult:
 
     # Diagnostics
     warnings: list[ModelWarning] | None = None
+
+    # Phase-change results (v0.6.0). ``None`` only if this HXSimulationResult
+    # was constructed directly by ``run_simulation`` (the pure sensible-only
+    # driver) without going through ``BareTubeHeatExchanger.simulate``, which
+    # is the layer that calls ``core.phase_change.integration.
+    # apply_phase_change`` to fill these in. ``inside_phase_change`` reports
+    # capability/DISABLED/unsupported-detection only (condensation inside
+    # tubes is not solved in v0.6.0); ``outside_phase_change`` carries the
+    # actual outside H2O condensation result when active.
+    inside_phase_change: "PhaseChangeResult | None" = None
+    outside_phase_change: "PhaseChangeResult | None" = None
+
+    @property
+    def phase_change_active(self) -> bool:
+        return bool(self.outside_phase_change is not None and self.outside_phase_change.active)
+
+    @property
+    def outside_condensate_mass_flow(self) -> float:
+        return self.outside_phase_change.m_dot_condensate if self.outside_phase_change is not None else 0.0
+
+    @property
+    def outside_water_ratio_in(self) -> float | None:
+        return None if self.outside_phase_change is None else self.outside_phase_change.W_in
+
+    @property
+    def outside_water_ratio_out(self) -> float | None:
+        return None if self.outside_phase_change is None else self.outside_phase_change.W_out
+
+    @property
+    def outside_Q_sensible(self) -> float:
+        return self.outside_phase_change.Q_sensible if self.outside_phase_change is not None else self.q
+
+    @property
+    def outside_Q_latent(self) -> float:
+        return self.outside_phase_change.Q_latent if self.outside_phase_change is not None else 0.0
 
     @property
     def inside_wall_temperature_mean(self) -> float | None:
@@ -773,6 +827,7 @@ def run_simulation(
             outside_alfa_mean=outside_alfa_mean,
             U_mean=U_mean,
             UA=UA,
+            EMTD=q / (UA / (1.0 + surface_margin)),
             q=q,
             T_out_inside=T_out_inside,
             T_out_outside=T_out_outside,

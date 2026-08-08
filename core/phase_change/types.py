@@ -134,13 +134,6 @@ class PhaseChangeResult:
     not need to branch on ``active`` before reading them; the exceptions are
     per-solve diagnostics that are meaningless without an active solve
     (``iterations``, ``residuals``) which default to ``0``/an empty mapping.
-
-    For active outside condensation, ``wall_temperature_mean`` is the
-    global whole-surface mean used by the sensible resistance network,
-    whereas ``wall_temperature_wet_mean`` represents only the active wet
-    zone. ``W_sat_wet_surface`` is saturation at that wet-zone temperature;
-    latent heat and the drained saturated-liquid condensate enthalpy use the
-    same temperature.
     """
 
     side: str  # "inside" | "outside"
@@ -151,21 +144,10 @@ class PhaseChangeResult:
     capable: bool
     possible: bool
     active: bool
-    near_onset: bool = False
 
     converged: bool = True
     iterations: int = 0
     method: str = "sensible_only"
-
-    # Onset diagnostics (fix, v0.6.0 patch): the coldest estimated wall
-    # point and the margin used to decide possible/active/near_onset (see
-    # core.phase_change.regime.evaluate_condensation_onset). Populated from
-    # the dry baseline even when the wet solver was never run (capable but
-    # dry, near-onset, disabled), not left as None just because active is
-    # False.
-    onset_margin_K: float | None = None
-    onset_wall_temperature: float | None = None
-    onset_temperature_method: str | None = None
 
     # Water/vapor mass basis: kg / kg dry carrier gas [-], and kg/s.
     W_in: float | None = None
@@ -180,17 +162,12 @@ class PhaseChangeResult:
     dew_point_in: float | None = None
     dew_point_out: float | None = None
 
-    # Global mean for the whole side surface.  Active outside condensation
-    # additionally reports the representative temperature of only the wet
-    # part below.
     wall_temperature_mean: float | None = None
     wall_temperature_min: float | None = None
     wall_temperature_max: float | None = None
 
     wet_surface_fraction: float | None = None
     wet_surface_fraction_method: str | None = None
-    wet_area: float | None = None
-    outside_total_area: float | None = None
 
     alfa_dry: float | None = None
     alfa_effective: float | None = None
@@ -206,13 +183,6 @@ class PhaseChangeResult:
     residuals: Mapping[str, float] = field(default_factory=dict)
     assumptions: tuple[str, ...] = ()
     warnings: tuple[ModelWarning, ...] = ()
-
-    # Appended diagnostics preserve the positional order of every field
-    # that existed before the wet-zone-temperature extension.
-    wall_temperature_wet_mean: float | None = None
-    # Saturated water ratio evaluated at wall_temperature_wet_mean.  It is
-    # deliberately distinct from saturation at the global wall mean.
-    W_sat_wet_surface: float | None = None
 
     @property
     def is_condensing(self) -> bool:

@@ -18,12 +18,7 @@ from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.heat_balance import BalanceSideSpec
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
-from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
-from core.phase_change.wet_gas_composition import (
-    wet_gas_provider_at_water_ratio,
-    wet_gas_spec_at_water_ratio,
-)
 
 
 @pytest.fixture(scope="module")
@@ -69,46 +64,6 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
     assert math.isfinite(result.overdesign_factor)
     assert math.isfinite(result.UA_required)
 
-    hydraulic = result.outside_tube_bank_hydraulic
-    states = (
-        result.outside_properties_inlet,
-        result.outside_properties_midpoint,
-        result.outside_properties_outlet,
-    )
-    assert states == (hydraulic.inlet, hydraulic.midpoint, hydraulic.outlet)
-    assert hydraulic.midpoint_method == "arithmetic_temperature_and_water_ratio"
-    assert states[0].T == outside.T_in
-    assert states[1].T == pytest.approx(0.5 * (outside.T_in + outside.T_out))
-    assert states[2].T == outside.T_out
-
-    capability = detect_phase_change_capability(outside.provider)
-    W_mid = 0.5 * (pc.W_in + pc.W_out)
-    for state, W in zip(states, (pc.W_in, W_mid, pc.W_out)):
-        expected = wet_gas_provider_at_water_ratio(capability, W).at(T=state.T, p=state.p)
-        for name in ("rho", "cp", "mu", "k"):
-            assert getattr(state, name) == pytest.approx(getattr(expected, name), rel=1e-10)
-        assert state.Pr == pytest.approx(state.mu * state.cp / state.k, rel=1e-12)
-
-    compositions = tuple(
-        wet_gas_spec_at_water_ratio(capability, W).to_mole_fractions()
-        for W in (pc.W_in, W_mid, pc.W_out)
-    )
-    water_fraction = lambda composition: next(
-        value for name, value in composition.items() if name.lower() in {"h2o", "water"}
-    )
-    assert (
-        water_fraction(compositions[2])
-        < water_fraction(compositions[1])
-        < water_fraction(compositions[0])
-    )
-    assert pc.dew_point_out < pc.dew_point_in
-    point_mass_flows = tuple(state.face_mass_flux * hydraulic.face_area for state in states)
-    assert point_mass_flows[0] == pytest.approx(pc.m_dot_gas_in, rel=1e-12)
-    assert point_mass_flows[1] == pytest.approx(
-        pc.m_dot_dry_carrier * (1.0 + W_mid), rel=1e-12
-    )
-    assert point_mass_flows[2] == pytest.approx(pc.m_dot_gas_out, rel=1e-12)
-
 
 def test_rate_disabled_outside_gives_sensible_only_with_warning(hx: BareTubeHeatExchanger) -> None:
     from core.phase_change.warning_codes import PHASE_CHANGE_DISABLED_BUT_POSSIBLE
@@ -127,19 +82,6 @@ def test_rate_disabled_outside_gives_sensible_only_with_warning(hx: BareTubeHeat
     pc = result.outside_phase_change
     assert pc.active is False
     assert pc.m_dot_condensate == 0.0
-    assert pc.W_out == pc.W_in
-    assert pc.m_dot_gas_in == outside.m_dot
-    assert pc.m_dot_gas_out == outside.m_dot
-    assert pc.m_dot_water_vapor_out == pc.m_dot_water_vapor_in
-    hydraulic = result.outside_tube_bank_hydraulic
-    assert hydraulic.inlet.face_mass_flux == hydraulic.outlet.face_mass_flux
-    expected_outlet = outside.provider.at(T=outside.T_out, p=outside.p)
-    assert result.outside_properties_outlet.props == expected_outlet
-    capability = detect_phase_change_capability(outside.provider)
-    assert (
-        wet_gas_spec_at_water_ratio(capability, pc.W_out).to_mole_fractions()
-        == wet_gas_spec_at_water_ratio(capability, pc.W_in).to_mole_fractions()
-    )
     assert any(w.code == PHASE_CHANGE_DISABLED_BUT_POSSIBLE for w in pc.warnings)
 
 

@@ -105,10 +105,11 @@ def condensation_rate(
     """Return the condensation rate [kg H2O/s], bounded to the water
     actually available in the stream.
 
-    ``A_wet`` should be positive and is the active mass-transfer area,
-    ``A_outside * wet_surface_fraction`` for the partial outside-
-    condensation model.  It does not scale the full-area sensible duty;
-    see ``core.phase_change.outside_condensation_solver``.
+    ``A_wet`` should be positive (typically the full outside area ``A_o``
+    for this 0D model -- see ``core.phase_change.outside_condensation_
+    solver`` for how ``wet_surface_fraction`` relates to this, and why it
+    is kept as a separate diagnostic in v0.6.0 rather than scaling this
+    area).
     """
     if not math.isfinite(A_wet) or A_wet <= 0.0:
         raise ValueError("A_wet must be a positive finite value [m2].")

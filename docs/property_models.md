@@ -881,35 +881,3 @@ See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
 and heat/mass-transfer model details, and
 `core/tests/outside_water_condensation_examples.ipynb` for a worked
 example.
-
-### 15.5 Condensation onset and partial wet-area handling (fix)
-
-Two refinements to the v0.6.0 model above:
-
-- **Onset uses the minimum estimated wall temperature, not the mean.**
-  Condensation onset (`possible`/`active` on `PhaseChangeResult`) is
-  decided by comparing the dry baseline's *coldest* estimated wall point
-  (`wall_temperature_envelope.<side>_min`) against the dew point
-  (`core.phase_change.regime.evaluate_condensation_onset`) -- not a
-  bulk-mean or averaged wall temperature. A mean-based check can miss
-  condensation that has already started on the locally coldest part of the
-  surface while the bulk-averaged wall is still nominally above the dew
-  point. The mean wall temperature remains the representative value for
-  everything else in the 0D model (condensate temperature, mean
-  properties, reporting).
-- **Only the estimated wet fraction of the surface participates in mass
-  transfer.** Once condensation is active, `wet_surface_fraction` is
-  estimated as a linear interpolation of the dew point between the
-  estimated minimum and maximum wall temperature
-  (`core.phase_change.wet_surface_fraction.estimate_wet_surface_fraction`),
-  and only `wet_area = A_outside * wet_surface_fraction` is used for the
-  condensation mass-transfer rate (and hence `Q_latent`). Sensible heat
-  transfer always uses the full `A_outside` -- the dry part of the surface
-  still exchanges sensible heat, it just is not estimated to be
-  condensing.
-
-`possible`, `active`, and `near_onset` are three distinct booleans (not a
-single enum): `possible=True, near_onset=True, active=False` is an
-expected combination for an operating point close to onset, where the
-solver deliberately stays on the dry path (see spec section 7 /
-`core.phase_change.regime`).

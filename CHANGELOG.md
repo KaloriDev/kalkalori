@@ -12,16 +12,6 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added automatic partial H2O condensation for water-containing gas outside bare tubes.
 - Added sensible/latent heat and condensate mass-balance results.
 - Added a dry-only override with condensation warnings.
-- Added inlet, midpoint and outlet fluid-property diagnostics.
-
-### Fixed
-
-- Fixed condensation onset detection and partial wet-area handling.
-- Fixed outlet gas properties after partial condensation.
-
-### Fixed
-
-- Fixed condensation onset detection and partial wet-area handling.
 
 ### Notes
 
