@@ -23,7 +23,6 @@ from core.models.simulation import HXSideInput
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
 from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change.integration import (
-    InsideCondensationNotSupportedError,
     MultiplePhaseChangeSidesError,
     check_single_active_side,
 )
@@ -196,15 +195,17 @@ def test_near_onset_does_not_oscillate_across_repeated_calls() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Inside condensation possible under AUTO -> unsupported.
+# Inside wet-gas condensation possible under AUTO -> active.
 # ---------------------------------------------------------------------------
-def test_inside_condensation_possible_under_auto_raises_unsupported() -> None:
+def test_inside_condensation_possible_under_auto_is_active() -> None:
     hx = _hx()
     inside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.35)), m_dot=1.0, T_in=360.0, p=101325.0)
     outside = HXSideInput(provider=GasMixturePropertyProvider(_dry_air_spec()), m_dot=25.0, T_in=290.0, p=101325.0)
 
-    with pytest.raises(InsideCondensationNotSupportedError):
-        hx.simulate(inside, outside)
+    result = hx.simulate(inside, outside)
+    assert result.inside_phase_change.active is True
+    assert result.inside_phase_change.m_dot_condensate > 0.0
+    assert result.inside_phase_change.wet_surface_fraction == pytest.approx(1.0)
 
 
 def test_inside_condensation_disabled_gives_sensible_only_with_warning() -> None:
@@ -238,9 +239,13 @@ def test_both_sides_possible_raises_multiple_sides_error() -> None:
         check_single_active_side(True, True, iterate=True)
 
 
-def test_priority_inside_only_raises_inside_unsupported_not_multiple() -> None:
-    with pytest.raises(InsideCondensationNotSupportedError):
-        check_single_active_side(True, False, iterate=True)
+def test_inside_only_is_supported_by_single_active_side_guard() -> None:
+    check_single_active_side(True, False, iterate=True)
+
+
+def test_inside_active_requires_iterative_simulation() -> None:
+    with pytest.raises(ValueError):
+        check_single_active_side(True, False, iterate=False)
 
 
 # ---------------------------------------------------------------------------

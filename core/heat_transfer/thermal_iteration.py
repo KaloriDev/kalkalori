@@ -256,6 +256,8 @@ class WallTemperatureEnvelope:
     probes: tuple[WallTemperatureProbe, ...]
     method: str = "0d_endpoint_envelope"
     warnings: tuple[ModelWarning, ...] = ()
+    inside_mean: float = math.nan
+    outside_mean: float = math.nan
 
 
 @dataclass(frozen=True)
@@ -571,13 +573,19 @@ def estimate_wall_temperature_envelope(
             message=f"Only {len(valid)} of 4 wall-temperature endpoint probes converged.",
             source="thermal_iteration",
         ))
+    inside_min = min((p.inside_wall_temperature for p in valid), default=math.nan)
+    inside_max = max((p.inside_wall_temperature for p in valid), default=math.nan)
+    outside_min = min((p.outside_wall_temperature for p in valid), default=math.nan)
+    outside_max = max((p.outside_wall_temperature for p in valid), default=math.nan)
     return WallTemperatureEnvelope(
-        inside_min=min((p.inside_wall_temperature for p in valid), default=math.nan),
-        inside_max=max((p.inside_wall_temperature for p in valid), default=math.nan),
-        outside_min=min((p.outside_wall_temperature for p in valid), default=math.nan),
-        outside_max=max((p.outside_wall_temperature for p in valid), default=math.nan),
+        inside_min=inside_min,
+        inside_max=inside_max,
+        outside_min=outside_min,
+        outside_max=outside_max,
         probes=probes,
         warnings=tuple(warnings),
+        inside_mean=0.5 * (inside_min + inside_max),
+        outside_mean=0.5 * (outside_min + outside_max),
     )
 
 

@@ -70,6 +70,13 @@ from core.phase_change.wet_gas_enthalpy import (
 from core.phase_change.mass_heat_transfer import condensation_rate
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.phase_change import warning_codes as WC
+from core.phase_change.condensation_solver_helpers import (
+    FrostingNotSupportedError,
+    invert_wet_gas_enthalpy,
+    local_dew_point_or_triple_point,
+    sensible_only_wall_temperature,
+    solve_condensing_interface_state,
+)
 
 if TYPE_CHECKING:
     from core.models.bare_tube import BareTubeHeatExchanger
@@ -82,12 +89,6 @@ SOURCE = "outside_condensation_solver"
 # tuning knob (unlike phase_change_wet_fraction_tolerance, the convergence
 # tolerance, which is user-configurable).
 WET_FRACTION_SPAN_TOLERANCE_K = 1e-3
-
-
-class FrostingNotSupportedError(RuntimeError):
-    """Raised when the coupled solve would require sub-triple-point
-    (frost/ice) surface conditions -- out of scope for v0.6.0 liquid-only
-    condensate handling."""
 
 
 @dataclass(frozen=True)
@@ -246,13 +247,17 @@ def solve_outside_condensation(
         R_o_film = 1.0 / (alfa_o_dry * A_o)
 
         # --- Partial wet-area estimate for this iteration (fix) ---------
-        T_wall_inlet_est = _sensible_only_wall_temperature(
-            T_bulk_outside=T_in_outside, T_bulk_inside=T_mean_inside,
-            R_o_film=R_o_film, R_downstream=R_downstream,
+        T_wall_inlet_est = sensible_only_wall_temperature(
+            T_bulk_wet_gas=T_in_outside,
+            T_bulk_other=T_mean_inside,
+            R_wet_film=R_o_film,
+            R_downstream=R_downstream,
         )
-        T_wall_outlet_est = _sensible_only_wall_temperature(
-            T_bulk_outside=T_out_outside, T_bulk_inside=T_mean_inside,
-            R_o_film=R_o_film, R_downstream=R_downstream,
+        T_wall_outlet_est = sensible_only_wall_temperature(
+            T_bulk_wet_gas=T_out_outside,
+            T_bulk_other=T_mean_inside,
+            R_wet_film=R_o_film,
+            R_downstream=R_downstream,
         )
         T_wall_min_raw = min(T_wall_inlet_est, T_wall_outlet_est)
         T_wall_max_raw = max(T_wall_inlet_est, T_wall_outlet_est)
@@ -273,8 +278,8 @@ def solve_outside_condensation(
         T_wall_min_iter = T_wall_min_raw + wall_envelope_shift
         T_wall_max_iter = T_wall_max_raw + wall_envelope_shift
 
-        dew_point_local = _local_dew_point_or_triple_point(
-            outside_capability, W_mean, p_outside=p_outside,
+        dew_point_local = local_dew_point_or_triple_point(
+            outside_capability, W_mean, p_wet_gas=p_outside,
         )
 
         wet_fraction_estimate = estimate_wet_surface_fraction(
@@ -337,17 +342,17 @@ def solve_outside_condensation(
             Q_latent,
             m_dot_condensate,
             W_sat_wet_surface,
-        ) = _solve_interface_state(
-            alfa_o_dry=alfa_o_dry,
-            A_o=A_o,
+        ) = solve_condensing_interface_state(
+            alfa_dry=alfa_o_dry,
+            A_total=A_o,
             A_wet=A_wet,
             T_wall_wet_mean=T_wall_wet_mean_new,
-            T_bulk_outside=T_mean_outside,
-            T_bulk_inside=T_mean_inside,
+            T_bulk_wet_gas=T_mean_outside,
+            T_bulk_other=T_mean_inside,
             R_downstream=R_downstream,
             cp_gas=cp_gas_bulk,
             W_bulk=W_mean,
-            p_outside=p_outside,
+            p_wet_gas=p_outside,
             M_dry=outside_capability.M_dry,
             m_dot_water_vapor_available=m_dot_dry_carrier * W_mean,
             lewis_number=lewis_number,
@@ -378,13 +383,13 @@ def solve_outside_condensation(
             )
         h_out_target = h_in_outside - Q_total / m_dot_dry_carrier - h_drained_per_kg_dry
 
-        T_out_outside_new = _invert_outside_enthalpy(
+        T_out_outside_new = invert_wet_gas_enthalpy(
             h_target=h_out_target,
-            p_outside=p_outside,
+            p_wet_gas=p_outside,
             W=W_out_new,
             capability=outside_capability,
             T_wall_mean=T_wall_mean,
-            T_in_outside=T_in_outside,
+            T_in_wet_gas=T_in_outside,
         )
 
         cp_inside_mean = inside_provider.at(T=T_mean_inside, p=p_inside).cp

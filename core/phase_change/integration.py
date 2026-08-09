@@ -4,8 +4,8 @@
 """Simulation-side orchestration: capability -> regime -> (dry | wet) result.
 
 This is the single place that wires ``core.phase_change.capability``,
-``core.phase_change.regime`` and ``core.phase_change.outside_condensation_
-solver`` together into the automatic behavior described in the v0.6.0 task
+``core.phase_change.regime`` and the side-specific condensation solvers
+together into the automatic behavior extended in v0.6.1
 spec. ``core.models.bare_tube.BareTubeHeatExchanger.simulate`` calls
 ``apply_phase_change`` *after* running the ordinary sensible-only
 ``core.models.simulation.run_simulation`` (the dry baseline) -- so the dry
@@ -24,13 +24,10 @@ package (the actual iteration lives entirely inside
 invoked once regime selection is already final). At most one side may be
 an *active* condensing side per call:
 
-- both sides possible under AUTO -> ``MultiplePhaseChangeSidesError``
+- both sides active under AUTO -> ``MultiplePhaseChangeSidesError``
   (``MULTIPLE_PHASE_CHANGE_SIDES_NOT_SUPPORTED``), checked first;
-- only inside possible under AUTO -> ``InsideCondensationNotSupportedError``
-  (``INSIDE_CONDENSATION_NOT_SUPPORTED``), condensation inside tubes is not
-  solved in v0.6.0;
-- only outside possible under AUTO -> the wet solver runs (the v0.6.0
-  feature).
+- exactly one active wet-gas side under AUTO -> its inside or outside wet
+  solver runs and the regime remains locked for the solve.
 
 ``PhaseChangeMode.DISABLED`` never contributes to either of the above: a
 disabled side can be capable and possible without blocking the other side,
@@ -55,12 +52,13 @@ from core.properties.averaging import mean_temperature
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.phase_change import warning_codes as WC
-from core.phase_change.capability import detect_phase_change_capability
+from core.phase_change.capability import detect_phase_change_capability, is_pure_water_provider
 from core.phase_change.mass_heat_transfer import mass_transfer_coefficient  # noqa: F401 (re-export for callers)
 from core.phase_change.outside_condensation_solver import (
     FrostingNotSupportedError,
     solve_outside_condensation,
 )
+from core.phase_change.inside_condensation_solver import solve_inside_condensation
 from core.phase_change.regime import (
     OnsetDecision,
     decide_regime,
@@ -79,9 +77,7 @@ ONSET_TEMPERATURE_METHOD = "wall_temperature_min_envelope_estimate"
 
 
 class InsideCondensationNotSupportedError(RuntimeError):
-    """Raised when a dry baseline shows inside-tube condensation is possible
-    under ``PhaseChangeMode.AUTO``. Inside condensation is not solved in
-    v0.6.0 (see ``docs/roadmap.md``, v0.6.1)."""
+    """Deprecated v0.6.0 compatibility exception; no longer raised in v0.6.1."""
 
     warning_code = WC.INSIDE_CONDENSATION_NOT_SUPPORTED
 
@@ -92,6 +88,12 @@ class MultiplePhaseChangeSidesError(RuntimeError):
     supported per call (see spec section 19)."""
 
     warning_code = WC.MULTIPLE_PHASE_CHANGE_SIDES_NOT_SUPPORTED
+
+
+class PureWaterSteamCondensationNotSupportedError(RuntimeError):
+    """Raised for pure-water/steam condensation, planned for v0.6.2."""
+
+    warning_code = WC.PURE_WATER_STEAM_CONDENSATION_NOT_SUPPORTED
 
 
 @dataclass(frozen=True)
@@ -146,7 +148,7 @@ def check_single_active_side(
     iterate: bool,
 ) -> None:
     """Enforce "at most one active phase-changing side" (spec section 19)
-    and the "outside condensation requires iterate=True" guard (section 21).
+    and the wet-condensation ``iterate=True`` guard.
 
     Pure decision function (booleans in, exception or nothing out) so the
     priority ordering -- both-sides-possible takes precedence over
@@ -158,21 +160,13 @@ def check_single_active_side(
         raise MultiplePhaseChangeSidesError(
             "Both inside and outside show an active condensation tendency "
             "under PhaseChangeMode.AUTO in the dry baseline; at most one "
-            "active phase-changing side is supported in v0.6.0. Set "
+            "active phase-changing side is supported in v0.6.1. Set "
             "phase_change_mode=DISABLED on one side, or investigate the "
             "operating point."
         )
-    if inside_auto_possible:
-        raise InsideCondensationNotSupportedError(
-            "The dry baseline shows the inside-tube wall running below the "
-            "inside stream's water dew point under PhaseChangeMode.AUTO. "
-            "Condensation inside tubes is not supported in v0.6.0 (see "
-            "docs/roadmap.md, v0.6.1). Set phase_change_mode=DISABLED on "
-            "the inside side to accept a sensible-only approximation."
-        )
-    if outside_auto_possible and not iterate:
+    if (inside_auto_possible or outside_auto_possible) and not iterate:
         raise ValueError(
-            "Outside water condensation was detected as possible under "
+            "Wet-gas water condensation was detected as possible under "
             "PhaseChangeMode.AUTO, but iterate=False was requested. A "
             "single-pass sensible-only approximation cannot represent "
             "condensation; call .simulate(..., iterate=True), or set "
@@ -279,6 +273,8 @@ def apply_phase_change(
     inside_capability = detect_phase_change_capability(inside.provider)
     outside_capability = detect_phase_change_capability(outside.provider)
 
+    _raise_if_inside_pure_steam_condensation(inside, dry_result)
+
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
             dry_result,
@@ -314,6 +310,30 @@ def apply_phase_change(
     )
 
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=iterate)
+
+    if inside_auto_possible:
+        return _apply_inside_condensation(
+            hx,
+            inside=inside,
+            outside=outside,
+            dry_result=dry_result,
+            inside_capability=inside_capability,
+            outside_capability=outside_capability,
+            inside_onset=inside_onset,
+            inside_dew_point=inside_dew_point,
+            inside_wall_min=inside_wall_min,
+            inside_wall_mean=inside_wall_mean,
+            inside_wall_max=inside_wall_max,
+            outside_possible=outside_possible,
+            outside_near_onset=outside_near_onset,
+            outside_onset=outside_onset,
+            outside_dew_point=outside_dew_point,
+            outside_wall_min=outside_wall_min,
+            outside_wall_mean=outside_wall_mean,
+            outside_wall_max=outside_wall_max,
+            euler_provider=euler_provider,
+            settings=settings,
+        )
 
     inside_result = _build_capability_side_result(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability,
@@ -518,6 +538,7 @@ def apply_phase_change(
         iterations=solution.iterations,
         method="outside_condensation_0d_bulk_mean",
         W_in=outside_capability.W_in,
+        W_mid=0.5 * (outside_capability.W_in + solution.W_out),
         W_out=solution.W_out,
         m_dot_dry_carrier=m_dot_dry_carrier,
         m_dot_water_vapor_in=m_dot_water_vapor_in,
@@ -745,6 +766,441 @@ def apply_phase_change(
     )
 
 
+def _apply_inside_condensation(
+    hx,
+    *,
+    inside,
+    outside,
+    dry_result,
+    inside_capability: PhaseChangeCapability,
+    outside_capability: PhaseChangeCapability,
+    inside_onset: OnsetDecision,
+    inside_dew_point: float,
+    inside_wall_min: float,
+    inside_wall_mean: float,
+    inside_wall_max: float,
+    outside_possible: bool,
+    outside_near_onset: bool,
+    outside_onset: OnsetDecision | None,
+    outside_dew_point: float | None,
+    outside_wall_min: float | None,
+    outside_wall_mean: float | None,
+    outside_wall_max: float | None,
+    euler_provider: str,
+    settings: PhaseChangeSettings,
+):
+    """Apply the active inside wet-gas solution to a dry Simulation result."""
+    outside_result = _build_capability_side_result(
+        side="outside",
+        mode=outside.phase_change_mode,
+        capability=outside_capability,
+        possible=outside_possible,
+        near_onset=outside_near_onset,
+        dew_point=outside_dew_point,
+        p=outside.p,
+        m_dot_gas=outside.m_dot,
+        onset=outside_onset,
+        wall_temperature_min=outside_wall_min,
+        wall_temperature_mean=outside_wall_mean,
+        wall_temperature_max=outside_wall_max,
+    )
+
+    p_h2o_in = water_partial_pressure(_y_h2o(inside_capability), inside.p)
+    if is_frost_regime(p_h2o_in):
+        inside_result = replace(
+            _build_capability_side_result(
+                side="inside",
+                mode=inside.phase_change_mode,
+                capability=inside_capability,
+                possible=True,
+                near_onset=False,
+                dew_point=None,
+                p=inside.p,
+                m_dot_gas=inside.m_dot,
+                onset=inside_onset,
+                wall_temperature_min=inside_wall_min,
+                wall_temperature_mean=inside_wall_mean,
+                wall_temperature_max=inside_wall_max,
+            ),
+            warnings=(
+                make_warning(
+                    code=WC.FROSTING_NOT_SUPPORTED,
+                    message=(
+                        "inside: inlet water content is in the frost/ice "
+                        "equilibrium regime; returning the sensible-only baseline."
+                    ),
+                    source="phase_change_integration",
+                    severity="warning",
+                ),
+            ),
+        )
+        return replace(
+            dry_result,
+            inside_phase_change=inside_result,
+            outside_phase_change=outside_result,
+        )
+
+    m_dot_dry_carrier = inside.m_dot / (1.0 + inside_capability.W_in)
+    try:
+        solution = solve_inside_condensation(
+            hx,
+            inside_capability=inside_capability,
+            m_dot_dry_carrier=m_dot_dry_carrier,
+            T_in_inside=inside.T_in,
+            p_inside=inside.p,
+            outside_provider=outside.provider,
+            m_dot_outside=outside.m_dot,
+            T_in_outside=outside.T_in,
+            p_outside=outside.p,
+            T_out_inside_init=dry_result.T_out_inside,
+            T_out_outside_init=dry_result.T_out_outside,
+            euler_provider=euler_provider,
+            lewis_number=settings.lewis_number,
+            activation_band_K=settings.activation_band_K,
+            max_iterations=settings.max_iterations,
+            temperature_tolerance_K=settings.temperature_tolerance_K,
+            relative_Q_tolerance=settings.relative_Q_tolerance,
+            water_ratio_tolerance=settings.water_ratio_tolerance,
+            condensate_tolerance_kg_s=settings.condensate_tolerance_kg_s,
+            wall_temperature_tolerance_K=settings.wall_temperature_tolerance_K,
+            wet_fraction_tolerance=settings.wet_fraction_tolerance,
+            relaxation_factor=settings.relaxation_factor,
+        )
+    except FrostingNotSupportedError as exc:
+        inside_result = replace(
+            _build_capability_side_result(
+                side="inside",
+                mode=inside.phase_change_mode,
+                capability=inside_capability,
+                possible=True,
+                near_onset=False,
+                dew_point=inside_dew_point,
+                p=inside.p,
+                m_dot_gas=inside.m_dot,
+                onset=inside_onset,
+                wall_temperature_min=inside_wall_min,
+                wall_temperature_mean=inside_wall_mean,
+                wall_temperature_max=inside_wall_max,
+            ),
+            warnings=(
+                make_warning(
+                    code=WC.FROSTING_NOT_SUPPORTED,
+                    message=f"inside: {exc}",
+                    source="phase_change_integration",
+                    severity="warning",
+                ),
+            ),
+        )
+        return replace(
+            dry_result,
+            inside_phase_change=inside_result,
+            outside_phase_change=outside_result,
+        )
+
+    W_in = inside_capability.W_in
+    W_mid = 0.5 * (W_in + solution.W_out)
+    m_dot_water_vapor_in = m_dot_dry_carrier * W_in
+    m_dot_water_vapor_out = m_dot_dry_carrier * solution.W_out
+    m_dot_gas_out = m_dot_dry_carrier + m_dot_water_vapor_out
+    mass_balance_error = m_dot_water_vapor_in - (
+        m_dot_water_vapor_out + solution.m_dot_condensate
+    )
+
+    from core.properties.water import water_saturation_liquid_enthalpy
+    from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
+
+    h_in = h_wet_gas_dry_basis(inside.T_in, inside.p, W_in, inside_capability)
+    h_out = h_wet_gas_dry_basis(
+        solution.T_out_inside,
+        inside.p,
+        solution.W_out,
+        inside_capability,
+    )
+    h_liquid = water_saturation_liquid_enthalpy(
+        T=solution.wall_temperature_wet_mean
+    )
+    Q_enthalpy = m_dot_dry_carrier * (
+        h_in - h_out - (W_in - solution.W_out) * h_liquid
+    )
+    energy_balance_error = solution.Q_total - Q_enthalpy
+
+    warnings_list: list[ModelWarning] = list(solution.warnings)
+    for code, message in (
+        (
+            WC.INSIDE_CONDENSATION_DETECTED,
+            "inside: the minimum inside wall temperature is below the H2O dew point; partial condensation was solved.",
+        ),
+        (
+            WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
+            "inside: wet fraction and wet-wall temperature are 0D linear wall-envelope estimates.",
+        ),
+        (
+            WC.LEWIS_NUMBER_ASSUMED,
+            f"inside: Chilton-Colburn mass transfer uses lewis_number={settings.lewis_number:g}.",
+        ),
+        (
+            WC.FULLY_DRAINED_CONDENSATE_ASSUMED,
+            "inside: condensate is removed from the gas at the wet-wall temperature without re-entrainment.",
+        ),
+        (
+            WC.CONDENSATE_FILM_RESISTANCE_NOT_MODELLED,
+            "inside: condensate-film thermal resistance is not modelled in v0.6.1.",
+        ),
+        (
+            WC.CONDENSATE_FILM_HYDRAULICS_NOT_MODELLED,
+            "inside: tube-side pressure drop is a gas-phase approximation; condensate-film hydraulics are not modelled.",
+        ),
+        (
+            WC.REENTRAINMENT_NOT_MODELLED,
+            "inside: liquid holdup, carryover and re-entrainment are not modelled.",
+        ),
+    ):
+        warnings_list.append(
+            make_warning(
+                code=code,
+                message=message,
+                source="phase_change_integration",
+                severity="info",
+            )
+        )
+    warnings_list = _deduplicate_warnings(warnings_list)
+
+    inside_result = PhaseChangeResult(
+        side="inside",
+        mode=inside.phase_change_mode,
+        direction=PhaseChangeDirection.CONDENSATION,
+        component=inside_capability.component,
+        capable=True,
+        possible=True,
+        active=True,
+        onset_margin_K=inside_onset.margin_K,
+        onset_wall_temperature=inside_wall_min,
+        onset_temperature_method=ONSET_TEMPERATURE_METHOD,
+        converged=solution.converged,
+        iterations=solution.iterations,
+        method="inside_condensation_0d_bulk_mean",
+        W_in=W_in,
+        W_mid=W_mid,
+        W_out=solution.W_out,
+        m_dot_dry_carrier=m_dot_dry_carrier,
+        m_dot_water_vapor_in=m_dot_water_vapor_in,
+        m_dot_water_vapor_out=m_dot_water_vapor_out,
+        m_dot_condensate=solution.m_dot_condensate,
+        m_dot_gas_in=inside.m_dot,
+        m_dot_gas_out=m_dot_gas_out,
+        dew_point_in=inside_dew_point,
+        dew_point_out=_dew_point_at_ratio(
+            inside_capability,
+            solution.W_out,
+            p=inside.p,
+        ),
+        wall_temperature_mean=solution.T_wall_inside,
+        wall_temperature_min=solution.wall_temperature_min,
+        wall_temperature_max=solution.wall_temperature_max,
+        wall_temperature_wet_mean=solution.wall_temperature_wet_mean,
+        wet_surface_fraction=solution.wet_surface_fraction,
+        wet_surface_fraction_method=solution.wet_surface_fraction_method,
+        wet_area=solution.wet_area,
+        inside_total_area=solution.inside_total_area,
+        W_sat_wet_surface=solution.W_sat_wet_surface,
+        alfa_dry=solution.alfa_i_dry,
+        alfa_effective=solution.alfa_i_effective,
+        lewis_number=settings.lewis_number,
+        Q_sensible=solution.Q_sensible,
+        Q_latent=solution.Q_latent,
+        Q_total=solution.Q_total,
+        mass_balance_error=mass_balance_error,
+        energy_balance_error=energy_balance_error,
+        residuals=dict(solution.residuals),
+        assumptions=(
+            "bulk_mean_property_evaluation_0d",
+            "fully_drained_liquid_condensate",
+            "lewis_number_chilton_colburn_analogy",
+            "dry_gas_composition_unchanged_by_condensation",
+            "wet_surface_fraction_two_point_inlet_outlet_estimate",
+            "gas_phase_only_tube_side_hydraulics",
+        ),
+        warnings=tuple(warnings_list),
+    )
+
+    inside_provider_inlet = wet_gas_provider_at_water_ratio(inside_capability, W_in)
+    inside_provider_mid = wet_gas_provider_at_water_ratio(inside_capability, W_mid)
+    inside_provider_outlet = wet_gas_provider_at_water_ratio(
+        inside_capability,
+        solution.W_out,
+    )
+    inside_props_inlet = inside_provider_inlet.at(T=inside.T_in, p=inside.p)
+    inside_props_outlet = inside_provider_outlet.at(
+        T=solution.T_out_inside,
+        p=inside.p,
+    )
+    T_mean_inside = mean_temperature(inside.T_in, solution.T_out_inside)
+    T_mean_outside = mean_temperature(outside.T_in, solution.T_out_outside)
+    m_dot_gas_mid = m_dot_dry_carrier * (1.0 + W_mid)
+
+    from core.heat_transfer.streams import SensibleHeatStream
+
+    inside_stream = SensibleHeatStream(
+        C=m_dot_gas_mid * solution.inside_bulk_props.cp,
+        T_in=inside.T_in,
+    )
+    outside_stream = SensibleHeatStream(
+        C=outside.m_dot * solution.outside_bulk_props.cp,
+        T_in=outside.T_in,
+    )
+    hot_is_inside = inside.T_in >= outside.T_in
+    hot_stream, cold_stream = (
+        (inside_stream, outside_stream)
+        if hot_is_inside
+        else (outside_stream, inside_stream)
+    )
+    final_result = hx.solve(
+        hot_stream=hot_stream,
+        cold_stream=cold_stream,
+        m_dot_tube_side=m_dot_gas_mid,
+        tube_side_props=to_internal_fluid_props(solution.inside_bulk_props),
+        tube_side_provider=inside_provider_mid,
+        tube_side_temperature_in=inside.T_in,
+        tube_side_temperature_out=solution.T_out_inside,
+        tube_side_pressure=inside.p,
+        m_dot_outside=outside.m_dot,
+        outside_props=to_outside_fluid_props(solution.outside_bulk_props),
+        outside_provider=outside.provider,
+        outside_temperature_in=outside.T_in,
+        outside_temperature_out=solution.T_out_outside,
+        outside_pressure=outside.p,
+        flow_arrangement=None,
+        euler_provider=euler_provider,
+    )
+
+    from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
+    from core.pressure_drop.flow_path import build_tube_side_pressure_drop_result
+
+    tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
+        m_dot=m_dot_gas_mid,
+        flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
+        hydraulic_diameter=hx.bundle.internal_hydraulic_diameter,
+        hydraulic_length_total=hx.bundle.internal_length_total,
+        n_tube_passes=hx.bundle.n_passes_tube,
+        tube_path_type=hx.bundle.tube_path_type,
+        roughness_inner=getattr(hx.bundle.tube, "roughness_inner", None),
+        inlet_props=inside_props_inlet,
+        midpoint_props=solution.inside_bulk_props,
+        outlet_props=inside_props_outlet,
+        temperature_in=inside.T_in,
+        temperature_out=solution.T_out_inside,
+        pressure=inside.p,
+        m_dot_inlet=inside.m_dot,
+        m_dot_midpoint=m_dot_gas_mid,
+        m_dot_outlet=m_dot_gas_out,
+    )
+    tube_bundle_hydraulic = replace(
+        tube_bundle_hydraulic,
+        midpoint_method="arithmetic_temperature_and_water_ratio",
+    )
+    final_result = replace(
+        final_result,
+        tube_side_hydraulic=replace(
+            final_result.tube_side_hydraulic,
+            tube_bundle=tube_bundle_hydraulic,
+        ),
+        tube_side_pressure_drop=replace(
+            final_result.tube_side_pressure_drop,
+            tube_bundle=tube_bundle_hydraulic,
+            flow_path=build_tube_side_pressure_drop_result(
+                tube_bundle_hydraulic,
+                n_tube_passes=hx.bundle.n_passes_tube,
+            ),
+        ),
+    )
+
+    envelope_wet = estimate_wall_temperature_envelope(
+        hx,
+        m_dot_inside=m_dot_gas_mid,
+        m_dot_outside=outside.m_dot,
+        inside_provider=inside_provider_mid,
+        outside_provider=outside.provider,
+        inside_inlet_temperature=inside.T_in,
+        inside_outlet_temperature=solution.T_out_inside,
+        outside_inlet_temperature=outside.T_in,
+        outside_outlet_temperature=solution.T_out_outside,
+        p_inside=inside.p,
+        p_outside=outside.p,
+        euler_provider=euler_provider,
+    )
+    wet_thermal_state = IterativeThermalState(
+        inside_bulk_temperature=T_mean_inside,
+        outside_bulk_temperature=T_mean_outside,
+        inside_wall_temperature=solution.T_wall_inside,
+        outside_wall_temperature=solution.T_wall_outside,
+        inside_bulk_props=solution.inside_bulk_props,
+        inside_wall_props=solution.inside_wall_props,
+        outside_bulk_props=solution.outside_bulk_props,
+        outside_wall_props=solution.outside_wall_props,
+        alfa_i=solution.alfa_i_effective,
+        alfa_o=solution.alfa_o,
+        U=solution.U_effective,
+        UA=solution.UA_effective,
+        iterations=solution.iterations,
+        converged=solution.converged,
+        residual=solution.residuals.get("T_wall_inside_K", math.inf),
+        diagnostics=solution.diagnostics,
+        inside_provider_name=type(inside_provider_mid).__name__,
+        outside_provider_name=type(outside.provider).__name__,
+        warnings=solution.warnings,
+    )
+    return replace(
+        dry_result,
+        converged=solution.converged,
+        iterations=solution.iterations,
+        T_mean_inside=T_mean_inside,
+        T_mean_outside=T_mean_outside,
+        inside_props_mean=solution.inside_bulk_props,
+        outside_props_mean=solution.outside_bulk_props,
+        inside_velocity_mean=final_result.tube_side_thermal.v,
+        outside_velocity_mean=final_result.outside_side_thermal.v,
+        inside_Re_mean=final_result.tube_side_thermal.Re,
+        outside_Re_mean=final_result.outside_side_thermal.Re,
+        inside_Pr_mean=final_result.tube_side_thermal.Pr,
+        outside_Pr_mean=final_result.outside_side_thermal.Pr,
+        inside_alfa_mean=wet_thermal_state.alfa_i,
+        outside_alfa_mean=wet_thermal_state.alfa_o,
+        U_mean=wet_thermal_state.U,
+        UA=wet_thermal_state.UA,
+        q=solution.Q_total,
+        T_out_inside=solution.T_out_inside,
+        T_out_outside=solution.T_out_outside,
+        Q_full=solution.Q_total,
+        Q_derated=solution.Q_total,
+        final_result=final_result,
+        thermal_state=wet_thermal_state,
+        wall_temperature_envelope=envelope_wet,
+        inside_phase_change=inside_result,
+        outside_phase_change=outside_result,
+    )
+
+
+def _raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
+    """Reject a pure-water vapor-to-liquid tendency with a v0.6.2 message."""
+    if inside.phase_change_mode is PhaseChangeMode.DISABLED:
+        return
+    if not is_pure_water_provider(inside.provider):
+        return
+    from core.properties.water import water_saturation_temperature
+
+    try:
+        T_sat = water_saturation_temperature(inside.p)
+    except (TypeError, ValueError):
+        return
+    wall_min = dry_result.wall_temperature_envelope.inside_min
+    if inside.T_in >= T_sat - 1e-6 and wall_min < T_sat:
+        raise PureWaterSteamCondensationNotSupportedError(
+            "Pure-water/steam condensation inside tubes is not supported in "
+            "v0.6.1; it is planned for v0.6.2 (including desuperheating, "
+            "vapor quality, complete condensation and condensate subcooling)."
+        )
+
+
 def _y_h2o(capability: PhaseChangeCapability) -> float:
     from core.phase_change.water_equilibrium import water_mole_fraction_from_ratio
 
@@ -845,6 +1301,7 @@ def _build_capability_side_result(
         onset_wall_temperature=wall_temperature_min,
         onset_temperature_method=ONSET_TEMPERATURE_METHOD if onset is not None else None,
         W_in=capability.W_in,
+        W_mid=capability.W_in,
         W_out=capability.W_in,
         m_dot_dry_carrier=m_dot_dry_carrier,
         m_dot_water_vapor_in=m_dot_water_vapor,

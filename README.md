@@ -35,12 +35,13 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.6.0)
+## Current Capabilities (v0.6.1)
 
-- Partial H2O condensation from a water-containing gas mixture outside a
-  bare-tube bank, with automatic detection (`PhaseChangeMode.AUTO`) and a
-  dry-only override (`PhaseChangeMode.DISABLED`); see
-  [`docs/property_models.md`](docs/property_models.md#15-v060--outside-water-condensation)
+- Partial H2O condensation from a water-containing gas mixture either
+  inside bare tubes or outside a bare-tube bank, with automatic detection
+  (`PhaseChangeMode.AUTO`) and a dry-only override
+  (`PhaseChangeMode.DISABLED`); see
+  [`docs/property_models.md`](docs/property_models.md#15-v061--wet-gas-water-condensation)
 - Bare tube heat exchangers
 - Tube-side forced convection
 - Outside forced convection (mass-flow driven)

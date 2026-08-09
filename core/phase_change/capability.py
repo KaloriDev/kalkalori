@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Central phase-change capability adapter (v0.6.0).
+"""Central phase-change capability adapter (v0.6.1).
 
 This is the *only* place in KalKalori that should ever do
 ``isinstance(provider, GasMixturePropertyProvider)`` (or similar) to decide
@@ -12,7 +12,7 @@ integration``, ``core.models.bare_tube``) call
 themselves. This keeps "is this medium phase-change capable" centralized
 instead of scattered ``if outside_is_wet: ...`` checks across solvers.
 
-v0.6.0 recognizes exactly one capability path: a
+v0.6.1 recognizes exactly one wet-gas capability path: a
 ``core.properties.gas_mixture.GasMixturePropertyProvider`` whose spec
 contains a positive mole fraction of water ("H2O"/"Water", any of mole,
 volume, or mass composition basis -- ``GasMixtureSpec.to_mole_fractions()``
@@ -37,7 +37,7 @@ from core.properties.gas_mixture import GasMixturePropertyProvider, component_mo
 from core.phase_change.types import PhaseChangeCapability
 
 # Canonical CoolProp component name for the only condensable species
-# recognized in v0.6.0 (see core.properties.gas_mixture.COMPONENT_ALIASES).
+# recognized in v0.6.1 (see core.properties.gas_mixture.COMPONENT_ALIASES).
 CONDENSABLE_COMPONENT_CANONICAL = "Water"
 CONDENSABLE_COMPONENT_LABEL = "H2O"
 
@@ -54,11 +54,32 @@ def detect_phase_change_capability(provider: object) -> PhaseChangeCapability:
 
     Returns:
         PhaseChangeCapability describing whether/how this provider can
-        undergo phase change in the v0.6.0 model.
+            undergo wet-gas phase change in the v0.6.1 model.
     """
     if isinstance(provider, GasMixturePropertyProvider):
         return _detect_gas_mixture_capability(provider)
     return PhaseChangeCapability(capable=False)
+
+
+def is_pure_water_provider(provider: object) -> bool:
+    """Return whether ``provider`` unambiguously represents pure H2O.
+
+    Pure water/steam deliberately does not become a wet-gas capability: the
+    dry-carrier ``W`` basis is undefined and its condensation model belongs
+    to v0.6.2.
+    """
+    from core.properties.coolprop_backend import CoolPropFluidProvider
+    from core.properties.water import IAPWS97WaterSteamProvider
+
+    if isinstance(provider, IAPWS97WaterSteamProvider):
+        return True
+    if isinstance(provider, CoolPropFluidProvider):
+        fluid = provider.fluid.split("::")[-1].strip().lower()
+        return fluid in {"water", "h2o"}
+    if isinstance(provider, GasMixturePropertyProvider):
+        fractions = provider.spec.to_mole_fractions()
+        return fractions.get(CONDENSABLE_COMPONENT_CANONICAL, 0.0) >= 1.0 - 1e-12
+    return False
 
 
 def _detect_gas_mixture_capability(
@@ -80,8 +101,7 @@ def _detect_gas_mixture_capability(
     if total_dry <= 0.0:
         # A pure water-vapor stream has no non-condensable carrier gas; the
         # W = kg vapor / kg dry carrier basis used throughout this package
-        # is undefined. Full steam condensation is out of scope for v0.6.0
-        # (see docs/roadmap.md, v0.6.1).
+        # is undefined. Pure steam condensation inside is planned for v0.6.2.
         return PhaseChangeCapability(capable=False)
 
     dry_mole_fractions = {name: fraction / total_dry for name, fraction in dry_raw.items()}

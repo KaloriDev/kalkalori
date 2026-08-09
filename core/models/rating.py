@@ -107,8 +107,8 @@ class HXRatingResult:
     ``inside_properties_inlet/midpoint/outlet`` and the corresponding
     ``outside_*`` accessors expose the existing hydraulic point states from
     ``final_result``. They are distinct from the representative 0D properties
-    on ``thermal_state``. For active outside condensation, the outlet point
-    uses the final ``W_out`` gas composition and remaining gas mass flow.
+    on ``thermal_state``. For active wet-gas condensation, the applicable
+    side's outlet point uses final ``W_out`` composition and gas mass flow.
     """
 
     overdesign_factor: float   # [-] A_o/A_required - 1
@@ -142,7 +142,7 @@ class HXRatingResult:
 
     warnings: list[ModelWarning] | None = None
 
-    # Phase-change results (v0.6.0); see HXSimulationResult for the field
+    # Phase-change results (v0.6.1); see HXSimulationResult for the field
     # semantics -- same meaning here. ``None`` only if this HXRatingResult
     # was constructed directly by ``run_rating`` (the sensible-only driver)
     # rather than through ``BareTubeHeatExchanger.rate``.
@@ -151,7 +151,30 @@ class HXRatingResult:
 
     @property
     def phase_change_active(self) -> bool:
-        return bool(self.outside_phase_change is not None and self.outside_phase_change.active)
+        return any(
+            result is not None and result.active
+            for result in (self.inside_phase_change, self.outside_phase_change)
+        )
+
+    @property
+    def inside_condensate_mass_flow(self) -> float:
+        return self.inside_phase_change.m_dot_condensate if self.inside_phase_change is not None else 0.0
+
+    @property
+    def inside_water_ratio_in(self) -> float | None:
+        return None if self.inside_phase_change is None else self.inside_phase_change.W_in
+
+    @property
+    def inside_water_ratio_out(self) -> float | None:
+        return None if self.inside_phase_change is None else self.inside_phase_change.W_out
+
+    @property
+    def inside_sensible_duty(self) -> float:
+        return self.inside_phase_change.Q_sensible if self.inside_phase_change is not None else self.Q_required
+
+    @property
+    def inside_latent_duty(self) -> float:
+        return self.inside_phase_change.Q_latent if self.inside_phase_change is not None else 0.0
 
     @property
     def outside_condensate_mass_flow(self) -> float:

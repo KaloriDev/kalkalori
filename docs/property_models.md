@@ -694,29 +694,28 @@ sensible heat transfer only.
 
 ### Case C — Gas cools close to water dew point
 
-Use `v0.4.5` only for preliminary checks.
+Use `GasMixtureSpec` with explicit H2O and the default
+`PhaseChangeMode.AUTO`. The solver checks the minimum wall temperature;
+the bulk outlet need not cool below the dew point.
 
 Recommended procedure:
 
 ```text
-1. Calculate sensible-only case using GasMixtureSpec.
-2. Estimate outlet temperature.
-3. Independently check whether water dew point may be reached.
-4. If dew point may be reached, do not accept sensible-only result as final.
-5. Use future wet economizer solver or external validated method.
+1. Build the wet gas from its dry composition and H2O content.
+2. Run Simulation or Rating with `PhaseChangeMode.AUTO`.
+3. Inspect the side-scoped `PhaseChangeResult` and its assumptions/warnings.
 ```
 
 ### Case D — Condensing economizer / wet surface
 
-Not supported as final design in `v0.4.5`.
-
-Allowed only:
+Water condensation from wet gas is supported inside and outside bare tubes
+in v0.6.1, with these 0D limits:
 
 ```text
-onset checks,
-rough limits,
-development tests,
-comparison against external validated tools.
+one active side,
+partial H2O condensation,
+fully drained condensate,
+gas-phase-only hydraulics.
 ```
 
 ### Case E — Flue gas with possible acid dew point
@@ -729,7 +728,7 @@ Do not use current water-only moist-air helpers to assess acid condensation.
 
 ## 13. Recommended User Responsibility
 
-KalKalori `v0.4.5` intentionally keeps property-model selection explicit.
+KalKalori intentionally keeps property-model selection explicit.
 
 The user must decide:
 
@@ -754,7 +753,7 @@ Use `MoistAirState` / PsychroLib when:
 the case is classical psychrometric moist air,
 temperature is within PsychroLib range,
 RH/dew point/saturation are meaningful,
-condensation is only checked as onset or limit.
+classical moist-air state calculations are needed.
 ```
 
 Use `GasMixtureSpec` when:
@@ -768,29 +767,28 @@ the calculation is sensible-only,
 gas properties are needed inside or outside tubes.
 ```
 
-Do not use `GasMixtureSpec` alone when:
+Use `GasMixtureSpec` together with the v0.6.1 phase-change solver when:
 
 ```text
-water condenses,
-latent heat dominates,
-composition changes due to condensate removal,
-surface is wet,
-acid dew point matters.
+H2O condenses from a gas with a non-condensable carrier,
+latent heat and condensate removal must be included,
+the wet gas flows inside or outside bare tubes.
 ```
 
-Do not add a misleading `HumidGasProvider` in `v0.4.5`.
-
-High-temperature humid gas should remain an explicit user-defined gas mixture until a real wet-process / wet-economizer solver is implemented.
+Acid dew points, pure steam condensation, multiple condensables and explicit
+liquid-inventory evaporation require later models; do not represent them by
+silently changing the H2O-only wet-gas model.
 
 ---
 
-## 15. v0.6.0 — Outside Water Condensation
+## 15. v0.6.1 — Wet-Gas Water Condensation
 
 The wet-process / wet-economizer solver referenced as future work in
-sections 8 and 14 above is now available, scoped as follows: **partial
-H2O condensation from a `GasMixtureSpec`-based gas mixture flowing outside
-a bare-tube bank**, solved by `BareTubeHeatExchanger.simulate()` /
-`.rate()`. It does not replace the property-path decision tree above --
+sections 8 and 14 above is now available for **partial H2O condensation
+from a `GasMixtureSpec`-based gas mixture flowing either inside bare tubes
+or outside a bare-tube bank**, solved by
+`BareTubeHeatExchanger.simulate()` / `.rate()`. It does not replace the
+property-path decision tree above --
 you still choose `GasMixtureSpec` (with H2O as a component) exactly as
 sections 4 and 7 describe. What changes is what the *heat-exchanger
 solver* does with that composition once the wall runs below the dew point.
@@ -813,7 +811,7 @@ Setting `imposed_phase="gas"` does **not** disable solver-level
 condensation, and setting `PhaseChangeMode.DISABLED` does **not** change
 how `imposed_phase` is used for property evaluation. A capable medium
 (H2O present) with `imposed_phase="gas"` and `PhaseChangeMode.AUTO` (the
-default for both) is exactly the intended v0.6.0 configuration.
+default for both) is exactly the intended v0.6.1 configuration.
 
 ### 15.2 Capability vs. possibility vs. activity
 
@@ -828,7 +826,7 @@ baseline first, and only from that baseline's wall temperature vs. the
 medium's own dew point decides whether condensation is **possible** at
 this operating point. Only when it is possible *and* `PhaseChangeMode.AUTO`
 is set does the solver actually make phase change **active** and run the
-coupled solve (`core.phase_change.outside_condensation_solver`). A capable
+coupled side-specific solve. A capable
 medium that never reaches its dew point produces an ordinary sensible-only
 result under `AUTO`, bit-for-bit identical to not having this feature at
 all.
@@ -844,25 +842,29 @@ have been possible from the dry baseline and attaches a
 forced approximation, not a "this case has no condensation" statement; the
 true duty and outlet temperature may differ from the dry result.
 
-### 15.4 Scope (v0.6.0)
+### 15.4 Scope (v0.6.1)
 
-- Only H2O condenses; only the **outside** stream may have an active
-  phase-changing side (inside condensation is detected but rejected with
-  `INSIDE_CONDENSATION_NOT_SUPPORTED` under `AUTO` -- see the roadmap for
-  v0.6.1).
+- Only H2O condenses from a wet gas with a non-condensable dry carrier;
+  either the **inside** or **outside** stream may be active.
 - Only **partial** condensation (0 <= W_out <= W_in); full steam
-  condensation is out of scope.
+  condensation, vapor quality and condensate subcooling are out of scope
+  and planned for v0.6.2. Pure-steam condensation outside tubes is not in
+  the planned scope.
 - At most **one** active phase-changing side per call
   (`MULTIPLE_PHASE_CHANGE_SIDES_NOT_SUPPORTED` otherwise).
+- Onset uses the **minimum** side-wall temperature. The bulk outlet gas and
+  the mean wall do not need to reach the dew point for local surface
+  condensation to be active.
 - Condensate is treated as **fully drained**, leaving as saturated liquid
-  at a representative interface temperature -- it is never re-added to the
-  gas-phase stream or its hydraulics.
+  at the representative wet-wall temperature -- it is never re-added to
+  the gas-phase stream or its hydraulics.
 - The model remains **0D**: no axial/segmented resolution. `.simulate()`
-  requires `iterate=True` for an active outside-condensation case (the
+  requires `iterate=True` for an active condensation case (the
   `iterate=False` single-pass escape hatch cannot represent condensation).
-- `wet_surface_fraction` is a 0D endpoint estimate (compares the existing
-  four-probe wall-temperature envelope against the local dew point), not a
-  spatially resolved wetted-area fraction.
+- `wet_surface_fraction` is a linear 0D wall-envelope estimate, not a
+  spatially resolved wetted-area fraction. Sensible convection still uses
+  the full side area; only latent/mass transfer uses `A_wet` and the
+  representative wet-wall temperature.
 - The Chilton-Colburn heat/mass-transfer analogy uses `lewis_number=1.0`
   by default -- a configurable first-model assumption, not a universal
   constant (see `docs/references.md`).
@@ -870,14 +872,12 @@ true duty and outlet temperature may differ from the dry result.
   re-entrainment, evaporation, and freezing/frost are not modelled (frost
   conditions are detected and rejected with `FROSTING_NOT_SUPPORTED` rather
   than silently clamped).
-- Two-phase gas/liquid pressure drop is not modelled; the outside gas-phase
-  hydraulics contract gains an optional per-point gas-phase mass-flow input
-  (`core.heat_transfer.outside_flow.calculate_outside_tube_bank_hydraulics`,
-  `m_dot_inlet`/`m_dot_midpoint`/`m_dot_outlet`) so the signed acceleration
-  term reflects the reduced gas mass flow once condensate has been removed,
-  without adding any liquid-phase hydraulics.
+- Two-phase gas/liquid pressure drop and condensate-film resistance are not
+  modelled. Inside and outside hydraulic point states use only the remaining
+  gas-phase `m_dot`; friction/acceleration therefore reflect gas composition,
+  density and gas-flow changes without adding liquid-film momentum.
 
 See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
 and heat/mass-transfer model details, and
-`core/tests/outside_water_condensation_examples.ipynb` for a worked
-example.
+`core/tests/outside_water_condensation_examples.ipynb` and
+`core/tests/inside_water_condensation_examples.ipynb` for worked examples.

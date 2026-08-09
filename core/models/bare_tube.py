@@ -1056,15 +1056,15 @@ class BareTubeHeatExchanger:
         See ``core.models.simulation.run_simulation`` for the full algorithm,
         arguments and result fields.
 
-        Phase change (v0.6.0)
+        Phase change (v0.6.1)
         ----------------------
         After the sensible-only dry baseline above, this method calls
         ``core.phase_change.integration.apply_phase_change``, which detects
         H2O phase-change capability (``inside.provider``/``outside.provider``)
         and, when ``phase_change_mode=PhaseChangeMode.AUTO`` (the default,
-        set per side on ``HXSideInput``) shows the dry baseline's outside
-        wall running below the water dew point, solves partial outside H2O
-        condensation (``core.phase_change.outside_condensation_solver``).
+        set per side on ``HXSideInput``) shows a side's minimum wall
+        temperature below its water dew point, solves partial wet-gas H2O
+        condensation inside or outside. Only one side can be active.
         See that module and ``core.phase_change.types.PhaseChangeMode`` for
         the full AUTO/DISABLED semantics, and ``docs/property_models.md``
         for the physical model. The ``phase_change_*`` keyword arguments
@@ -1165,15 +1165,14 @@ class BareTubeHeatExchanger:
         For Simulation (computing achievable outlet temperatures from known
         inlets), see ``.simulate(...)``.
 
-        Phase change (v0.6.0)
+        Phase change (v0.6.1)
         ----------------------
         See
         ``core.phase_change.rating_integration.apply_phase_change_to_rating``
-        for the outside-H2O-condensation rating algorithm and its scope
-        (requires an unambiguous closed balance: an explicit ``Q`` or a
-        fully specified, non-condensing inside side, plus a fully specified
-        outside temperature program and mass flow). ``phase_change_mode`` is
-        set per side on ``BalanceSideSpec``.
+        for inside/outside wet-gas H2O condensation Rating and its scope.
+        The active wet side requires a specified mass flow and temperature
+        program; duty must come from explicit ``Q`` or the fully specified
+        non-condensing side. ``phase_change_mode`` is per ``BalanceSideSpec``.
         """
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
