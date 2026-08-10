@@ -46,10 +46,24 @@ from core.phase_change.types import (
     PhaseChangeMode,
     PhaseChangeResult,
 )
+from core.phase_change.steam_condensation import (
+    SteamCondensationLocalResult,
+    SteamCondensationZoneResult,
+    SteamTubeOrientation,
+    local_steam_condensation_alpha,
+    solve_steam_condensation_zone,
+    steam_mass_flux,
+)
 
 __all__ = [
     "PhaseChangeCapability",
     "PhaseChangeDirection",
     "PhaseChangeMode",
     "PhaseChangeResult",
+    "SteamCondensationLocalResult",
+    "SteamCondensationZoneResult",
+    "SteamTubeOrientation",
+    "local_steam_condensation_alpha",
+    "solve_steam_condensation_zone",
+    "steam_mass_flux",
 ]
