@@ -193,8 +193,8 @@ class HXSideInput:
             properties here).
         phase_change_mode: ``PhaseChangeMode.AUTO`` (default) lets
             ``BareTubeHeatExchanger.simulate`` detect phase-change capability
-            (``core.phase_change.capability``) and solve outside H2O
-            condensation automatically when the dry baseline shows it is
+            (``core.phase_change.capability``) and solve inside or outside
+            wet-gas H2O condensation automatically when the dry baseline shows it is
             possible. ``PhaseChangeMode.DISABLED`` forces a sensible-only
             result on this side even when phase change would be possible
             (see ``core.phase_change.integration`` for the exact semantics
@@ -322,20 +322,41 @@ class HXSimulationResult:
     # Diagnostics
     warnings: list[ModelWarning] | None = None
 
-    # Phase-change results (v0.6.0). ``None`` only if this HXSimulationResult
+    # Phase-change results (v0.6.1). ``None`` only if this HXSimulationResult
     # was constructed directly by ``run_simulation`` (the pure sensible-only
     # driver) without going through ``BareTubeHeatExchanger.simulate``, which
     # is the layer that calls ``core.phase_change.integration.
-    # apply_phase_change`` to fill these in. ``inside_phase_change`` reports
-    # capability/DISABLED/unsupported-detection only (condensation inside
-    # tubes is not solved in v0.6.0); ``outside_phase_change`` carries the
-    # actual outside H2O condensation result when active.
+    # apply_phase_change`` to fill these in. Either side can carry the active
+    # wet-gas H2O condensation result, but never both in one call.
     inside_phase_change: "PhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
 
     @property
     def phase_change_active(self) -> bool:
-        return bool(self.outside_phase_change is not None and self.outside_phase_change.active)
+        return any(
+            result is not None and result.active
+            for result in (self.inside_phase_change, self.outside_phase_change)
+        )
+
+    @property
+    def inside_condensate_mass_flow(self) -> float:
+        return self.inside_phase_change.m_dot_condensate if self.inside_phase_change is not None else 0.0
+
+    @property
+    def inside_water_ratio_in(self) -> float | None:
+        return None if self.inside_phase_change is None else self.inside_phase_change.W_in
+
+    @property
+    def inside_water_ratio_out(self) -> float | None:
+        return None if self.inside_phase_change is None else self.inside_phase_change.W_out
+
+    @property
+    def inside_sensible_duty(self) -> float:
+        return self.inside_phase_change.Q_sensible if self.inside_phase_change is not None else self.q
+
+    @property
+    def inside_latent_duty(self) -> float:
+        return self.inside_phase_change.Q_latent if self.inside_phase_change is not None else 0.0
 
     @property
     def outside_condensate_mass_flow(self) -> float:

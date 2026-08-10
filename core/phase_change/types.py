@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Core neutral types for phase-change handling (v0.6.0).
+"""Core neutral types for phase-change handling (v0.6.1).
 
 Three distinct concepts (see module docstrings in this package for where
 each is produced):
@@ -19,12 +19,11 @@ each is produced):
    because the exchanger is thermodynamically in the dry regime)?
 
 Naming is deliberately neutral (not "outside water condensation ..."): the
-same types are meant to remain stable as future patches add inside
-condensation, evaporation, multiple condensable species, etc. (see
-``docs/roadmap.md``). Only ``CONDENSATION`` (H2O, outside) is actually
-solved in v0.6.0; ``EVAPORATION`` exists only to keep the enum's API shape
-stable for later patches (v0.6.2+) and must not be produced by any v0.6.0
-code path.
+same types remain stable as later patches add evaporation, multiple
+condensable species, etc. (see ``docs/roadmap.md``). Only wet-gas H2O
+``CONDENSATION`` (inside or outside) is solved in v0.6.1; ``EVAPORATION``
+exists only to keep the enum's API shape stable for later patches and must
+not be produced by a v0.6.1 code path.
 """
 
 from __future__ import annotations
@@ -67,10 +66,10 @@ class PhaseChangeMode(str, Enum):
 class PhaseChangeDirection(str, Enum):
     """Which direction of phase change (if any) is active for a side.
 
-    Only ``NONE`` and ``CONDENSATION`` are solved in v0.6.0.
+    Only ``NONE`` and ``CONDENSATION`` are solved in v0.6.1.
     ``EVAPORATION`` is a reserved value for a later patch (droplet/mist
     evaporation, re-evaporation of condensate) and must never be returned
-    by v0.6.0 code.
+    by v0.6.1 code.
     """
 
     NONE = "none"
@@ -135,7 +134,7 @@ class PhaseChangeResult:
     per-solve diagnostics that are meaningless without an active solve
     (``iterations``, ``residuals``) which default to ``0``/an empty mapping.
 
-    For active outside condensation, ``wall_temperature_mean`` is the
+    For active wet-gas condensation, ``wall_temperature_mean`` is the
     global whole-surface mean used by the sensible resistance network,
     whereas ``wall_temperature_wet_mean`` represents only the active wet
     zone. ``W_sat_wet_surface`` is saturation at that wet-zone temperature;
@@ -213,6 +212,15 @@ class PhaseChangeResult:
     # Saturated water ratio evaluated at wall_temperature_wet_mean.  It is
     # deliberately distinct from saturation at the global wall mean.
     W_sat_wet_surface: float | None = None
+    # v0.6.1 tube-side diagnostics. ``outside_total_area`` remains for
+    # backwards compatibility with the v0.6.0 public result.
+    inside_total_area: float | None = None
+    W_mid: float | None = None
+
+    @property
+    def total_area(self) -> float | None:
+        """Total side area used by full-area sensible convection."""
+        return self.inside_total_area if self.side == "inside" else self.outside_total_area
 
     @property
     def is_condensing(self) -> bool:

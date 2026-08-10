@@ -2,7 +2,7 @@
 # GNU GPL v3 only
 
 """Heat/mass-transfer analogy for H2O condensation from a non-condensable
-carrier gas (v0.6.0).
+carrier gas on either exchanger side (v0.6.1).
 
 Uses the Chilton-Colburn heat/mass-transfer analogy with a configurable
 Lewis number (default ``lewis_number=1.0``, the classic simplifying
@@ -52,8 +52,8 @@ def mass_transfer_coefficient(
     """Return the Chilton-Colburn mass-transfer coefficient [kg dry gas/(m2*s)].
 
     Args:
-        alfa_dry: Dry (sensible-only) outside heat-transfer coefficient
-            [W/(m2*K)], from the existing tube-bank correlation.
+        alfa_dry: Dry (sensible-only) heat-transfer coefficient for the
+            condensing side [W/(m2*K)], from its existing correlation.
         cp_gas: Specific heat of the bulk gas mixture [J/(kg*K)].
         lewis_number: Le = Sc/Pr [-]. Must be positive. Default 1.0 (see
             module docstring).
@@ -106,9 +106,8 @@ def condensation_rate(
     actually available in the stream.
 
     ``A_wet`` should be positive and is the active mass-transfer area,
-    ``A_outside * wet_surface_fraction`` for the partial outside-
-    condensation model.  It does not scale the full-area sensible duty;
-    see ``core.phase_change.outside_condensation_solver``.
+    ``A_side * wet_surface_fraction`` for the partial-condensation model.
+    It does not scale the full-area sensible duty.
     """
     if not math.isfinite(A_wet) or A_wet <= 0.0:
         raise ValueError("A_wet must be a positive finite value [m2].")

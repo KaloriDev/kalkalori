@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.bundle import TubePathType
@@ -69,10 +69,6 @@ from core.pressure_drop.straight_sections import (
     darcy_friction_factor_method,
     friction_factor_smooth,
 )
-
-if TYPE_CHECKING:
-    from core.properties.common import FluidTransportProperties
-
 
 @dataclass(frozen=True)
 class FluidProps:
@@ -399,6 +395,9 @@ def calculate_tube_bundle_hydraulics(
     inlet_props: FluidTransportProperties | None = None,
     midpoint_props: FluidTransportProperties | None = None,
     outlet_props: FluidTransportProperties | None = None,
+    m_dot_inlet: float | None = None,
+    m_dot_midpoint: float | None = None,
+    m_dot_outlet: float | None = None,
 ) -> TubeBundleHydraulicResult:
     """Calculate universal tube-bundle hydraulics (v0.5.6).
 
@@ -501,21 +500,38 @@ def calculate_tube_bundle_hydraulics(
         else:
             props_mid, h_mid = _evaluate_provider_state(provider, T_mid, p)
 
+    # Optional gas-phase point flows are used by active inside wet-gas
+    # condensation.  The legacy ``m_dot`` remains the representative
+    # midpoint/reference flow and the unset path is numerically unchanged.
+    m_dot_in = m_dot if m_dot_inlet is None else float(m_dot_inlet)
+    m_dot_mid = m_dot if m_dot_midpoint is None else float(m_dot_midpoint)
+    m_dot_out = m_dot if m_dot_outlet is None else float(m_dot_outlet)
+    for name, value in (
+        ("m_dot_inlet", m_dot_in),
+        ("m_dot_midpoint", m_dot_mid),
+        ("m_dot_outlet", m_dot_out),
+    ):
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be a positive finite gas-phase mass flow [kg/s].")
+
     mass_flux = m_dot / flow_area_per_pass
+    mass_flux_in = m_dot_in / flow_area_per_pass
+    mass_flux_mid = m_dot_mid / flow_area_per_pass
+    mass_flux_out = m_dot_out / flow_area_per_pass
     points = (
         _make_hydraulic_point(
             position="inlet", temperature=T_in, pressure=p, props=props_in,
-            enthalpy=h_in, mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            enthalpy=h_in, mass_flux=mass_flux_in, hydraulic_diameter=hydraulic_diameter,
             relative_roughness=relative_roughness,
         ),
         _make_hydraulic_point(
             position="midpoint", temperature=T_mid, pressure=p, props=props_mid,
-            enthalpy=h_mid, mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            enthalpy=h_mid, mass_flux=mass_flux_mid, hydraulic_diameter=hydraulic_diameter,
             relative_roughness=relative_roughness,
         ),
         _make_hydraulic_point(
             position="outlet", temperature=T_out, pressure=p, props=props_out,
-            enthalpy=h_out, mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            enthalpy=h_out, mass_flux=mass_flux_out, hydraulic_diameter=hydraulic_diameter,
             relative_roughness=relative_roughness,
         ),
     )
@@ -543,13 +559,31 @@ def calculate_tube_bundle_hydraulics(
 
     # Three-state 0D+ approximation of the distributed pressure-gradient
     # integral, not a spatially segmented solver.
-    dp_straight_tube_friction = (hydraulic_length_total / hydraulic_diameter) * (mass_flux**2 / 2.0) * mean_f_over_rho
+    if mass_flux_in == mass_flux_mid == mass_flux_out == mass_flux:
+        # Preserve the sensible-only/reference-flow calculation exactly.
+        dp_straight_tube_friction = (
+            (hydraulic_length_total / hydraulic_diameter)
+            * (mass_flux**2 / 2.0)
+            * mean_f_over_rho
+        )
+    else:
+        mean_f_G2_over_rho = (
+            points[0].friction_factor * mass_flux_in**2 / points[0].props.rho
+            + 4.0 * points[1].friction_factor * mass_flux_mid**2 / points[1].props.rho
+            + points[2].friction_factor * mass_flux_out**2 / points[2].props.rho
+        ) / 6.0
+        dp_straight_tube_friction = (
+            hydraulic_length_total / hydraulic_diameter
+        ) * mean_f_G2_over_rho / 2.0
 
     # One-dimensional momentum balance.  Pressure loss is positive, so a
     # density decrease gives a positive acceleration term and a density
     # increase gives pressure recovery.  Refs: White, Fluid Mechanics;
     # Idelchik, Handbook of Hydraulic Resistance; Crane TP-410.
-    dp_straight_tube_acceleration = mass_flux**2 * (1.0 / points[2].props.rho - 1.0 / points[0].props.rho)
+    dp_straight_tube_acceleration = (
+        mass_flux_out**2 / points[2].props.rho
+        - mass_flux_in**2 / points[0].props.rho
+    )
     dp_straight_tubes = dp_straight_tube_friction + dp_straight_tube_acceleration
 
     if not math.isfinite(dp_straight_tube_friction) or dp_straight_tube_friction < 0.0:
@@ -582,11 +616,17 @@ def calculate_tube_bundle_hydraulics(
     boundary_states, pass_boundary_method, boundary_warnings = _build_tube_pass_boundary_states(
         n_tube_passes=n_tube_passes,
         mass_flux=mass_flux,
+        mass_flux_inlet=mass_flux_in,
+        mass_flux_outlet=mass_flux_out,
+        variable_gas_flow=not (
+            mass_flux_in == mass_flux_mid == mass_flux_out == mass_flux
+        ),
         flow_area_per_pass=flow_area_per_pass,
         hydraulic_diameter=hydraulic_diameter,
         T_in=T_in, T_out=T_out, p=p,
         provider=provider,
         props_in=props_in, h_in=h_in,
+        props_mid=props_mid,
         props_out=props_out, h_out=h_out,
     )
     warnings.extend(boundary_warnings)
@@ -810,6 +850,9 @@ def _build_tube_pass_boundary_states(
     *,
     n_tube_passes: int,
     mass_flux: float,
+    mass_flux_inlet: float,
+    mass_flux_outlet: float,
+    variable_gas_flow: bool,
     flow_area_per_pass: float,
     hydraulic_diameter: float,
     T_in: float,
@@ -818,6 +861,7 @@ def _build_tube_pass_boundary_states(
     provider: Any | None,
     props_in: FluidTransportProperties,
     h_in: float | None,
+    props_mid: FluidTransportProperties,
     props_out: FluidTransportProperties,
     h_out: float | None,
 ) -> tuple[tuple[TubePassBoundaryHydraulicState, ...], str, list[ModelWarning]]:
@@ -835,11 +879,31 @@ def _build_tube_pass_boundary_states(
     method = "linear_temperature"
     temperatures = [T_in + (j / n) * (T_out - T_in) for j in range(n + 1)]
 
-    if provider is None:
+    if provider is None and not variable_gas_flow:
         # Compatibility/no-provider path: uniform constant properties at
         # every boundary, matching calculate_tube_bundle_hydraulics'
         # existing inlet/midpoint/outlet compatibility behaviour.
         props_list = [props_in] * (n + 1)
+    elif provider is None:
+        # Active wet-gas path: exact inlet/midpoint/outlet transport states
+        # are supplied by the phase-change solver.  Interpolate only any
+        # additional pass boundaries; for the common two-pass bundle this
+        # uses the three supplied states exactly.
+        def interpolate_props(left, right, fraction):
+            return type(left)(
+                rho=left.rho + fraction * (right.rho - left.rho),
+                mu=left.mu + fraction * (right.mu - left.mu),
+                k=left.k + fraction * (right.k - left.k),
+                cp=left.cp + fraction * (right.cp - left.cp),
+            )
+
+        props_list = []
+        for j in range(n + 1):
+            position = j / n
+            if position <= 0.5:
+                props_list.append(interpolate_props(props_in, props_mid, 2.0 * position))
+            else:
+                props_list.append(interpolate_props(props_mid, props_out, 2.0 * position - 1.0))
     else:
         if _finite_enthalpy(h_in) and _finite_enthalpy(h_out):
             h_in_f, h_out_f = float(h_in), float(h_out)
@@ -867,11 +931,19 @@ def _build_tube_pass_boundary_states(
             props_list.append(props_j)
         props_list.append(props_out)
 
+    boundary_mass_fluxes = (
+        [
+            mass_flux_inlet + (j / n) * (mass_flux_outlet - mass_flux_inlet)
+            for j in range(n + 1)
+        ]
+        if variable_gas_flow
+        else [mass_flux] * (n + 1)
+    )
     states = tuple(
         _make_pass_boundary_state(
             boundary_index=j, temperature=temperatures[j], pressure=p,
             props=props_list[j], flow_area_per_pass=flow_area_per_pass,
-            mass_flux=mass_flux, hydraulic_diameter=hydraulic_diameter,
+            mass_flux=boundary_mass_fluxes[j], hydraulic_diameter=hydraulic_diameter,
         )
         for j in range(n + 1)
     )

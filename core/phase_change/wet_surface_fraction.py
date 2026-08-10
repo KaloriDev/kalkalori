@@ -1,11 +1,11 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""0D linear wet-surface estimate for partial outside condensation.
+"""Side-neutral 0D linear wet-surface estimate for partial condensation.
 
 This is a diagnostic *and* modelling estimate: it also scales the mass-
-transfer area used inside ``core.phase_change.outside_condensation_solver``
-(``A_wet = A_outside * wet_surface_fraction``), so unlike a purely
+transfer area used by the inside/outside condensation solvers
+(``A_wet = A_side * wet_surface_fraction``), so unlike a purely
 cosmetic diagnostic it must be cheap enough to evaluate every wet-solver
 iteration -- see that module for how ``wall_temperature_min``/``_max`` are
 obtained inexpensively per iteration (a closed-form two-point estimate,

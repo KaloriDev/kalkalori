@@ -5,6 +5,19 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.6.1] — Inside wet-gas water condensation
+
+### Added
+
+- Added partial H2O condensation from wet gas inside bare tubes.
+- Added inside wet-surface heat and mass transfer with gas-phase composition and flow updates.
+
+### Changed
+
+- Extended automatic phase-change detection to the tube side.
+
+---
+
 ## [0.6.0] — Outside water condensation
 
 ### Added
