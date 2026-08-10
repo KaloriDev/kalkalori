@@ -1297,6 +1297,29 @@ def _raise_if_outside_pure_steam_condensation(outside, dry_result) -> None:
 # Chilton-Colburn logic is used anywhere below. See
 # core.phase_change.inside_pure_steam_zones for the multi-zone physics.
 # ---------------------------------------------------------------------------
+def _require_tube_orientation(hx):
+    """Return the exchanger's tube orientation, or raise if unspecified.
+
+    In-tube condensation (Shah 2009, since the v0.6.2 low-mass-flux patch)
+    needs an explicit tube orientation to select its heat-transfer regime
+    -- see ``core.heat_transfer.condensation_inside_shah2009`` module
+    docstring. KalKalori never assumes an orientation silently: set
+    ``BareTube(..., tube_orientation=TubeOrientation.HORIZONTAL)`` (or
+    ``VERTICAL_DOWNFLOW`` / ``INCLINED_DOWNWARD``) on the tube-side
+    geometry passed to ``BareTubeHeatExchanger``.
+    """
+    orientation = getattr(hx.bundle.tube, "tube_orientation", None)
+    if orientation is None:
+        raise ValueError(
+            "Pure water/steam in-tube condensation requires an explicit "
+            "BareTube.tube_orientation (TubeOrientation.HORIZONTAL, "
+            "VERTICAL_DOWNFLOW, or INCLINED_DOWNWARD) -- the Shah (2009) "
+            "condensation correlation's regime selection depends on it and "
+            "KalKalori does not assume an orientation silently."
+        )
+    return orientation
+
+
 def _resolve_pure_steam_inlet_state(inside):
     """Classify the inside pure water/steam inlet state.
 
@@ -1444,6 +1467,7 @@ def _apply_inside_pure_steam_active(hx, *, inside, outside, dry_result, inlet_st
     A_inside_total = hx.bundle.total_inner_area
     A_outside_total = hx.bundle.total_outer_area
     R_wall_total = hx.tube_wall_resistance()
+    orientation = _require_tube_orientation(hx)
 
     # The opposite side is represented by a single bulk temperature/HTC
     # (see core.phase_change.inside_pure_steam_zones module docstring).
@@ -1464,6 +1488,7 @@ def _apply_inside_pure_steam_active(hx, *, inside, outside, dry_result, inlet_st
             D_i=D_i, flow_area=flow_area,
             A_inside_total=A_inside_total, A_outside_total=A_outside_total,
             R_wall_total=R_wall_total, T_sink=T_sink, alpha_outside=alpha_outside,
+            orientation=orientation,
         )
         T_out_outside_trial = outside.T_in + solution.Q_total / (outside.m_dot * cp_outside)
         T_sink_new = _mean_temperature(outside.T_in, T_out_outside_trial)
@@ -1553,17 +1578,32 @@ def _apply_inside_pure_steam_active(hx, *, inside, outside, dry_result, inlet_st
         warnings=tuple(warnings_list),
     )
 
-    # Effective inside alpha such that UA reconstructs consistently from
-    # the same resistance network used per-zone (area-weighted mean).
-    if solution.zones and solution.A_total > 0.0:
-        alfa_i_mean = sum(zone.alpha_inside * zone.A for zone in solution.zones) / solution.A_total
-    else:
-        alfa_i_mean = dry_result.inside_alfa_mean
-
+    # Top-level inside alfa (spec section 13-14, v0.6.2 patch): a zone's
+    # own ``zone_alpha_condensation`` is the real, physically meaningful
+    # condensation heat-transfer coefficient and must not be confused with
+    # this top-level value -- a multi-zone exchanger (desuperheat +
+    # condensation + subcooling) has no single local HTC. Different zones
+    # are combined through conductance (UA = sum(U_zone * A_zone)), never
+    # through an arithmetic mean of alpha: that would first collapse each
+    # zone's own alpha into one number, discarding the (nonlinear)
+    # per-zone 1/(1/alpha + R_shared) resistance mapping, and only then
+    # re-apply the shared resistance once more on the wrong blended input.
+    # The equivalent inside HTC reported here is instead recovered from
+    # the correctly-summed UA via the resistance identity
+    # 1/alfa_i_equivalent = 1/U_equivalent - R_shared_per_Ai, so it stays
+    # consistent with the reported U/UA by construction.
     R_wall_per_Ai = R_wall_total * A_inside_total
     R_outside_per_Ai = (1.0 / alpha_outside) * (A_outside_total / A_inside_total)
-    U_i = 1.0 / (1.0 / alfa_i_mean + R_wall_per_Ai + R_outside_per_Ai)
-    UA = U_i * A_inside_total
+    R_shared_per_Ai = R_wall_per_Ai + R_outside_per_Ai
+
+    if solution.zones and solution.A_total > 0.0:
+        UA = sum(zone.U * zone.A for zone in solution.zones)
+        U_i = UA / A_inside_total
+        alfa_i_mean = 1.0 / (1.0 / U_i - R_shared_per_Ai)
+    else:
+        alfa_i_mean = dry_result.inside_alfa_mean
+        U_i = 1.0 / (1.0 / alfa_i_mean + R_shared_per_Ai)
+        UA = U_i * A_inside_total
     U_mean_outer = UA / A_outside_total
 
     final_result = replace(

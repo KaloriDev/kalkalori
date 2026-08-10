@@ -17,6 +17,7 @@ import math
 
 import pytest
 
+from core.geometry.tube import TubeOrientation
 from core.phase_change.inside_pure_steam_condensation import (
     solve_inside_condensation_zone,
 )
@@ -29,9 +30,10 @@ FLOW_AREA = math.pi * D_I**2 / 4.0
 M_DOT = 0.05
 
 
-def _zone(x_in: float, x_out: float):
+def _zone(x_in: float, x_out: float, orientation: TubeOrientation = TubeOrientation.HORIZONTAL):
     return solve_inside_condensation_zone(
-        p=P, x_in=x_in, x_out=x_out, m_dot_total=M_DOT, D_i=D_I, flow_area=FLOW_AREA
+        p=P, x_in=x_in, x_out=x_out, m_dot_total=M_DOT, D_i=D_I, flow_area=FLOW_AREA,
+        orientation=orientation,
     )
 
 

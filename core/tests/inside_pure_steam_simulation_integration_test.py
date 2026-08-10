@@ -21,7 +21,7 @@ import math
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, TubeOrientation
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput
 from core.properties.gas_mixture import GasMixturePropertyProvider, GasMixtureSpec
@@ -39,7 +39,10 @@ P = 101_325.0
 
 
 def _hx(n_rows: int = 4, n_tubes_per_row: int = 6, L: float = 6.0) -> BareTubeHeatExchanger:
-    tube = BareTube(D_i=0.020, D_o=0.025, length_total=L, length_effective=L, wall_k=50.0)
+    tube = BareTube(
+        D_i=0.020, D_o=0.025, length_total=L, length_effective=L, wall_k=50.0,
+        tube_orientation=TubeOrientation.HORIZONTAL,
+    )
     bundle = TubeBundle(
         tube=tube, n_rows=n_rows, n_tubes_per_row=n_tubes_per_row,
         pitch_transverse=0.04, pitch_longitudinal=0.04,
@@ -307,10 +310,17 @@ def test_no_condensation_zone_reports_dp_supported() -> None:
 # steam path never overrode inside_alfa_mean/UA/thermal_state with the
 # corrected multi-zone values -- see core.phase_change.integration
 # _apply_inside_pure_steam_active. This test independently recomputes the
-# expected area-weighted alpha from the zone breakdown and fails against
-# the old (unfixed) behavior.
+# expected value from the zone breakdown and fails against the old
+# (unfixed) behavior.
+#
+# The independent recomputation combines zones through CONDUCTANCE
+# (UA = sum(U_zone*A_zone), each U_zone = 1/(1/alpha_zone+R_shared_per_Ai)),
+# not through a naive area-weighted arithmetic mean of alpha (a second,
+# subtler bug fixed in the same v0.6.2 patch, spec section 13-14): the two
+# give different answers whenever zones have different alpha, since the
+# resistance mapping 1/(1/alpha+R) is nonlinear in alpha.
 # ---------------------------------------------------------------------------
-def test_inside_alfa_mean_matches_independent_area_weighted_zone_average() -> None:
+def test_inside_alfa_mean_matches_independent_zone_conductance_resistance_identity() -> None:
     hx = _hx()
     result = hx.simulate(
         HXSideInput(provider=IAPWS97WaterSteamProvider(), m_dot=0.02, T_in=450.0, p=P),
@@ -319,19 +329,42 @@ def test_inside_alfa_mean_matches_independent_area_weighted_zone_average() -> No
     pc = result.inside_phase_change
     assert pc.A_total > 0.0
 
-    expected_alfa_i = (
-        (pc.zone_alpha_desuperheat or 0.0) * pc.A_desuperheat
-        + (pc.zone_alpha_condensation or 0.0) * pc.A_condensation
-        + (pc.zone_alpha_subcooling or 0.0) * pc.A_subcooling
-    ) / pc.A_total
+    A_inside_total = hx.bundle.total_inner_area
+    A_outside_total = hx.bundle.total_outer_area
+    R_wall_total = hx.tube_wall_resistance()
+    alpha_outside = result.outside_alfa_mean
+    R_shared_per_Ai = (
+        R_wall_total * A_inside_total + (1.0 / alpha_outside) * (A_outside_total / A_inside_total)
+    )
+
+    zones = (
+        (pc.zone_alpha_desuperheat, pc.A_desuperheat),
+        (pc.zone_alpha_condensation, pc.A_condensation),
+        (pc.zone_alpha_subcooling, pc.A_subcooling),
+    )
+    UA_expected = sum(
+        (1.0 / (1.0 / alpha + R_shared_per_Ai)) * A
+        for alpha, A in zones
+        if alpha is not None and A > 0.0
+    )
+    U_i_expected = UA_expected / pc.A_total
+    expected_alfa_i = 1.0 / (1.0 / U_i_expected - R_shared_per_Ai)
 
     assert result.inside_alfa_mean == pytest.approx(expected_alfa_i, rel=1e-9)
+    assert result.UA == pytest.approx(UA_expected, rel=1e-9)
 
-    # The old code left alfa_i as the dry sensible-only baseline's value,
-    # which (for a condensing steam case) is always far below the real
-    # zone-averaged coefficient -- so this also guards against silently
-    # reintroducing that regression, without hardcoding an absolute alpha.
-    assert result.inside_alfa_mean > 0.5 * (pc.zone_alpha_condensation or 0.0)
+    # Provable bound: U_equivalent = area-weighted arithmetic mean of the
+    # per-zone U_zone = 1/(1/alpha_zone+R_shared_per_Ai), so it lies within
+    # [min(U_zone), max(U_zone)]; since U(alpha) is strictly increasing,
+    # inverting it back to alfa_i_equivalent must land within
+    # [min(zone_alpha), max(zone_alpha)] too. This is a stronger, non-
+    # arbitrary regression guard than comparing against a fraction of the
+    # condensation zone's own alpha (which is not, in general, either
+    # bound -- a poor-HTC desuperheat zone with a large area fraction can
+    # legitimately pull the equivalent HTC well below the condensation
+    # zone's alpha; this case's own desuperheat zone does exactly that).
+    zone_alphas = [alpha for alpha, A in zones if alpha is not None and A > 0.0]
+    assert min(zone_alphas) <= result.inside_alfa_mean <= max(zone_alphas)
 
 
 def test_thermal_state_alfa_i_consistent_with_top_level_inside_alfa_mean() -> None:

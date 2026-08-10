@@ -56,6 +56,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from core.common.warnings import ModelWarning
+from core.geometry.tube import TubeOrientation
 from core.heat_transfer.internal_flow import FluidProps, heat_transfer_coefficient_internal
 from core.phase_change.inside_pure_steam_condensation import (
     solve_inside_condensation_zone,
@@ -192,6 +193,7 @@ def solve_inside_steam_zones(
     R_wall_total: float,
     T_sink: float,
     alpha_outside: float,
+    orientation: TubeOrientation,
 ) -> InsideSteamZonesResult:
     """Solve the in-tube pure water/steam multi-zone cooling problem.
 
@@ -211,6 +213,9 @@ def solve_inside_steam_zones(
         T_sink: Representative opposite-side bulk temperature [K].
         alpha_outside: Representative opposite-side heat transfer
             coefficient [W/(m2*K)].
+        orientation: Tube orientation, required by the condensation zone's
+            Shah (2009) regime selection (see
+            ``core.heat_transfer.condensation_inside_shah2009``).
 
     Returns:
         InsideSteamZonesResult.
@@ -293,6 +298,7 @@ def solve_inside_steam_zones(
             A_remaining=A_remaining,
             R_shared_per_Ai=R_shared_per_Ai,
             T_sink=T_sink,
+            orientation=orientation,
         )
         zones.append(zone)
         warnings.extend(zone.warnings)
@@ -468,13 +474,15 @@ def _solve_condensation_zone(
     A_remaining: float,
     R_shared_per_Ai: float,
     T_sink: float,
+    orientation: TubeOrientation,
 ) -> tuple[SteamZoneDiagnostics, WaterSteamState, float]:
     x_in = state.quality
     T_sat = state.T_sat
     dT = T_sat - T_sink  # constant along the zone: both sides isothermal
 
     full = solve_inside_condensation_zone(
-        p=p, x_in=x_in, x_out=0.0, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area
+        p=p, x_in=x_in, x_out=0.0, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area,
+        orientation=orientation,
     )
     U_full = 1.0 / (1.0 / full.alpha_condensation_effective + R_shared_per_Ai)
     A_full = full.Q_condensation / (U_full * dT)
@@ -494,6 +502,7 @@ def _solve_condensation_zone(
             A_target=A_remaining,
             dT=dT,
             R_shared_per_Ai=R_shared_per_Ai,
+            orientation=orientation,
         )
         A_zone = A_remaining
         fully_traversed = False
@@ -528,6 +537,7 @@ def _solve_condensation_outlet_quality(
     A_target: float,
     dT: float,
     R_shared_per_Ai: float,
+    orientation: TubeOrientation,
     max_iterations: int = 60,
     quality_tolerance: float = 1e-9,
 ):
@@ -543,7 +553,8 @@ def _solve_condensation_outlet_quality(
 
     def area_for(x_out: float) -> tuple[float, object, float]:
         result = solve_inside_condensation_zone(
-            p=p, x_in=x_in, x_out=x_out, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area
+            p=p, x_in=x_in, x_out=x_out, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area,
+            orientation=orientation,
         )
         U = 1.0 / (1.0 / result.alpha_condensation_effective + R_shared_per_Ai)
         return result.Q_condensation / (U * dT), result, U
@@ -628,6 +639,7 @@ def solve_inside_steam_zones_required_area(
     R_wall_total: float,
     T_sink: float,
     alpha_outside: float,
+    orientation: TubeOrientation,
 ) -> InsideSteamZonesRequiredAreaResult:
     """Required inside area to cool pure water/steam from `inlet` to `outlet`.
 
@@ -645,6 +657,8 @@ def solve_inside_steam_zones_required_area(
             a per-unit-inside-area basis; the *result* area is independent
             of these (see module docstring: wall resistance times inside
             area is invariant to how a tube's length is partitioned).
+        orientation: Tube orientation, required by the condensation zone's
+            Shah (2009) regime selection.
         Other args: see ``solve_inside_steam_zones``.
 
     Returns:
@@ -722,7 +736,8 @@ def solve_inside_steam_zones_required_area(
             x_out, reaches_boundary = 0.0, True
         if x_out < x_in:
             result = solve_inside_condensation_zone(
-                p=p, x_in=x_in, x_out=x_out, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area
+                p=p, x_in=x_in, x_out=x_out, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area,
+                orientation=orientation,
             )
             U = 1.0 / (1.0 / result.alpha_condensation_effective + R_shared_per_Ai)
             dT = state.T_sat - T_sink

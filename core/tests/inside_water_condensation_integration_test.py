@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, TubeOrientation
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change import condensation_solver_helpers as solver_helpers
@@ -39,6 +39,7 @@ def _hx() -> BareTubeHeatExchanger:
         length_total=2.8,
         length_effective=2.8,
         wall_k=50.0,
+        tube_orientation=TubeOrientation.HORIZONTAL,
     )
     return BareTubeHeatExchanger(
         TubeBundle(

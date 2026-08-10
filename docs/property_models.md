@@ -918,7 +918,8 @@ three zones, in this fixed order (never reversed):
 
 1. **Desuperheating** -- superheated vapor cooling down to `T_sat`.
 2. **Condensation** -- saturated vapor / wet steam condensing to a lower
-   quality (Shah, 1979 correlation; see `docs/references.md`).
+   quality (Shah, 2009 correlation, production default since the v0.6.2
+   low-mass-flux patch; see `docs/references.md`).
 3. **Subcooling** -- saturated/subcooled liquid cooling further.
 
 Not every case uses every zone -- e.g. a saturated-vapor inlet skips
@@ -932,6 +933,36 @@ wet-gas result), since the two have no shared W-based fields. Check the
 concrete type (or duck-type on the shared `side`/`mode`/`direction`/
 `active`/`converged`/`Q_sensible`/`Q_latent`/`Q_total`/`warnings` fields)
 before reading steam-specific fields such as `quality_in`/`quality_out`.
+
+**Tube orientation is required.** The Shah (2009) condensation
+correlation's regime selection depends on whether the tube is horizontal,
+vertical (downward flow), or inclined downward -- KalKalori never assumes
+one silently. Set `BareTube(..., tube_orientation=TubeOrientation.
+HORIZONTAL)` (or `VERTICAL_DOWNFLOW`/`INCLINED_DOWNWARD`, from
+`core.geometry.tube`) on the tube-side geometry; omitting it raises
+`ValueError` the first time an active pure-steam condensation solve is
+attempted.
+
+**`zone_alpha_condensation` vs. the top-level `alfa_i`/`inside_alfa_mean`.**
+`inside_phase_change.zone_alpha_condensation` is the real, physically
+meaningful condensation heat-transfer coefficient for that zone alone --
+compare *this* value against literature/vendor expectations for condensing
+steam, not the top-level field. `result.alfa_i` (Rating) /
+`result.inside_alfa_mean` (Simulation) is instead the **equivalent
+multi-zone inside HTC for the whole exchanger**: different zones combine
+through conductance (`UA_total = sum(U_zone * A_zone)`, each `U_zone =
+1/(1/alpha_zone + R_shared_per_Ai)`), never through an arithmetic mean of
+alpha, and the reported top-level alfa is recovered from that correctly-
+summed `UA_total` via the resistance identity `1/alfa_i_equivalent =
+1/U_equivalent - R_shared_per_Ai` (`U_equivalent = UA_total/A_total`) --
+so it stays consistent with the reported `U`/`UA` by construction. This
+equivalent value is often dominated by whichever zone has the *worst*
+area-weighted conductance (frequently desuperheating, not condensation,
+since single-phase vapor forced convection has a much lower HTC than
+condensation and often needs a much larger share of the available area for
+the same duty) -- it must never be read as "the condensation coefficient."
+`thermal_state.alfa_i`/`.U`/`.UA` always agree exactly with these
+top-level fields.
 
 ### 16.3 `PhaseChangeMode.DISABLED`
 
@@ -974,8 +1005,14 @@ a single-phase result across the phase boundary.
   `h_out`) on the pure water/steam side -- solving for an unknown outlet
   together with phase change is not supported.
 
-See `core/phase_change/inside_pure_steam_condensation.py` and
+See `core/heat_transfer/condensation_inside_shah2009.py`,
+`core/phase_change/inside_pure_steam_condensation.py` and
 `core/phase_change/inside_pure_steam_zones.py` module docstrings for the
 condensation-HTC and multi-zone model details, and
 `core/tests/inside_pure_steam_condensation_examples.ipynb` for worked
-examples.
+examples (including low- and high-mass-flux Shah 2009 regime cases). The
+original Shah (1979) correlation remains available as a legacy/reference
+implementation in `core.heat_transfer.condensation_inside`, but is no
+longer called from the production pure-steam condensation path -- see that
+module's docstring for why (no gravity-film branch; systematically
+underpredicts at low mass flux).

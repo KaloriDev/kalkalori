@@ -17,15 +17,19 @@ share its solver:
 
 This module only solves the physics of a single condensing zone (latent
 energy balance + quality-averaged condensation HTC via
-``core.heat_transfer.condensation_inside``, the Shah (1979) correlation).
-It does not yet allocate heat-transfer surface area to the zone or combine
-it with desuperheating/subcooling zones -- see
-``core.phase_change.inside_pure_steam_zones`` (v0.6.2, multi-zone solver)
-for that.
+``core.heat_transfer.condensation_inside_shah2009``, the Shah (2009)
+correlation -- production default since the v0.6.2 low-mass-flux patch;
+Shah (1979), ``core.heat_transfer.condensation_inside``, remains available
+as a legacy/reference implementation but is no longer called from here,
+since it has no gravity-film branch and systematically underpredicts at
+low mass flux -- see that module's docstring). It does not yet allocate
+heat-transfer surface area to the zone or combine it with desuperheating/
+subcooling zones -- see ``core.phase_change.inside_pure_steam_zones``
+(v0.6.2, multi-zone solver) for that.
 
-Ref: IAPWS-IF97 (via ``core.properties.water``); Shah, M.M. (1979),
-Int. J. Heat Mass Transfer, 22(4), 547-556 (via
-``core.heat_transfer.condensation_inside``).
+Ref: IAPWS-IF97 (via ``core.properties.water``); Shah, M.M. (2009), HVAC&R
+Research, 15(5), 889-913, DOI 10.1080/10789669.2009.10390871 (via
+``core.heat_transfer.condensation_inside_shah2009``).
 """
 
 from __future__ import annotations
@@ -34,9 +38,10 @@ import math
 from dataclasses import dataclass
 
 from core.common.warnings import ModelWarning, make_warning
-from core.heat_transfer.condensation_inside import (
+from core.geometry.tube import TubeOrientation
+from core.heat_transfer.condensation_inside_shah2009 import (
     CORRELATION_NAME,
-    condensation_zone_alpha_effective,
+    condensation_zone_alpha_effective_2009,
 )
 from core.phase_change.warning_codes import TWO_PHASE_PRESSURE_DROP_NOT_SUPPORTED
 from core.properties.water import WATER_CRITICAL_PRESSURE_PA, water_steam_state
@@ -68,7 +73,7 @@ class InsideCondensationZoneResult:
             x_out)`. Always computed from the exact enthalpy difference,
             never `m_dot * cp * dT` (cp is not defined in this region).
         alpha_condensation_effective: Quality-averaged condensation heat
-            transfer coefficient over the zone [W/(m2*K)] (Shah, 1979,
+            transfer coefficient over the zone [W/(m2*K)] (Shah, 2009,
             5-point Gauss-Legendre quadrature).
         m_dot_total: Total (vapor + liquid) tube-side mass flow [kg/s],
             constant through condensation.
@@ -112,6 +117,7 @@ def solve_inside_condensation_zone(
     m_dot_total: float,
     D_i: float,
     flow_area: float,
+    orientation: TubeOrientation,
 ) -> InsideCondensationZoneResult:
     """Solve one in-tube pure-steam condensing zone.
 
@@ -131,6 +137,8 @@ def solve_inside_condensation_zone(
         flow_area: Total tube-side internal flow area [m2], used with
             `m_dot_total` to obtain the mass flux `G` for the HTC
             correlation.
+        orientation: Tube orientation, required by Shah (2009)'s regime
+            selection (see ``core.heat_transfer.condensation_inside_shah2009``).
 
     Returns:
         InsideCondensationZoneResult.
@@ -149,6 +157,7 @@ def solve_inside_condensation_zone(
             raise ValueError(f"{name} must be a positive finite value.")
 
     saturated_liquid = water_steam_state(p=p, x=0.0)
+    saturated_vapor = water_steam_state(p=p, x=1.0)
     T_sat = saturated_liquid.T_sat
     h_f = saturated_liquid.h_f
     h_g = saturated_liquid.h_g
@@ -156,6 +165,9 @@ def solve_inside_condensation_zone(
     mu_L = saturated_liquid.mu
     k_L = saturated_liquid.k
     cp_L = saturated_liquid.cp
+    rho_L = saturated_liquid.rho
+    mu_G = saturated_vapor.mu
+    rho_G = saturated_vapor.rho
 
     h_in = h_f + x_in * h_fg
     h_out = h_f + x_out * h_fg
@@ -163,16 +175,20 @@ def solve_inside_condensation_zone(
 
     G = m_dot_total / flow_area
 
-    htc = condensation_zone_alpha_effective(
+    htc = condensation_zone_alpha_effective_2009(
         x_in=x_in,
         x_out=x_out,
         p=p,
         p_critical=WATER_CRITICAL_PRESSURE_PA,
         G=G,
         D_i=D_i,
+        orientation=orientation,
         mu_L=mu_L,
+        mu_G=mu_G,
         k_L=k_L,
         cp_L=cp_L,
+        rho_L=rho_L,
+        rho_G=rho_G,
     )
 
     warnings = list(htc.warnings)

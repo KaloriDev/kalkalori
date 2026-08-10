@@ -16,6 +16,7 @@ import math
 
 import pytest
 
+from core.geometry.tube import TubeOrientation
 from core.phase_change.inside_pure_steam_zones import (
     ReverseDirectionEvaporationNotSupportedError,
     solve_inside_steam_zones,
@@ -41,7 +42,14 @@ def _geometry(L: float):
     return A_inside, A_outside, R_wall
 
 
-def _solve(inlet, *, L: float = L_LONG, T_sink: float = T_SINK, m_dot: float = M_DOT):
+def _solve(
+    inlet,
+    *,
+    L: float = L_LONG,
+    T_sink: float = T_SINK,
+    m_dot: float = M_DOT,
+    orientation: TubeOrientation = TubeOrientation.HORIZONTAL,
+):
     A_inside, A_outside, R_wall = _geometry(L)
     return solve_inside_steam_zones(
         p=P,
@@ -54,6 +62,7 @@ def _solve(inlet, *, L: float = L_LONG, T_sink: float = T_SINK, m_dot: float = M
         R_wall_total=R_wall,
         T_sink=T_sink,
         alpha_outside=ALPHA_OUTSIDE,
+        orientation=orientation,
     )
 
 

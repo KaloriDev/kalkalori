@@ -274,23 +274,47 @@ Used for:
   wet-gas condensation model above; pure-steam condensation does not add a
   second water-property backend.
 
+- Shah, M. M. (2009).
+  "An Improved and Extended General Correlation for Heat Transfer During
+  Condensation in Plain Tubes." *HVAC&R Research*, 15(5), 889-913.
+  DOI 10.1080/10789669.2009.10390871. **Production default** in-tube
+  condensation heat-transfer correlation since the v0.6.2 low-mass-flux
+  patch, used by `core.heat_transfer.condensation_inside_shah2009` /
+  `core.phase_change.inside_pure_steam_condensation` for the
+  quality-averaged condensation heat-transfer coefficient. Extends the
+  author's own 1979 correlation (below) with a gravity-driven
+  (Nusselt-type laminar-film) contribution and an explicit three-regime
+  selection (forced-convective / combined / gravity-only), needed because
+  the 1979 correlation has no gravity-film branch and systematically
+  underpredicts once the liquid-only reference Reynolds number falls into
+  the laminar/transitional range -- which happens well before its own
+  documented mass-flux floor (10.8 kg/(m2*s)) at low steam mass flux.
+  Requires an explicit tube orientation (`core.geometry.tube.
+  TubeOrientation`): vertical-downflow/inclined-downward tubes are
+  validated at all flow rates (via the pure-gravity Regime III);
+  horizontal tubes have only two regimes and are validated down to
+  `Re_GT >= 16,000` (below that, KalKalori still evaluates the
+  correlation and reports an explicit extrapolation warning -- it never
+  clips the input or applies a calibration factor). Deliberately not the
+  Chilton-Colburn/Lewis mass-transfer analogy used above: pure H2O
+  condensation is a direct vapor-liquid phase-equilibrium problem (vapor
+  quality), not a mass-diffusion problem against a non-condensable
+  carrier gas.
+
 - Shah, M. M. (1979).
   "A General Correlation for Heat Transfer During Film Condensation Inside
   Pipes." *International Journal of Heat and Mass Transfer*, 22(4),
-  547-556. Forced-convective in-tube condensation heat-transfer
-  correlation used by `core.heat_transfer.condensation_inside` for the
-  quality-averaged condensation heat-transfer coefficient. Deliberately
-  not the Chilton-Colburn/Lewis mass-transfer analogy used above: pure
-  H2O condensation is a direct vapor-liquid phase-equilibrium problem
-  (vapor quality), not a mass-diffusion problem against a non-condensable
-  carrier gas.
+  547-556. The original, purely forced-convective version of the
+  correlation above. Retained as a legacy/reference implementation
+  (`core.heat_transfer.condensation_inside`, still unit-tested) but no
+  longer called from the production pure-steam condensation path.
 
 Used for:
 - classification of a pure-water/steam state (superheated vapor,
   saturated vapor, two-phase mixture, saturated liquid, subcooled liquid)
   from T+p, p+x, or p+h (`core.properties.water`),
 - the in-tube condensing-zone heat-transfer coefficient
-  (`core.heat_transfer.condensation_inside`,
+  (`core.heat_transfer.condensation_inside_shah2009`,
   `core.phase_change.inside_pure_steam_condensation`).
 
 ---

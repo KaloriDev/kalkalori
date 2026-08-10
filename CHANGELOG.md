@@ -17,6 +17,7 @@ The project follows **Semantic Versioning (SemVer)**:
 ### Fixed
 
 - Fixed the in-tube steam-condensation heat-transfer coefficient.
+- Improved in-tube steam-condensation heat transfer at low mass flux.
 
 ---
 

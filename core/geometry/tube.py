@@ -20,7 +20,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import math
+
+
+class TubeOrientation(str, Enum):
+    """Physical orientation of a tube, for correlations whose applicable
+    equations depend on it (v0.6.2: in-tube condensation, Shah 2009 --
+    see ``core.heat_transfer.condensation_inside_shah2009``).
+
+    ``None`` (the ``BareTube.tube_orientation`` default) means "not
+    specified"; correlations that require an orientation must reject
+    ``None`` explicitly rather than silently assuming one.
+
+    Members match the orientations Shah (2009) was actually validated
+    against ("Only data for horizontal flow and downward flow have been
+    included, as physical phenomena during upward flow are different in
+    many respects" -- upward flow is deliberately not a member here).
+    """
+
+    HORIZONTAL = "horizontal"
+    VERTICAL_DOWNFLOW = "vertical_downflow"
+    INCLINED_DOWNWARD = "inclined_downward"
 
 
 @dataclass(frozen=True)
@@ -65,6 +86,13 @@ class BareTube(BaseTube):
         interpretation as ``roughness_inner``, but currently stored only
         for future use: no outside heat-transfer or tube-bank
         pressure-drop correlation applies it in this commit.
+    tube_orientation : TubeOrientation | None
+        Physical orientation of the tube. ``None`` means unspecified.
+        Only consumed by correlations that need it (v0.6.2: in-tube
+        condensation, ``core.heat_transfer.condensation_inside_shah2009``)
+        -- those callers reject ``None`` explicitly instead of assuming an
+        orientation; every other calculation in KalKalori ignores this
+        field.
 
     Notes
     -----
@@ -90,6 +118,7 @@ class BareTube(BaseTube):
     wall_k: float
     roughness_inner: float | None = None
     roughness_outer: float | None = None
+    tube_orientation: TubeOrientation | None = None
 
     def __post_init__(self) -> None:
         if self.D_i <= 0.0 or self.D_o <= 0.0:

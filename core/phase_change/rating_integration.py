@@ -61,6 +61,7 @@ from core.phase_change.integration import (
     _evaluate_side_onset,
     _pure_steam_capability_only_result,
     _raise_if_outside_pure_steam_condensation,
+    _require_tube_orientation,
     _resolve_pure_steam_inlet_state,
     check_single_active_side,
 )
@@ -1046,11 +1047,13 @@ def _apply_inside_pure_steam_to_rating(
     R_wall_total = hx.tube_wall_resistance()
     alpha_outside = dry_result.thermal_state.alfa_o
     T_sink = mean_temperature(closed_balance.outside.T_in, closed_balance.outside.T_out)
+    orientation = _require_tube_orientation(hx)
 
     solution = solve_inside_steam_zones_required_area(
         p=inside.p, inlet=inlet_state, outlet=outlet_state, m_dot_total=inside.m_dot,
         D_i=D_i, flow_area=flow_area, A_inside_total=A_inside_total, A_outside_total=A_outside_total,
         R_wall_total=R_wall_total, T_sink=T_sink, alpha_outside=alpha_outside,
+        orientation=orientation,
     )
 
     A_required_outside = solution.A_required * (A_outside_total / A_inside_total)
@@ -1069,14 +1072,30 @@ def _apply_inside_pure_steam_to_rating(
     # UA_required. alfa_o is left untouched: the outside stream is single-
     # phase throughout and dry_result already evaluates it correctly.
     #
-    # zone.U/zone.alpha_inside (per-unit-inside-area quantities) do not
-    # depend on the exchanger's total area -- only on the fixed flow
-    # conditions (G, D_i) -- so the *required* zone areas can be rescaled
-    # to the *actual* inside area to get a self-consistent UA_actual at
-    # this geometry's real size, using the same physics as UA_required.
+    # Top-level alfa_i semantics (spec section 13-14, v0.6.2 patch): a
+    # zone's own ``zone_alpha_condensation`` is the real, physically
+    # meaningful condensation HTC and must not be confused with this
+    # top-level value -- a multi-zone exchanger has no single local HTC.
+    # UA_required is already the physically correct sum(U_zone*A_zone)
+    # conductance (not an arithmetic mean of alpha). zone.U/zone.
+    # alpha_inside (per-unit-inside-area quantities) do not depend on the
+    # exchanger's total area -- only on the fixed flow conditions (G,
+    # D_i) -- so U_equivalent = UA_required/A_required is basis-
+    # independent: rescaling every zone's area by the same factor
+    # (A_inside_total/A_required) to get UA_actual at this geometry's
+    # real size leaves UA_actual/A_inside_total unchanged. The reported
+    # equivalent inside HTC is then recovered from that U_equivalent via
+    # the resistance identity 1/alfa_i = 1/U_equivalent - R_shared_per_Ai
+    # (never an arithmetic mean of alpha), so it stays consistent with
+    # the reported U_mean/UA_actual by construction.
     if solution.zones and solution.A_required > 0.0:
-        alfa_i = sum(zone.alpha_inside * zone.A for zone in solution.zones) / solution.A_required
-        UA_actual = UA_required * (A_inside_total / solution.A_required)
+        R_wall_per_Ai = R_wall_total * A_inside_total
+        R_outside_per_Ai = (1.0 / alpha_outside) * (A_outside_total / A_inside_total)
+        R_shared_per_Ai = R_wall_per_Ai + R_outside_per_Ai
+
+        U_equivalent = UA_required / solution.A_required
+        UA_actual = U_equivalent * A_inside_total
+        alfa_i = 1.0 / (1.0 / U_equivalent - R_shared_per_Ai)
     else:
         alfa_i = dry_result.alfa_i
         UA_actual = dry_result.UA_actual
