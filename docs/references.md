@@ -263,6 +263,38 @@ Used for:
 
 ---
 
+## Inside Pure Water/Steam Condensation (v0.6.2)
+
+- IAPWS.
+  *Revised Release on the IAPWS Industrial Formulation 1997 for the
+  Thermodynamic Properties of Water and Steam.* Used for the saturation
+  curve and phase classification (`core.properties.water.
+  water_steam_state`) underlying the pure-water/steam thermodynamic
+  states used by this model. This is the same IAPWS-IF97 source as the
+  wet-gas condensation model above; pure-steam condensation does not add a
+  second water-property backend.
+
+- Shah, M. M. (1979).
+  "A General Correlation for Heat Transfer During Film Condensation Inside
+  Pipes." *International Journal of Heat and Mass Transfer*, 22(4),
+  547-556. Forced-convective in-tube condensation heat-transfer
+  correlation used by `core.heat_transfer.condensation_inside` for the
+  quality-averaged condensation heat-transfer coefficient. Deliberately
+  not the Chilton-Colburn/Lewis mass-transfer analogy used above: pure
+  H2O condensation is a direct vapor-liquid phase-equilibrium problem
+  (vapor quality), not a mass-diffusion problem against a non-condensable
+  carrier gas.
+
+Used for:
+- classification of a pure-water/steam state (superheated vapor,
+  saturated vapor, two-phase mixture, saturated liquid, subcooled liquid)
+  from T+p, p+x, or p+h (`core.properties.water`),
+- the in-tube condensing-zone heat-transfer coefficient
+  (`core.heat_transfer.condensation_inside`,
+  `core.phase_change.inside_pure_steam_condensation`).
+
+---
+
 ## Notes on Applicability
 
 The references listed here are not a substitute for validation.
