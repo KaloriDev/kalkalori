@@ -277,10 +277,23 @@ def solve_inside_condensation(
         )
         h_drained = condensate_enthalpy_rate / m_dot_dry_carrier
         h_out_target = h_in - Q_total / m_dot_dry_carrier - h_drained
-        T_out_inside_new = invert_wet_gas_enthalpy(
-            h_target=h_out_target,
+
+        # Relax the coupled outlet state before the enthalpy inversion.  A
+        # raw condensation step can temporarily remove all water and demand
+        # an outlet enthalpy below the liquid-water model's triple-point
+        # bound even though the converged solution is well within range.
+        # Relaxing T only after that inversion is too late: the bounded root
+        # solve has already failed.  Interpolating h and W first preserves
+        # the final fixed point while keeping intermediate states physical.
+        W_out_relaxed = W_out + relaxation_factor * (W_out_new - W_out)
+        h_out_current = enthalpy_evaluator.enthalpy(T_out_inside, W_out)
+        h_out_relaxed = h_out_current + relaxation_factor * (
+            h_out_target - h_out_current
+        )
+        T_out_inside_relaxed = invert_wet_gas_enthalpy(
+            h_target=h_out_relaxed,
             p_wet_gas=p_inside,
-            W=W_out_new,
+            W=W_out_relaxed,
             capability=inside_capability,
             T_wall_mean=T_wall_inside,
             T_in_wet_gas=T_in_inside,
@@ -289,13 +302,9 @@ def solve_inside_condensation(
         cp_outside = outside_provider.at(T=T_mean_outside, p=p_outside).cp
         T_out_outside_new = T_in_outside + Q_total / (m_dot_outside * cp_outside)
 
-        T_out_inside_relaxed = T_out_inside + relaxation_factor * (
-            T_out_inside_new - T_out_inside
-        )
         T_out_outside_relaxed = T_out_outside + relaxation_factor * (
             T_out_outside_new - T_out_outside
         )
-        W_out_relaxed = W_out + relaxation_factor * (W_out_new - W_out)
         T_wall_outside = T_mean_outside + Q_total * R_o
 
         numeric = (

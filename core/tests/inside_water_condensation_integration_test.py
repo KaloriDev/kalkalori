@@ -28,6 +28,7 @@ from core.phase_change.wet_gas_composition import (
     wet_gas_spec_at_water_ratio,
 )
 from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
+from core.properties.dry_air import DryAirPropertyProvider
 from core.properties.gas_mixture import GasMixturePropertyProvider, GasMixtureSpec
 from core.properties.water import IAPWS97WaterSteamProvider, water_saturation_liquid_enthalpy
 
@@ -251,6 +252,62 @@ def test_inside_water_and_full_enthalpy_balances(partial_result) -> None:
     )
     assert Q_enthalpy == pytest.approx(pc.Q_total, rel=5e-4)
     assert pc.energy_balance_error == pytest.approx(pc.Q_total - Q_enthalpy)
+
+
+def test_large_inside_condensing_geometry_relaxes_before_enthalpy_inversion() -> None:
+    """A strong first wet step must not escape below the water bracket."""
+    tube = BareTube(
+        D_o=18e-3,
+        D_i=16e-3,
+        length_total=3.7,
+        length_effective=3.68,
+        wall_k=15.0,
+        roughness_inner=0.2e-3,
+        roughness_outer=0.2e-3,
+    )
+    hx = BareTubeHeatExchanger(
+        TubeBundle(
+            tube=tube,
+            n_rows=52,
+            n_tubes_per_row=48,
+            pitch_transverse=28e-3,
+            pitch_longitudinal=28e-3,
+            layout="inline",
+            n_passes_tube=1,
+            flow_arrangement="crossflow",
+        )
+    )
+    wet_provider = GasMixturePropertyProvider(
+        GasMixtureSpec(
+            components={"N2": 0.7114, "O2": 0.1891, "H2O": 0.0995},
+            basis="mole",
+            imposed_phase="gas",
+        )
+    )
+
+    result = hx.simulate(
+        HXSideInput(
+            provider=wet_provider,
+            m_dot=11_000.0 / 3600.0,
+            T_in=363.15,
+            p=101_325.0,
+        ),
+        HXSideInput(
+            provider=DryAirPropertyProvider(),
+            m_dot=11_000.0 / 3600.0,
+            T_in=270.15,
+            p=101_325.0,
+        ),
+        surface_margin=0.15,
+        euler_provider="gaddis_gnielinski",
+    )
+
+    pc = result.inside_phase_change
+    assert pc.active is True
+    assert pc.converged is True
+    assert pc.m_dot_condensate > 0.0
+    assert pc.W_out < pc.W_in
+    assert result.T_out_inside > 273.15
 
 
 def test_inside_endpoint_properties_and_composition(partial_result) -> None:
