@@ -1576,6 +1576,27 @@ def _apply_inside_pure_steam_active(hx, *, inside, outside, dry_result, inlet_st
 
     envelope = dry_result.wall_temperature_envelope
 
+    # Bug fix (v0.6.2 patch): dry_result.thermal_state is the sensible-only
+    # baseline's own IterativeThermalState -- it evaluated the whole steam
+    # side as a single-phase fluid at one representative bulk state (in
+    # practice usually superheated-vapor-like properties), which is not
+    # only inaccurate but frequently orders of magnitude below the real,
+    # mostly liquid-phase, Shah-correlation condensation coefficient
+    # (alfa_i_mean above). Leaving thermal_state untouched here made
+    # `result.thermal_state.alfa_i`/`.UA` silently disagree with the
+    # corrected `inside_alfa_mean`/`UA` fields on the result itself --
+    # exactly the "condensation HTC ~1000x too small" symptom when a
+    # caller reads the nested thermal_state instead of (or in addition
+    # to) the top-level fields. Keep every other thermal_state field
+    # (wall temperatures, diagnostics, bulk/wall props) as the dry
+    # baseline's own best-effort values -- only alfa_i/alfa_o/U/UA need
+    # to agree with the corrected multi-zone values.
+    thermal_state = dry_result.thermal_state
+    if thermal_state is not None:
+        thermal_state = replace(
+            thermal_state, alfa_i=alfa_i_mean, alfa_o=alpha_outside, U=U_mean_outer, UA=UA,
+        )
+
     return replace(
         dry_result,
         converged=converged,
@@ -1592,6 +1613,7 @@ def _apply_inside_pure_steam_active(hx, *, inside, outside, dry_result, inlet_st
         Q_full=solution.Q_total,
         Q_derated=solution.Q_total,
         final_result=final_result,
+        thermal_state=thermal_state,
         wall_temperature_envelope=envelope,
         inside_phase_change=inside_result,
         outside_phase_change=outside_result,

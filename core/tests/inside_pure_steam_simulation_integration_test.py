@@ -296,3 +296,51 @@ def test_no_condensation_zone_reports_dp_supported() -> None:
     pc = result.inside_phase_change
     assert pc.Q_condensation == 0.0
     assert pc.two_phase_pressure_drop_supported is True
+
+
+# ---------------------------------------------------------------------------
+# Regression: public inside_alfa_mean / thermal_state.alfa_i must reflect
+# the real multi-zone (Shah-correlation) physics, not the sensible-only dry
+# baseline's single-phase evaluation of the whole steam side at one bulk
+# state. Manual validation found the reported condensation-side HTC orders
+# of magnitude too small; root cause was that apply_phase_change's pure-
+# steam path never overrode inside_alfa_mean/UA/thermal_state with the
+# corrected multi-zone values -- see core.phase_change.integration
+# _apply_inside_pure_steam_active. This test independently recomputes the
+# expected area-weighted alpha from the zone breakdown and fails against
+# the old (unfixed) behavior.
+# ---------------------------------------------------------------------------
+def test_inside_alfa_mean_matches_independent_area_weighted_zone_average() -> None:
+    hx = _hx()
+    result = hx.simulate(
+        HXSideInput(provider=IAPWS97WaterSteamProvider(), m_dot=0.02, T_in=450.0, p=P),
+        _outside(),
+    )
+    pc = result.inside_phase_change
+    assert pc.A_total > 0.0
+
+    expected_alfa_i = (
+        (pc.zone_alpha_desuperheat or 0.0) * pc.A_desuperheat
+        + (pc.zone_alpha_condensation or 0.0) * pc.A_condensation
+        + (pc.zone_alpha_subcooling or 0.0) * pc.A_subcooling
+    ) / pc.A_total
+
+    assert result.inside_alfa_mean == pytest.approx(expected_alfa_i, rel=1e-9)
+
+    # The old code left alfa_i as the dry sensible-only baseline's value,
+    # which (for a condensing steam case) is always far below the real
+    # zone-averaged coefficient -- so this also guards against silently
+    # reintroducing that regression, without hardcoding an absolute alpha.
+    assert result.inside_alfa_mean > 0.5 * (pc.zone_alpha_condensation or 0.0)
+
+
+def test_thermal_state_alfa_i_consistent_with_top_level_inside_alfa_mean() -> None:
+    hx = _hx()
+    result = hx.simulate(
+        HXSideInput(provider=IAPWS97WaterSteamProvider(), m_dot=0.02, T_in=450.0, p=P),
+        _outside(),
+    )
+    assert result.thermal_state is not None
+    assert result.thermal_state.alfa_i == pytest.approx(result.inside_alfa_mean, rel=1e-12)
+    assert result.thermal_state.UA == pytest.approx(result.UA, rel=1e-12)
+    assert result.thermal_state.U == pytest.approx(result.U_mean, rel=1e-12)

@@ -1056,8 +1056,38 @@ def _apply_inside_pure_steam_to_rating(
     A_required_outside = solution.A_required * (A_outside_total / A_inside_total)
     UA_required = sum(zone.U * zone.A for zone in solution.zones)
     EMTD = solution.Q_total / UA_required if UA_required > 0.0 else 0.0
+
+    # Bug fix (v0.6.2 patch): alfa_i/UA_actual/U_mean below used to be left
+    # as dry_result's own sensible-only baseline values -- evaluating the
+    # whole steam side as a single-phase fluid at one representative bulk
+    # state (in practice usually superheated-vapor-like properties), never
+    # the real two-phase Shah-correlation condensation coefficient. That
+    # silently understated the reported steam-side HTC by anywhere from
+    # roughly one to several orders of magnitude depending on operating
+    # point (confirmed against an independent hand calculation), while
+    # ua_margin then compared the wrong UA_actual against the correct
+    # UA_required. alfa_o is left untouched: the outside stream is single-
+    # phase throughout and dry_result already evaluates it correctly.
+    #
+    # zone.U/zone.alpha_inside (per-unit-inside-area quantities) do not
+    # depend on the exchanger's total area -- only on the fixed flow
+    # conditions (G, D_i) -- so the *required* zone areas can be rescaled
+    # to the *actual* inside area to get a self-consistent UA_actual at
+    # this geometry's real size, using the same physics as UA_required.
+    if solution.zones and solution.A_required > 0.0:
+        alfa_i = sum(zone.alpha_inside * zone.A for zone in solution.zones) / solution.A_required
+        UA_actual = UA_required * (A_inside_total / solution.A_required)
+    else:
+        alfa_i = dry_result.alfa_i
+        UA_actual = dry_result.UA_actual
+    U_mean = UA_actual / dry_result.A_o if dry_result.A_o > 0.0 else dry_result.U_mean
+
     overdesign_factor = dry_result.A_o / A_required_outside - 1.0 if A_required_outside > 0.0 else math.inf
-    ua_margin = dry_result.UA_actual / UA_required - 1.0 if UA_required > 0.0 else math.inf
+    ua_margin = UA_actual / UA_required - 1.0 if UA_required > 0.0 else math.inf
+
+    thermal_state = dry_result.thermal_state
+    if thermal_state is not None:
+        thermal_state = replace(thermal_state, alfa_i=alfa_i, U=U_mean, UA=UA_actual)
 
     zone_alphas = {zone.kind: zone.alpha_inside for zone in solution.zones}
 
@@ -1068,19 +1098,6 @@ def _apply_inside_pure_steam_to_rating(
             message=(
                 "inside: pure water/steam multi-zone Rating was solved "
                 f"({', '.join(zone.kind for zone in solution.zones) or 'no active zone'})."
-            ),
-            source=SOURCE,
-            severity="info",
-        )
-    )
-    warnings_list.append(
-        make_warning(
-            code=WC.EFFECTIVE_CAPACITY_RATE_0D_APPROXIMATION,
-            message=(
-                "inside: UA_actual/alfa_i/alfa_o on this result remain the "
-                "sensible-only dry-baseline diagnostics (not multi-zone-"
-                "aware); overdesign_factor, A_required, UA_required and "
-                "inside_phase_change use the accurate multi-zone physics."
             ),
             source=SOURCE,
             severity="info",
@@ -1140,8 +1157,12 @@ def _apply_inside_pure_steam_to_rating(
         ua_margin=ua_margin,
         A_required=A_required_outside,
         UA_required=UA_required,
+        UA_actual=UA_actual,
+        U_mean=U_mean,
+        alfa_i=alfa_i,
         EMTD=EMTD,
         Q_required=solution.Q_total,
+        thermal_state=thermal_state,
         warnings=warnings_list,
         inside_phase_change=inside_result,
         outside_phase_change=outside_result,

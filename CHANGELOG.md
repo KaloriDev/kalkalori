@@ -14,6 +14,10 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added automatic desuperheating, condensation and condensate-subcooling zones.
 - Integrated steam condensation into simulation and rating.
 
+### Fixed
+
+- Fixed the in-tube steam-condensation heat-transfer coefficient.
+
 ---
 
 ## [0.6.1] — Inside wet-gas water condensation
