@@ -23,6 +23,7 @@ Properties of Water and Steam.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import math
 from typing import Optional
 
@@ -403,4 +404,414 @@ def _validate_saturation_pressure(p: Optional[float]) -> None:
             f"Saturation pressure p={p} Pa is outside the IAPWS-IF97 "
             f"region-4 validity range "
             f"[{WATER_TRIPLE_POINT_PRESSURE_PA}, {WATER_CRITICAL_PRESSURE_PA}] Pa."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pure water/steam thermodynamic states (v0.6.2)
+#
+# Unlike ``water_steam_props_iapws97``/``WaterSteamProperties`` above (a
+# thin T+p / p+x / T+x property lookup, unchanged since v0.6.0), the
+# ``WaterSteamState`` model below additionally classifies which side of the
+# saturation dome a state sits on -- superheated vapor, saturated vapor,
+# two-phase mixture, saturated liquid, or subcooled liquid -- and reports
+# vapor quality plus saturation diagnostics (T_sat, h_f, h_g, h_fg) at the
+# state's own pressure. This is the state representation the v0.6.2 pure
+# water/steam condensation model (``core.phase_change``) is built on; it
+# does not use the wet-gas humidity-ratio (W) basis at all.
+# ---------------------------------------------------------------------------
+
+# T+p is rejected as ambiguous within this band around T_sat(p): at that
+# point T+p alone cannot distinguish saturated liquid, saturated vapor, and
+# a two-phase mixture (all three share the same T at a given p).
+_SATURATION_AMBIGUITY_TOLERANCE_K = 1e-2
+
+# p+h boundary snap tolerance, expressed as a fraction of h_fg(p). Within
+# this band of h_f/h_g, a p+h state is reported as exactly saturated
+# (x=0 or x=1) instead of an infinitesimally-two-phase state; this also
+# makes a p+x -> h -> p+h round trip land back on the same classification.
+_SATURATION_ENTHALPY_TOLERANCE_RELATIVE = 1e-6
+
+
+class WaterPhaseRegion(str, Enum):
+    """Phase region of a classified ``WaterSteamState``."""
+
+    SUBCOOLED_LIQUID = "subcooled_liquid"
+    SATURATED_LIQUID = "saturated_liquid"
+    TWO_PHASE = "two_phase"
+    SATURATED_VAPOR = "saturated_vapor"
+    SUPERHEATED_VAPOR = "superheated_vapor"
+    # T+p at or above the critical pressure: no saturation line exists, so
+    # the state is neither liquid nor vapor in the usual sense.
+    SUPERCRITICAL = "supercritical"
+
+
+@dataclass(frozen=True)
+class WaterSteamState:
+    """Fully classified pure-water/steam thermodynamic state.
+
+    Built by ``water_steam_state(...)`` from exactly one of three mutually
+    exclusive input modes: T+p, p+x, or p+h.
+
+    Attributes:
+        T: Temperature [K].
+        p: Pressure [Pa].
+        h: Specific enthalpy [J/kg].
+        phase: Phase region classification.
+        quality: Vapor quality [-], ``x = m_vapor / (m_vapor + m_liquid)``.
+            ``None`` outside the saturation dome (superheated vapor,
+            subcooled liquid, supercritical); otherwise in ``[0, 1]``.
+        rho: Density [kg/m3], when physically defined.
+        cp: Specific heat capacity [J/(kg*K)], when physically defined.
+            ``None`` in the two-phase region (``0 < quality < 1``), where
+            an ordinary single-phase isobaric cp is not defined for a
+            boiling/condensing mixture.
+        mu: Dynamic viscosity [Pa*s], when physically defined. ``None`` in
+            the two-phase region.
+        k: Thermal conductivity [W/(m*K)], when physically defined. ``None``
+            in the two-phase region.
+        Pr: Prandtl number [-], ``cp * mu / k``, when ``cp``, ``mu`` and
+            ``k`` are all defined; ``None`` otherwise.
+        T_sat: Saturation temperature at ``p`` [K]. ``None`` at or above
+            the critical pressure, where no saturation line exists.
+        h_f: Saturated-liquid specific enthalpy at ``p`` [J/kg]. ``None``
+            at or above the critical pressure.
+        h_g: Saturated-vapor specific enthalpy at ``p`` [J/kg]. ``None``
+            at or above the critical pressure.
+        h_fg: Latent heat of vaporization at ``p`` [J/kg], ``h_g - h_f``.
+            ``None`` at or above the critical pressure.
+        warnings: Applicability / interpretation warnings.
+    """
+
+    T: float
+    p: float
+    h: float
+    phase: WaterPhaseRegion
+    quality: Optional[float]
+    rho: Optional[float]
+    cp: Optional[float]
+    mu: Optional[float]
+    k: Optional[float]
+    Pr: Optional[float]
+    T_sat: Optional[float]
+    h_f: Optional[float]
+    h_g: Optional[float]
+    h_fg: Optional[float]
+    warnings: list[ModelWarning]
+
+
+def water_steam_state(
+    *,
+    T: Optional[float] = None,
+    p: Optional[float] = None,
+    x: Optional[float] = None,
+    h: Optional[float] = None,
+) -> WaterSteamState:
+    """Build a fully classified pure-water/steam thermodynamic state.
+
+    Exactly one of the following mutually exclusive input modes must be
+    given:
+
+        T + p:
+            Ordinary bulk-state specification. Sufficient for superheated
+            vapor and subcooled liquid. Rejected with a ``ValueError`` if
+            ``T`` falls within the saturation-line ambiguity band at this
+            pressure -- T+p alone cannot distinguish saturated liquid,
+            saturated vapor, and a two-phase mixture there; use p+x or p+h
+            instead.
+
+        p + x:
+            Saturated state at pressure ``p``, vapor quality
+            ``x = m_vapor / (m_vapor + m_liquid)`` in ``[0, 1]``.
+
+        p + h:
+            State at pressure ``p``, classified by specific enthalpy ``h``
+            against the saturation dome (``h_f(p)``, ``h_g(p)``).
+
+    Args:
+        T: Temperature [K].
+        p: Pressure [Pa]. Required in every mode.
+        x: Vapor quality [-], ``0 <= x <= 1``.
+        h: Specific enthalpy [J/kg].
+
+    Returns:
+        WaterSteamState.
+
+    Raises:
+        ValueError: if the input is not exactly one of T+p, p+x, p+h; if
+            ``x`` is outside ``[0, 1]``; if T+p is ambiguously on the
+            saturation line; or if p+x / p+h is requested at or above the
+            critical pressure, where saturated/two-phase states are not
+            defined.
+
+    Ref: IAPWS-IF97.
+    """
+    has_T = T is not None
+    has_p = p is not None
+    has_x = x is not None
+    has_h = h is not None
+
+    if not has_p:
+        raise ValueError("p [Pa] must be provided in every input mode (T+p, p+x, p+h).")
+
+    if has_T and not has_x and not has_h:
+        return _water_steam_state_from_T_p(T, p)
+    if has_x and not has_T and not has_h:
+        return _water_steam_state_from_p_x(p, x)
+    if has_h and not has_T and not has_x:
+        return _water_steam_state_from_p_h(p, h)
+
+    given = ", ".join(
+        name for name, flag in (("T", has_T), ("x", has_x), ("h", has_h)) if flag
+    )
+    raise ValueError(
+        "Water/steam state must be specified using exactly one of T+p, "
+        f"p+x, or p+h. Got p plus: {given or 'nothing else'}."
+    )
+
+
+def _water_steam_state_from_T_p(T: float, p: float) -> WaterSteamState:
+    _validate_temperature(T)
+    _validate_pressure(p)
+
+    props = water_steam_props_iapws97(T=T, p=p)
+    transport = props.transport
+    Pr = _prandtl_number(transport.cp, transport.mu, transport.k)
+
+    if p >= WATER_CRITICAL_PRESSURE_PA:
+        return WaterSteamState(
+            T=T,
+            p=p,
+            h=props.h,
+            phase=WaterPhaseRegion.SUPERCRITICAL,
+            quality=None,
+            rho=transport.rho,
+            cp=transport.cp,
+            mu=transport.mu,
+            k=transport.k,
+            Pr=Pr,
+            T_sat=None,
+            h_f=None,
+            h_g=None,
+            h_fg=None,
+            warnings=list(props.warnings),
+        )
+
+    T_sat = water_saturation_temperature(p)
+    if abs(T - T_sat) <= _SATURATION_AMBIGUITY_TOLERANCE_K:
+        raise ValueError(
+            f"T={T} K at p={p} Pa is within "
+            f"{_SATURATION_AMBIGUITY_TOLERANCE_K} K of the saturation "
+            f"temperature T_sat={T_sat} K. T+p cannot distinguish saturated "
+            "liquid, saturated vapor and a two-phase mixture at this point "
+            "-- specify the state using p+x or p+h instead."
+        )
+
+    h_f = water_saturation_liquid_enthalpy(p=p)
+    h_g = water_saturation_vapor_enthalpy(p=p)
+    h_fg = h_g - h_f
+    phase = (
+        WaterPhaseRegion.SUPERHEATED_VAPOR
+        if T > T_sat
+        else WaterPhaseRegion.SUBCOOLED_LIQUID
+    )
+
+    return WaterSteamState(
+        T=T,
+        p=p,
+        h=props.h,
+        phase=phase,
+        quality=None,
+        rho=transport.rho,
+        cp=transport.cp,
+        mu=transport.mu,
+        k=transport.k,
+        Pr=Pr,
+        T_sat=T_sat,
+        h_f=h_f,
+        h_g=h_g,
+        h_fg=h_fg,
+        warnings=list(props.warnings),
+    )
+
+
+def _water_steam_state_from_p_x(p: float, x: float) -> WaterSteamState:
+    _validate_pressure(p)
+    _validate_vapor_quality(x)
+    _reject_supercritical_saturation(p)
+    _validate_saturation_pressure(p)
+
+    T_sat = water_saturation_temperature(p)
+    h_f = water_saturation_liquid_enthalpy(p=p)
+    h_g = water_saturation_vapor_enthalpy(p=p)
+    h_fg = h_g - h_f
+    h = h_f + x * h_fg
+
+    rho, cp, mu, k, warnings = _saturated_transport(p, x)
+    Pr = _prandtl_number(cp, mu, k)
+
+    return WaterSteamState(
+        T=T_sat,
+        p=p,
+        h=h,
+        phase=_phase_region_for_quality(x),
+        quality=x,
+        rho=rho,
+        cp=cp,
+        mu=mu,
+        k=k,
+        Pr=Pr,
+        T_sat=T_sat,
+        h_f=h_f,
+        h_g=h_g,
+        h_fg=h_fg,
+        warnings=warnings,
+    )
+
+
+def _water_steam_state_from_p_h(p: float, h: float) -> WaterSteamState:
+    _validate_pressure(p)
+    if not math.isfinite(h):
+        raise ValueError("Specific enthalpy must be finite [J/kg].")
+    _reject_supercritical_saturation(p)
+    _validate_saturation_pressure(p)
+
+    T_sat = water_saturation_temperature(p)
+    h_f = water_saturation_liquid_enthalpy(p=p)
+    h_g = water_saturation_vapor_enthalpy(p=p)
+    h_fg = h_g - h_f
+    tol = _SATURATION_ENTHALPY_TOLERANCE_RELATIVE * h_fg
+
+    if h > h_g + tol:
+        return _single_phase_state_from_p_h(
+            p, h, WaterPhaseRegion.SUPERHEATED_VAPOR, T_sat, h_f, h_g, h_fg
+        )
+    if h < h_f - tol:
+        return _single_phase_state_from_p_h(
+            p, h, WaterPhaseRegion.SUBCOOLED_LIQUID, T_sat, h_f, h_g, h_fg
+        )
+
+    if h >= h_g - tol:
+        x = 1.0
+    elif h <= h_f + tol:
+        x = 0.0
+    else:
+        x = (h - h_f) / h_fg
+
+    rho, cp, mu, k, warnings = _saturated_transport(p, x)
+    Pr = _prandtl_number(cp, mu, k)
+
+    return WaterSteamState(
+        T=T_sat,
+        p=p,
+        h=h,
+        phase=_phase_region_for_quality(x),
+        quality=x,
+        rho=rho,
+        cp=cp,
+        mu=mu,
+        k=k,
+        Pr=Pr,
+        T_sat=T_sat,
+        h_f=h_f,
+        h_g=h_g,
+        h_fg=h_fg,
+        warnings=warnings,
+    )
+
+
+def _single_phase_state_from_p_h(
+    p: float,
+    h: float,
+    phase: WaterPhaseRegion,
+    T_sat: float,
+    h_f: float,
+    h_g: float,
+    h_fg: float,
+) -> WaterSteamState:
+    try:
+        state = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
+    except Exception as exc:
+        raise ValueError(f"IAPWS-IF97 failed for p={p} Pa, h={h} J/kg.") from exc
+
+    rho, cp, mu, k, warnings = _transport_from_iapws_state(state, two_phase=False)
+    Pr = _prandtl_number(cp, mu, k)
+
+    return WaterSteamState(
+        T=float(state.T),
+        p=p,
+        h=h,
+        phase=phase,
+        quality=None,
+        rho=rho,
+        cp=cp,
+        mu=mu,
+        k=k,
+        Pr=Pr,
+        T_sat=T_sat,
+        h_f=h_f,
+        h_g=h_g,
+        h_fg=h_fg,
+        warnings=warnings,
+    )
+
+
+def _saturated_transport(
+    p: float, x: float
+) -> tuple[float, Optional[float], Optional[float], Optional[float], list[ModelWarning]]:
+    """Return (rho, cp, mu, k, warnings) for a saturated state p+x."""
+    try:
+        state = IAPWS97(P=_pa_to_mpa(p), x=x)
+    except Exception as exc:
+        raise ValueError(f"IAPWS-IF97 saturated state failed for p={p} Pa, x={x}.") from exc
+    return _transport_from_iapws_state(state, two_phase=(0.0 < x < 1.0))
+
+
+def _transport_from_iapws_state(
+    state: IAPWS97, *, two_phase: bool
+) -> tuple[float, Optional[float], Optional[float], Optional[float], list[ModelWarning]]:
+    rho = float(state.rho)
+    if two_phase:
+        warnings = [
+            _warning(
+                code="WATER_STEAM_TWO_PHASE_STATE",
+                message=(
+                    "Two-phase water/steam state: cp, mu and k are not "
+                    "ordinary single-phase transport properties in this "
+                    "region and are reported as None."
+                ),
+                severity="warning",
+            )
+        ]
+        return rho, None, None, None, warnings
+    cp = float(state.cp) * 1000.0
+    mu = float(state.mu)
+    k = float(state.k)
+    return rho, cp, mu, k, []
+
+
+def _prandtl_number(
+    cp: Optional[float], mu: Optional[float], k: Optional[float]
+) -> Optional[float]:
+    if cp is None or mu is None or k is None:
+        return None
+    return cp * mu / k
+
+
+def _phase_region_for_quality(x: float) -> WaterPhaseRegion:
+    if x <= 0.0:
+        return WaterPhaseRegion.SATURATED_LIQUID
+    if x >= 1.0:
+        return WaterPhaseRegion.SATURATED_VAPOR
+    return WaterPhaseRegion.TWO_PHASE
+
+
+def _reject_supercritical_saturation(p: float) -> None:
+    if p >= WATER_CRITICAL_PRESSURE_PA:
+        raise ValueError(
+            f"p={p} Pa is at or above the critical pressure "
+            f"({WATER_CRITICAL_PRESSURE_PA} Pa). Saturated/two-phase water "
+            "states (p+x, or p+h phase classification against the "
+            "saturation dome) are not defined there; pure-water phase "
+            "change above the critical pressure is out of scope."
         )
