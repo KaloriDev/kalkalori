@@ -54,6 +54,14 @@ from core.phase_change.steam_condensation import (
     solve_steam_condensation_zone,
     steam_mass_flux,
 )
+from core.phase_change.steam_heater import (
+    SteamEvaporationNotSupportedError,
+    SteamHeaterSolution,
+    SteamHeaterZoneKind,
+    SteamHeaterZoneResult,
+    rate_steam_heater,
+    solve_steam_heater,
+)
 
 __all__ = [
     "PhaseChangeCapability",
@@ -66,4 +74,10 @@ __all__ = [
     "local_steam_condensation_alpha",
     "solve_steam_condensation_zone",
     "steam_mass_flux",
+    "SteamEvaporationNotSupportedError",
+    "SteamHeaterSolution",
+    "SteamHeaterZoneKind",
+    "SteamHeaterZoneResult",
+    "rate_steam_heater",
+    "solve_steam_heater",
 ]
