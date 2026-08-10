@@ -205,7 +205,7 @@ base property layer.
   Condensation in Plain Tubes", *HVAC&R Research*, 15(5), 889-913.
   DOI: `10.1080/10789669.2009.10390871`.
 
-Used as the production in-tube pure-fluid condensation correlation, including
+Used as the default production in-tube pure-fluid condensation correlation, including
 its forced-flow and gravity-driven film terms, orientation-specific regime
 maps, and published applicability diagnostics. Two-phase pressure drop is not
 part of this model.

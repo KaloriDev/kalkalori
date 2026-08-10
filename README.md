@@ -35,8 +35,12 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.6.1)
+## Current Capabilities (v0.6.2)
 
+- Pure water/steam cooling inside bare tubes, including superheated steam,
+  saturated or wet-steam inlets, partial/complete condensation, and optional
+  condensate subcooling through the public Simulation and Rating APIs; see
+  [`docs/property_models.md`](docs/property_models.md#16-v062--pure-watersteam-cooling-inside-tubes)
 - Partial H2O condensation from a water-containing gas mixture either
   inside bare tubes or outside a bare-tube bank, with automatic detection
   (`PhaseChangeMode.AUTO`) and a dry-only override

@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.6.1`
+**Current version:** `v0.6.2`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -57,12 +57,12 @@ This is a major functional extension, but **not** a new modelling paradigm.
 The patch list below is a plan, not a commitment: later patch numbering and
 scope may be adjusted based on validation results as each step lands.
 
-#### v0.6.0 — Outside wet-gas water condensation
+#### v0.6.0 — Outside wet-gas water condensation — IMPLEMENTED
 
 - Partial H2O condensation from a water-containing gas outside bare tubes.
 - Automatic outside condensation detection and partial wet-surface handling.
 
-#### v0.6.1 — Inside wet-gas water condensation (this release)
+#### v0.6.1 — Inside wet-gas water condensation — IMPLEMENTED
 
 - Partial H2O condensation from wet gas inside bare tubes.
 - Automatic inside condensation detection.
@@ -72,7 +72,7 @@ scope may be adjusted based on validation results as each step lands.
 - Gas-phase hydraulic-state update.
 - One active phase-changing side per call.
 
-#### v0.6.2 — Pure water/steam cooling and condensation inside tubes
+#### v0.6.2 — Pure water/steam cooling and condensation inside tubes — IMPLEMENTED
 
 - Superheated-steam desuperheating.
 - Saturated-steam condensation.
@@ -83,31 +83,33 @@ scope may be adjusted based on validation results as each step lands.
 - Automatic allocation of surface between vapor, condensation and liquid zones.
 - Pure-steam condensation outside tubes is outside planned scope.
 
-#### v0.6.3 — Explicit-inventory evaporation
+#### v0.6.3 — Explicit-inventory evaporation — PLANNED
 
 - Partial evaporation from an explicitly specified liquid or droplet
   inventory in a gas stream.
 
-#### v0.6.4 — Condensate management
+#### v0.6.4 — Condensate management — PLANNED
 
 - Condensate film retention and drainage.
 - Carryover, re-entrainment and re-evaporation.
 
-#### v0.6.5 — Freezing
+#### v0.6.5 — Freezing / ice — PLANNED
 
 - Freezing and solid water deposits.
 
-#### v0.6.6 — Multiple condensable species
+#### v0.6.6 — Multiple condensables / acid-dew providers — PLANNED
 
 - Multiple condensable species.
 - Replaceable acid-dew-point and phase-equilibrium providers.
 
-#### v0.6.7 — Phase-change hydraulic corrections
+#### v0.6.7 — Phase-change hydraulics — PLANNED
 
 - Condensate-film and applicable two-phase pressure-drop models.
 
 **Out of scope for the whole v0.6.x line:** corrosion and material
 selection remain outside the solver's scope.
+
+**Outside planned scope:** pure-steam condensation outside tubes.
 
 ---
 

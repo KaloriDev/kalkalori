@@ -12,6 +12,8 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added water-steam inlet states based on temperature, enthalpy or vapor quality.
 - Added in-tube heat transfer for saturated and wet-steam condensation.
 - Added automatic desuperheating, condensation and condensate-subcooling zones.
+- Integrated pure-steam condensation into simulation and rating.
+- Added superheated-steam cooling and condensate subcooling.
 
 ---
 

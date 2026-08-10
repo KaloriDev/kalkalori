@@ -158,7 +158,12 @@ from core.pressure_drop.flow_path import (
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.common.warnings import ModelWarning, make_warning
-from core.phase_change.types import PhaseChangeMode, PhaseChangeResult
+from core.phase_change.types import (
+    PhaseChangeMode,
+    PhaseChangeResult,
+    WaterSteamPhaseChangeResult,
+)
+from core.phase_change.steam_condensation import SteamTubeOrientation
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +215,7 @@ class HXSideInput:
     phase_change_mode: PhaseChangeMode = PhaseChangeMode.AUTO
     h_in: float | None = None
     quality_in: float | None = None
+    steam_tube_orientation: SteamTubeOrientation | None = None
     water_steam_state: object | None = field(default=None, init=False, repr=False)
     state_specification: str = field(default="T+p", init=False)
 
@@ -220,6 +226,10 @@ class HXSideInput:
             raise ValueError("p must be a positive finite value [Pa].")
         if not isinstance(self.phase_change_mode, PhaseChangeMode):
             raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
+        if self.steam_tube_orientation is not None and not isinstance(
+            self.steam_tube_orientation, SteamTubeOrientation
+        ):
+            raise ValueError("steam_tube_orientation must be a SteamTubeOrientation value.")
 
         from core.properties.water import IAPWS97WaterSteamProvider
 
@@ -246,6 +256,8 @@ class HXSideInput:
         else:
             if self.h_in is not None or self.quality_in is not None:
                 raise ValueError("h_in and quality_in are supported only by the water/steam inlet provider.")
+            if self.steam_tube_orientation is not None:
+                raise ValueError("steam_tube_orientation is supported only for the water/steam tube side.")
             if self.T_in is None or not math.isfinite(self.T_in) or self.T_in <= 0.0:
                 raise ValueError("T_in must be a positive finite value [K].")
 
@@ -304,7 +316,7 @@ class HXSimulationResult:
     # Transport properties used in the final pass (bulk-mean; see
     # thermal_state.inside_wall_props/outside_wall_props for wall-state
     # properties, kept separate and never overwriting these).
-    inside_props_mean: FluidTransportProperties
+    inside_props_mean: FluidTransportProperties | None
     outside_props_mean: FluidTransportProperties
 
     # Flow / dimensionless numbers at the final pass
@@ -352,13 +364,13 @@ class HXSimulationResult:
     # Diagnostics
     warnings: list[ModelWarning] | None = None
 
-    # Phase-change results (v0.6.1). ``None`` only if this HXSimulationResult
+    # Phase-change results. ``None`` only if this HXSimulationResult
     # was constructed directly by ``run_simulation`` (the pure sensible-only
     # driver) without going through ``BareTubeHeatExchanger.simulate``, which
     # is the layer that calls ``core.phase_change.integration.
     # apply_phase_change`` to fill these in. Either side can carry the active
     # wet-gas H2O condensation result, but never both in one call.
-    inside_phase_change: "PhaseChangeResult | None" = None
+    inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
 
     @property
@@ -435,18 +447,26 @@ class HXSimulationResult:
     @property
     def tube_side_hydraulic(self):
         """Nested straight tube-bundle hydraulic result."""
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return None
         return self.final_result.tube_side_hydraulic
 
     @property
     def inside_properties_inlet(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult):
+            return self.inside_phase_change.state_in
         return self.final_result.inside_properties_inlet
 
     @property
     def inside_properties_midpoint(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult):
+            return self.inside_phase_change.state_midpoint
         return self.final_result.inside_properties_midpoint
 
     @property
     def inside_properties_outlet(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult):
+            return self.inside_phase_change.state_out
         return self.final_result.inside_properties_outlet
 
     @property
@@ -463,14 +483,20 @@ class HXSimulationResult:
 
     @property
     def inside_dp_friction(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_friction
 
     @property
     def inside_dp_acceleration(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_acceleration
 
     @property
     def inside_dp_tube_bundle(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_tube_bundle
 
     @property
@@ -507,6 +533,8 @@ class HXSimulationResult:
     @property
     def tube_side_pressure_drop(self):
         """Complete tube-side pressure-drop result (core + local + total)."""
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return None
         return self.final_result.tube_side_pressure_drop
 
     @property
@@ -516,6 +544,8 @@ class HXSimulationResult:
 
     @property
     def inside_dp_local(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_local
 
     @property
@@ -526,22 +556,32 @@ class HXSimulationResult:
 
     @property
     def inside_dp_straight_tube_friction(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_straight_tube_friction
 
     @property
     def inside_dp_straight_tube_acceleration(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_straight_tube_acceleration
 
     @property
     def inside_dp_straight_tubes(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_straight_tubes
 
     @property
     def inside_dp_tube_entrances(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_tube_entrances
 
     @property
     def inside_dp_tube_exits(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_tube_exits
 
     @property
@@ -562,14 +602,20 @@ class HXSimulationResult:
 
     @property
     def pass_boundary_states(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return ()
         return self.final_result.pass_boundary_states
 
     @property
     def entrance_results(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return ()
         return self.final_result.entrance_results
 
     @property
     def exit_results(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return ()
         return self.final_result.exit_results
 
 

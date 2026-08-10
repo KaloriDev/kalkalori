@@ -3,8 +3,10 @@
 
 """Phase-change support for KalKalori's 0D bare-tube heat-exchanger model.
 
-v0.6.1 supports partial H2O condensation from a wet gas containing a
-non-condensable carrier on either the inside or outside surface.
+The package supports partial H2O condensation from a wet gas containing a
+non-condensable carrier on either exchanger side and v0.6.2 pure-water/steam
+cooling and condensation inside tubes. Pure-steam condensation outside
+tubes remains outside the planned scope.
 
 Layering (see individual module docstrings for detail)
 --------------------------------------------------------
@@ -29,10 +31,10 @@ Layering (see individual module docstrings for detail)
 ``core.models.bare_tube.BareTubeHeatExchanger.simulate``;
 ``core.phase_change.rating_integration`` does the equivalent for ``.rate``.
 
-Only H2O from wet gas, only partial condensation, at most one active
-phase-changing side per call. Pure water/steam condensation inside tubes is
-planned for v0.6.2; pure-steam condensation outside tubes is outside planned
-scope. See ``docs/roadmap.md`` for later evaporation, film retention,
+Wet-gas H2O remains limited to partial condensation, while pure water/steam
+inside tubes can desuperheat, condense completely and subcool. At most one
+phase-changing side is active per call, and pure-steam condensation outside
+tubes is outside planned scope. See ``docs/roadmap.md`` for later evaporation, film retention,
 freezing, multiple-species and phase-change-hydraulic work that can extend
 this package without breaking its public shape
 (``PhaseChangeMode``/``PhaseChangeDirection``/``PhaseChangeCapability``/
@@ -45,6 +47,7 @@ from core.phase_change.types import (
     PhaseChangeDirection,
     PhaseChangeMode,
     PhaseChangeResult,
+    WaterSteamPhaseChangeResult,
 )
 from core.phase_change.steam_condensation import (
     SteamCondensationLocalResult,
@@ -68,6 +71,7 @@ __all__ = [
     "PhaseChangeDirection",
     "PhaseChangeMode",
     "PhaseChangeResult",
+    "WaterSteamPhaseChangeResult",
     "SteamCondensationLocalResult",
     "SteamCondensationZoneResult",
     "SteamTubeOrientation",

@@ -1,19 +1,19 @@
 # Property Model Selection Guide
 
-This document explains how to select property models in KalKalori `v0.4.x`.
+This document explains how to select property models in KalKalori `v0.6.2`.
 
 The goal is to avoid hidden assumptions. KalKalori does not automatically decide whether a fluid should be treated as classical moist air, dry gas, wet gas, condensing gas, steam, or water. The user must select the appropriate property path.
 
 ---
 
-## 1. Available Property Paths in v0.4.x
+## 1. Available Property Paths in v0.6.2
 
 | Property path              | Main API                                       | Intended use                                                           | Condensation support              |
 | -------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------- |
 | Dry air | `dry_air_props()`, `DryAirPropertyProvider` | Standard dry air properties for sensible gas-side calculations | No |
 | Psychrometric moist air    | `MoistAirState`, PsychroLib adapter            | Classical moist air, RH, dew point, saturation, HVAC-like calculations | Onset / limit helpers only        |
 | Moist-air transport helper | `moist_air_transport_props_from_state()`       | Transport properties of moist air in normal engineering range          | No full wet HX solver             |
-| Water/steam                | `water_steam_props_iapws97()`                  | Water, saturated water, steam, saturated steam                         | Water/steam phase input supported |
+| Water/steam                | `water_steam_props_iapws97()`, `IAPWS97WaterSteamProvider` | Water, saturated water, wet or superheated steam | Inside cooling, condensation and subcooling |
 | CoolProp pure fluid        | `CoolPropFluidProvider`                        | Pure fluids and pseudo-pure fluids                                     | Backend dependent                 |
 | Explicit gas mixture       | `GasMixtureSpec`, `GasMixturePropertyProvider` | Dry gases, flue gas, hot humid gas with H2O as gas-phase component     | No condensation                   |
 | Constant properties        | `ConstantPropertyProvider`                     | Debugging, reference calculations, fixed-property cases                | No                                |
@@ -45,7 +45,7 @@ Supported input modes:
 ```python
 water_steam_props_iapws97(T=..., p=...)
 water_steam_props_iapws97(p=..., x=...)
-water_steam_props_iapws97(T=..., x=...)
+water_steam_props_iapws97(p=..., h=...)
 ```
 
 Use this path for tube-side water/steam, not the gas-mixture path.
@@ -520,9 +520,11 @@ acid dew point is relevant.
 
 ## 8. Condensation / Wet-Surface Cases
 
-KalKalori `v0.4.5` does not yet provide a full wet economizer solver.
+The psychrometric `MoistAirState` path alone provides onset/limit helpers,
+not a full wet exchanger solve. For the current 0D wet-gas solver based on
+an explicit `GasMixtureSpec`, see section 15.
 
-### 8.1 What is available
+### 8.1 What is available in the psychrometric helper path
 
 Current helpers can support:
 
@@ -545,9 +547,9 @@ wet_surface_process_limit(...)
 
 Use them only when the gas can be represented by the psychrometric moist-air path.
 
-### 8.2 What is not available yet
+### 8.2 What is not available in that helper path
 
-Not implemented in `v0.4.5`:
+Not implemented by the psychrometric helpers themselves:
 
 ```text
 segment-by-segment wet heat exchanger calculation,
@@ -569,7 +571,7 @@ drainage model.
 
 Use this decision rule:
 
-| Situation                                               | Recommended action in v0.4.5                                |
+| Situation                                               | Recommended action                                           |
 | ------------------------------------------------------- | ----------------------------------------------------------- |
 | Moist air below `200 °C`, no condensation expected      | Use `MoistAirState` + moist-air transport                   |
 | Moist air below `200 °C`, condensation onset check only | Use `check_condensation_onset()`                            |
@@ -720,7 +722,7 @@ gas-phase-only hydraulics.
 
 ### Case E — Flue gas with possible acid dew point
 
-Not supported in `v0.4.5`.
+Not supported.
 
 Do not use current water-only moist-air helpers to assess acid condensation.
 
@@ -775,9 +777,10 @@ latent heat and condensate removal must be included,
 the wet gas flows inside or outside bare tubes.
 ```
 
-Acid dew points, pure steam condensation, multiple condensables and explicit
-liquid-inventory evaporation require later models; do not represent them by
-silently changing the H2O-only wet-gas model.
+Pure-steam condensation inside tubes uses the separate v0.6.2 water/steam
+model described in section 16. Acid dew points, multiple condensables and
+explicit liquid-inventory evaporation require later models; do not represent
+them by silently changing the H2O-only wet-gas model.
 
 ---
 
@@ -846,10 +849,10 @@ true duty and outlet temperature may differ from the dry result.
 
 - Only H2O condenses from a wet gas with a non-condensable dry carrier;
   either the **inside** or **outside** stream may be active.
-- Only **partial** condensation (0 <= W_out <= W_in); full steam
-  condensation, vapor quality and condensate subcooling are out of scope
-  and planned for v0.6.2. Pure-steam condensation outside tubes is not in
-  the planned scope.
+- This wet-gas solver supports only **partial** condensation
+  (0 <= W_out <= W_in). Full pure-steam condensation, vapor quality and
+  condensate subcooling use the separate inside-tube model in section 16.
+  Pure-steam condensation outside tubes is not in the planned scope.
 - At most **one** active phase-changing side per call
   (`MULTIPLE_PHASE_CHANGE_SIDES_NOT_SUPPORTED` otherwise).
 - Onset uses the **minimum** side-wall temperature. The bulk outlet gas and
@@ -881,3 +884,75 @@ See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
 and heat/mass-transfer model details, and
 `core/tests/outside_water_condensation_examples.ipynb` and
 `core/tests/inside_water_condensation_examples.ipynb` for worked examples.
+
+---
+
+## 16. v0.6.2 — Pure Water/Steam Cooling Inside Tubes
+
+Pure H2O uses pressure/enthalpy phase equilibrium, not the wet-gas water
+ratio, dew-point or heat/mass-transfer model. The public
+`BareTubeHeatExchanger.simulate()` and `.rate()` paths accept an
+`IAPWS97WaterSteamProvider` on the inside side with exactly one inlet state
+specification:
+
+```python
+HXSideInput(provider=steam, p=p, T_in=T, ...)
+HXSideInput(provider=steam, p=p, quality_in=x, ...)
+HXSideInput(provider=steam, p=p, h_in=h, ...)
+```
+
+`T_in + p` is rejected on the saturation line because it cannot distinguish
+saturated liquid, saturated vapor and a two-phase mixture. Use `quality_in`
+or `h_in` there. Quality is the vapor mass fraction and is defined only in
+the saturation dome: `x=0` is saturated liquid, `x=1` is saturated vapor,
+and `0<x<1` is wet steam. Superheated vapor and subcooled liquid have
+`quality=None`.
+
+For Rating, the equivalent outlet fields are `T_out`, `quality_out` and
+`h_out`; an explicit `Q` or a fully specified opposing-side temperature
+program may also define duty. Effectiveness-only steam Rating is not
+supported because the phase-changing stream has no single sensible capacity
+rate. The steam-side cooling direction may contain any non-empty subset
+of the ordered 0D zones:
+
+```text
+SUPERHEAT -> CONDENSATION -> SUBCOOLING
+```
+
+Each zone reports its own duty, outer-reference area, inside HTC, `U` and
+`UA`. `zone_alpha_condensation` is the physical Shah (2009) condensation
+coefficient. The top-level `alfa_i`/`inside_alfa_mean` remains only the
+existing area-weighted compatibility diagnostic; it is not fed back into
+the zone calculation. The authoritative exchanger conductance is
+`UA_total = sum(U_zone * A_zone)`.
+
+Tube orientation must be supplied explicitly through
+`steam_tube_orientation` whenever a vapor/two-phase inlet can exercise the
+orientation-dependent condensation correlation. It is not required for the
+single-phase saturated-liquid-to-subcooled path. Supported values are
+horizontal, vertical downward, and downward inclined by at least 15 degrees.
+
+The result is a typed `WaterSteamPhaseChangeResult`. Endpoint properties
+come from the final pressure/enthalpy solution and contain at least `T`, `p`,
+`h`, phase and quality; a two-phase endpoint does not invent single-phase
+transport properties. `PhaseChangeMode.DISABLED` is allowed while the result
+stays in one phase, but raises the controlled
+`PHASE_CHANGE_DISABLED_BUT_REQUIRED` error if the required solution crosses
+the saturation dome.
+
+Current limits:
+
+- cooling/condensation only; reverse boiling or evaporation is unsupported;
+- pure-steam phase change is supported only inside tubes and is outside the
+  planned scope on the outside side;
+- one active phase-changing side per exchanger call;
+- the model is 0D and zone fractions are thermal surface allocations, not
+  resolved axial phase-front positions;
+- the Shah (2009) applicability diagnostics warn without clipping or
+  calibration outside the published range;
+- two-phase pressure drop is not supported and is returned explicitly as
+  unavailable rather than as a partial single-phase tube-side pressure drop.
+
+See `core/tests/steam_condensation_examples.ipynb` for public Simulation
+examples covering saturated, wet, superheated, subcooled and low-mass-flux
+cases.

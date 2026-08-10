@@ -1073,6 +1073,44 @@ class BareTubeHeatExchanger:
         """
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
+        settings = PhaseChangeSettings(
+            onset_tolerance_K=phase_change_onset_tolerance_K,
+            activation_band_K=phase_change_activation_band_K,
+            lewis_number=lewis_number,
+            max_iterations=phase_change_max_iterations,
+            temperature_tolerance_K=phase_change_temperature_tolerance_K,
+            relative_Q_tolerance=phase_change_relative_Q_tolerance,
+            water_ratio_tolerance=phase_change_water_ratio_tolerance,
+            condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
+            wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
+            wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
+            relaxation_factor=phase_change_relaxation_factor,
+        )
+        from core.phase_change.steam_integration import (
+            apply_water_steam_simulation,
+            is_inside_water_steam_case,
+            reject_unsupported_outside_pure_steam,
+            translate_saturation_crossing_error,
+        )
+
+        reject_unsupported_outside_pure_steam(outside)
+        if is_inside_water_steam_case(inside):
+            return apply_water_steam_simulation(
+                self, inside, outside,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet,
+                K_outlet=K_outlet,
+                K_turn=K_turn,
+                euler_provider=euler_provider,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                settings=settings,
+            )
 
         try:
             dry_result = run_simulation(
@@ -1093,36 +1131,7 @@ class BareTubeHeatExchanger:
                 relative_alfa_tolerance=relative_alfa_tolerance,
             )
         except ValueError as exc:
-            # v0.6.2 state resolution deliberately rejects an unqualified
-            # T+p point on the saturation line. Until the steam solver is
-            # integrated, preserve the established controlled scope error
-            # instead of leaking an internal dry-baseline ambiguity.
-            from core.phase_change.capability import is_pure_water_provider
-            from core.phase_change.integration import PureWaterSteamCondensationNotSupportedError
-
-            if (
-                is_pure_water_provider(inside.provider)
-                and "T+p lies on the water saturation line" in str(exc)
-            ):
-                raise PureWaterSteamCondensationNotSupportedError(
-                    "Pure-water/steam condensation inside tubes requires the "
-                    "v0.6.2 steam-heater solver, which is not integrated in this stage."
-                ) from exc
-            raise
-
-        settings = PhaseChangeSettings(
-            onset_tolerance_K=phase_change_onset_tolerance_K,
-            activation_band_K=phase_change_activation_band_K,
-            lewis_number=lewis_number,
-            max_iterations=phase_change_max_iterations,
-            temperature_tolerance_K=phase_change_temperature_tolerance_K,
-            relative_Q_tolerance=phase_change_relative_Q_tolerance,
-            water_ratio_tolerance=phase_change_water_ratio_tolerance,
-            condensate_tolerance_kg_s=phase_change_condensate_tolerance_kg_s,
-            wall_temperature_tolerance_K=phase_change_wall_temperature_tolerance_K,
-            wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
-            relaxation_factor=phase_change_relaxation_factor,
-        )
+            translate_saturation_crossing_error(inside, exc)
         return apply_phase_change(
             self, inside, outside, dry_result,
             iterate=iterate, euler_provider=euler_provider, settings=settings,
@@ -1208,20 +1217,46 @@ class BareTubeHeatExchanger:
             wet_fraction_tolerance=phase_change_wet_fraction_tolerance,
             relaxation_factor=phase_change_relaxation_factor,
         )
-        return apply_phase_change_to_rating(
-            self, inside, outside,
-            Q=Q, effectiveness=effectiveness,
-            flow_arrangement=flow_arrangement,
-            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
-            euler_provider=euler_provider,
-            include_simulation=include_simulation,
-            over_specified_tolerance=over_specified_tolerance,
-            max_iterations=max_iterations,
-            wall_temperature_tolerance_K=wall_temperature_tolerance_K,
-            relative_alfa_tolerance=relative_alfa_tolerance,
-            relaxation_factor=relaxation_factor,
-            settings=settings,
+        from core.phase_change.steam_integration import (
+            apply_water_steam_rating,
+            is_inside_water_steam_case,
+            reject_unsupported_outside_pure_steam,
+            translate_saturation_crossing_error,
         )
+
+        reject_unsupported_outside_pure_steam(outside)
+        if is_inside_water_steam_case(inside):
+            return apply_water_steam_rating(
+                self, inside, outside,
+                Q=Q, effectiveness=effectiveness,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+                euler_provider=euler_provider,
+                include_simulation=include_simulation,
+                over_specified_tolerance=over_specified_tolerance,
+                max_iterations=max_iterations,
+                wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                relaxation_factor=relaxation_factor,
+                settings=settings,
+            )
+        try:
+            return apply_phase_change_to_rating(
+                self, inside, outside,
+                Q=Q, effectiveness=effectiveness,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+                euler_provider=euler_provider,
+                include_simulation=include_simulation,
+                over_specified_tolerance=over_specified_tolerance,
+                max_iterations=max_iterations,
+                wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                relaxation_factor=relaxation_factor,
+                settings=settings,
+            )
+        except ValueError as exc:
+            translate_saturation_crossing_error(inside, exc)
 
     def solve_thermal_state(
         self,

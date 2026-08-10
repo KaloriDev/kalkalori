@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Central phase-change capability adapter (v0.6.1).
+"""Central phase-change capability adapter.
 
 This is the *only* place in KalKalori that should ever do
 ``isinstance(provider, GasMixturePropertyProvider)`` (or similar) to decide
@@ -12,7 +12,7 @@ integration``, ``core.models.bare_tube``) call
 themselves. This keeps "is this medium phase-change capable" centralized
 instead of scattered ``if outside_is_wet: ...`` checks across solvers.
 
-v0.6.1 recognizes exactly one wet-gas capability path: a
+The wet-gas capability path is a
 ``core.properties.gas_mixture.GasMixturePropertyProvider`` whose spec
 contains a positive mole fraction of water ("H2O"/"Water", any of mole,
 volume, or mass composition basis -- ``GasMixtureSpec.to_mole_fractions()``
@@ -21,9 +21,10 @@ already normalizes all three bases uniformly). There is no separate
 side built via
 ``core.properties.gas_mixture.gas_mixture_from_dry_composition_and_water_ratio``
 *is* a ``GasMixturePropertyProvider``, so it is already covered by this one
-path. Any other provider (pure-fluid CoolProp/IAPWS providers, constant-
-property providers, dry gas-mixture specs with no water) is reported as not
-capable.
+path. v0.6.2 additionally recognizes the dedicated IAPWS provider as the
+distinct pure-water/steam capability path. Other providers (including
+generic pure-fluid CoolProp, constant-property providers and dry gas-mixture
+specs with no water) are reported as not capable.
 
 A capable medium is not necessarily *active*: capability is a property of
 the medium/spec alone, independent of the current thermal operating point.
@@ -56,6 +57,14 @@ def detect_phase_change_capability(provider: object) -> PhaseChangeCapability:
         PhaseChangeCapability describing whether/how this provider can
             undergo wet-gas phase change in the v0.6.1 model.
     """
+    from core.properties.water import IAPWS97WaterSteamProvider
+
+    if isinstance(provider, IAPWS97WaterSteamProvider):
+        return PhaseChangeCapability(
+            capable=True,
+            component=CONDENSABLE_COMPONENT_LABEL,
+            provider_kind="pure_water_steam",
+        )
     if isinstance(provider, GasMixturePropertyProvider):
         return _detect_gas_mixture_capability(provider)
     return PhaseChangeCapability(capable=False)
@@ -101,7 +110,7 @@ def _detect_gas_mixture_capability(
     if total_dry <= 0.0:
         # A pure water-vapor stream has no non-condensable carrier gas; the
         # W = kg vapor / kg dry carrier basis used throughout this package
-        # is undefined. Pure steam condensation inside is planned for v0.6.2.
+        # is undefined; the dedicated v0.6.2 water/steam adapter handles it.
         return PhaseChangeCapability(capable=False)
 
     dry_mole_fractions = {name: fraction / total_dry for name, fraction in dry_raw.items()}

@@ -93,7 +93,7 @@ class MultiplePhaseChangeSidesError(RuntimeError):
 
 
 class PureWaterSteamCondensationNotSupportedError(RuntimeError):
-    """Raised for pure-water/steam condensation, planned for v0.6.2."""
+    """Legacy direct-adapter guard; public v0.6.2 calls bypass this path."""
 
     warning_code = WC.PURE_WATER_STEAM_CONDENSATION_NOT_SUPPORTED
 
@@ -254,6 +254,7 @@ def apply_phase_change(
     iterate: bool,
     euler_provider: str = "zukauskas",
     settings: PhaseChangeSettings | None = None,
+    skip_inside_pure_steam_guard: bool = False,
 ):
     """Return a new ``HXSimulationResult`` with phase-change results applied.
 
@@ -275,7 +276,8 @@ def apply_phase_change(
     inside_capability = detect_phase_change_capability(inside.provider)
     outside_capability = detect_phase_change_capability(outside.provider)
 
-    _raise_if_inside_pure_steam_condensation(inside, dry_result)
+    if not skip_inside_pure_steam_guard:
+        _raise_if_inside_pure_steam_condensation(inside, dry_result)
 
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
@@ -1183,23 +1185,34 @@ def _apply_inside_condensation(
 
 
 def _raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
-    """Reject a pure-water vapor-to-liquid tendency with a v0.6.2 message."""
-    if inside.phase_change_mode is PhaseChangeMode.DISABLED:
-        return
+    """Guard pure-water phase crossings that reached the wet-gas adapter."""
     if not is_pure_water_provider(inside.provider):
         return
-    from core.properties.water import water_saturation_temperature
+    from core.properties.water import WaterSteamPhase, water_saturation_temperature
 
     try:
         T_sat = water_saturation_temperature(inside.p)
     except (TypeError, ValueError):
         return
+    state = getattr(inside, "water_steam_state", None)
+    if (
+        state is not None
+        and state.phase is WaterSteamPhase.SUBCOOLED_LIQUID
+        and dry_result.T_out_inside >= T_sat - 1.0e-6
+    ):
+        from core.phase_change.steam_heater import SteamEvaporationNotSupportedError
+
+        raise SteamEvaporationNotSupportedError(
+            "The sensible-only result crosses the water saturation boundary "
+            "in the heating direction; boiling/evaporation is unsupported."
+        )
+    if inside.phase_change_mode is PhaseChangeMode.DISABLED:
+        return
     wall_min = dry_result.wall_temperature_envelope.inside_min
     if inside.T_in >= T_sat - 1e-6 and wall_min < T_sat:
         raise PureWaterSteamCondensationNotSupportedError(
-            "Pure-water/steam condensation inside tubes is not supported in "
-            "v0.6.1; it is planned for v0.6.2 (including desuperheating, "
-            "vapor quality, complete condensation and condensate subcooling)."
+            "Pure-water/steam condensation must be dispatched through the "
+            "v0.6.2 steam adapter, not the wet-gas integration function."
         )
 
 

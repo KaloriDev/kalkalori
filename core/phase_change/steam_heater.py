@@ -195,6 +195,7 @@ def solve_steam_heater(
     T_in_outside: float,
     p_outside: float,
     orientation: SteamTubeOrientation,
+    available_area: float | None = None,
     max_iterations: int = 80,
     relative_area_tolerance: float = 1.0e-8,
 ) -> SteamHeaterSolution:
@@ -215,7 +216,10 @@ def solve_steam_heater(
 
     saturation = water_saturation_snapshot(inlet_state.p)
     cache = _SolveCache(inlet_state.p, outside_provider, p_outside)
-    available_area = hx.bundle.total_outer_area
+    if available_area is None:
+        available_area = hx.bundle.total_outer_area
+    if not math.isfinite(available_area) or available_area <= 0.0:
+        raise ValueError("available_area must be positive and finite.")
 
     # A lower enthalpy bound based on liquid water just above the opposing
     # inlet temperature deliberately brackets the thermal pinch. The final
