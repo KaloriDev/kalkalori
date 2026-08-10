@@ -16,6 +16,7 @@ from core.heat_transfer.thermal_iteration import (
 )
 from core.phase_change import warning_codes as WC
 from core.phase_change.condensation_solver_helpers import (
+    condensate_enthalpy_flow,
     FrostingNotSupportedError,
     invert_wet_gas_enthalpy,
     local_dew_point_or_triple_point,
@@ -24,14 +25,13 @@ from core.phase_change.condensation_solver_helpers import (
 )
 from core.phase_change.types import PhaseChangeCapability
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
-from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
+from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.properties.averaging import mean_temperature
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
 from core.properties.water import (
     WATER_TRIPLE_POINT_TEMPERATURE_K,
-    water_saturation_liquid_enthalpy,
 )
 
 if TYPE_CHECKING:
@@ -149,6 +149,8 @@ def solve_inside_condensation(
     residuals: dict[str, float] = {}
     state: dict[str, object] = {}
     converged = False
+    enthalpy_evaluator = WetGasEnthalpyEvaluator(p_inside, inside_capability)
+    h_in = enthalpy_evaluator.enthalpy(T_in_inside, W_in)
 
     for iteration in range(1, max_iterations + 1):
         T_mean_inside = mean_temperature(T_in_inside, T_out_inside)
@@ -266,21 +268,14 @@ def solve_inside_condensation(
 
         Q_total = Q_sensible + Q_latent
         W_out_new = max(0.0, W_in - m_dot_condensate / m_dot_dry_carrier)
-        h_in = h_wet_gas_dry_basis(
-            T_in_inside,
-            p_inside,
-            W_in,
-            inside_capability,
+        condensate_enthalpy_rate = condensate_enthalpy_flow(
+            m_dot_condensate=m_dot_condensate,
+            condensation_mass_tolerance=condensate_tolerance_kg_s,
+            wet_surface_fraction=fraction_new,
+            wet_area=A_wet,
+            wall_temperature_wet_mean=T_wall_wet_mean,
         )
-        h_drained = 0.0
-        if m_dot_condensate > 0.0:
-            if T_wall_wet_mean is None:
-                raise ValueError("positive condensate rate requires a wet-wall temperature.")
-            h_drained = (
-                m_dot_condensate
-                / m_dot_dry_carrier
-                * water_saturation_liquid_enthalpy(T=T_wall_wet_mean)
-            )
+        h_drained = condensate_enthalpy_rate / m_dot_dry_carrier
         h_out_target = h_in - Q_total / m_dot_dry_carrier - h_drained
         T_out_inside_new = invert_wet_gas_enthalpy(
             h_target=h_out_target,
@@ -289,6 +284,7 @@ def solve_inside_condensation(
             capability=inside_capability,
             T_wall_mean=T_wall_inside,
             T_in_wet_gas=T_in_inside,
+            evaluator=enthalpy_evaluator,
         )
         cp_outside = outside_provider.at(T=T_mean_outside, p=p_outside).cp
         T_out_outside_new = T_in_outside + Q_total / (m_dot_outside * cp_outside)

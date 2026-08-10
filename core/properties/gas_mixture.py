@@ -261,6 +261,11 @@ class GasMixturePropertyProvider:
         require_coolprop_backend(self.spec.backend)
         return self._coolprop_provider().full_at(T=T, p=p)
 
+    def specific_enthalpy(self, T: float, p: float) -> float:
+        """Return only specific enthalpy [J/kg] at T [K], p [Pa]."""
+        require_coolprop_backend(self.spec.backend)
+        return self._coolprop_provider().specific_enthalpy(T=T, p=p)
+
     def temperature_from_h_p(self, h: float, p: float) -> float:
         """Invert specific enthalpy and pressure to temperature [K]."""
         require_coolprop_backend(self.spec.backend)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 from core.phase_change.mass_heat_transfer import condensation_rate
+from core.phase_change import warning_codes as WC
 from core.phase_change.types import PhaseChangeCapability
 from core.phase_change.water_equilibrium import (
     is_frost_regime,
@@ -22,15 +23,72 @@ from core.phase_change.water_equilibrium import (
     water_mole_fraction_from_ratio,
     water_partial_pressure,
 )
-from core.phase_change.wet_gas_enthalpy import temperature_from_h_wet_gas_dry_basis
+from core.phase_change.wet_gas_enthalpy import (
+    WetGasEnthalpyEvaluator,
+    temperature_from_h_wet_gas_dry_basis,
+)
 from core.properties.water import (
     WATER_TRIPLE_POINT_TEMPERATURE_K,
     water_latent_heat_of_vaporization,
+    water_saturation_liquid_enthalpy,
 )
 
 
 class FrostingNotSupportedError(RuntimeError):
     """Raised when liquid condensation would enter the frost/ice regime."""
+
+
+class CondensateStateInconsistentError(RuntimeError):
+    """Raised for positive condensate flow without a valid wet surface."""
+
+    warning_code = WC.CONDENSATE_STATE_INCONSISTENT
+
+
+def condensate_enthalpy_flow(
+    *,
+    m_dot_condensate: float,
+    condensation_mass_tolerance: float,
+    wet_surface_fraction: float,
+    wet_area: float,
+    wall_temperature_wet_mean: float | None,
+) -> float:
+    """Return drained-liquid enthalpy flow [W] with a strict wet-state invariant.
+
+    A zero/tolerance-level condensate flow carries zero enthalpy flow and does
+    not require a fictitious liquid state.  A material condensate flow must
+    have a positive wet fraction and area plus a finite representative wet
+    wall temperature; otherwise the coupled state is internally inconsistent.
+    """
+    numeric = (
+        ("m_dot_condensate", m_dot_condensate),
+        ("condensation_mass_tolerance", condensation_mass_tolerance),
+        ("wet_surface_fraction", wet_surface_fraction),
+        ("wet_area", wet_area),
+    )
+    for name, value in numeric:
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite.")
+    if condensation_mass_tolerance < 0.0:
+        raise ValueError("condensation_mass_tolerance must be non-negative.")
+    if m_dot_condensate < 0.0:
+        raise ValueError("m_dot_condensate must be non-negative.")
+    if m_dot_condensate <= condensation_mass_tolerance:
+        return 0.0
+
+    if (
+        wet_surface_fraction <= 0.0
+        or wet_area <= 0.0
+        or wall_temperature_wet_mean is None
+        or not math.isfinite(wall_temperature_wet_mean)
+    ):
+        raise CondensateStateInconsistentError(
+            "Positive condensate flow was obtained without a valid wet-"
+            "surface state (wet fraction, wet area, and representative wet-"
+            "wall temperature are required)."
+        )
+    return m_dot_condensate * water_saturation_liquid_enthalpy(
+        T=wall_temperature_wet_mean
+    )
 
 
 def sensible_only_wall_temperature(
@@ -172,6 +230,7 @@ def invert_wet_gas_enthalpy(
     capability: PhaseChangeCapability,
     T_wall_mean: float,
     T_in_wet_gas: float,
+    evaluator: WetGasEnthalpyEvaluator | None = None,
 ) -> float:
     """Invert the shared dry-basis wet-gas enthalpy with bounded brackets."""
     T_lo = max(
@@ -187,6 +246,7 @@ def invert_wet_gas_enthalpy(
             capability,
             T_bracket=(T_lo, T_hi),
             tolerance_K=1e-6,
+            evaluator=evaluator,
         )
     except ValueError:
         return temperature_from_h_wet_gas_dry_basis(
@@ -199,4 +259,5 @@ def invert_wet_gas_enthalpy(
                 T_in_wet_gas + 10.0,
             ),
             tolerance_K=1e-6,
+            evaluator=evaluator,
         )

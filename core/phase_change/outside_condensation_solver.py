@@ -64,6 +64,7 @@ from core.phase_change.water_equilibrium import (
 )
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import (
+    WetGasEnthalpyEvaluator,
     h_wet_gas_dry_basis,
     temperature_from_h_wet_gas_dry_basis,
 )
@@ -71,6 +72,7 @@ from core.phase_change.mass_heat_transfer import condensation_rate
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.phase_change import warning_codes as WC
 from core.phase_change.condensation_solver_helpers import (
+    condensate_enthalpy_flow,
     FrostingNotSupportedError,
     invert_wet_gas_enthalpy,
     local_dew_point_or_triple_point,
@@ -214,6 +216,11 @@ def solve_outside_condensation(
     converged = False
     residuals: dict[str, float] = {}
     solution_state: dict[str, object] = {}
+    enthalpy_evaluator = WetGasEnthalpyEvaluator(
+        p_outside,
+        outside_capability,
+    )
+    h_in_outside = enthalpy_evaluator.enthalpy(T_in_outside, W_in)
 
     for iteration in range(1, max_iterations + 1):
         T_mean_inside = mean_temperature(T_in_inside, T_out_inside)
@@ -369,18 +376,14 @@ def solve_outside_condensation(
         Q_total = Q_sensible + Q_latent
         W_out_new = max(0.0, W_in - m_dot_condensate / m_dot_dry_carrier)
 
-        h_in_outside = h_wet_gas_dry_basis(T_in_outside, p_outside, W_in, outside_capability)
-        h_drained_per_kg_dry = 0.0
-        if m_dot_condensate > 0.0:
-            if T_wall_wet_mean_new is None:
-                raise ValueError(
-                    "outside_condensation_solver: positive condensate rate "
-                    "requires a representative wet-surface temperature."
-                )
-            h_drained_per_kg_dry = (
-                (m_dot_condensate / m_dot_dry_carrier)
-                * water_saturation_liquid_enthalpy(T=T_wall_wet_mean_new)
-            )
+        condensate_enthalpy_rate = condensate_enthalpy_flow(
+            m_dot_condensate=m_dot_condensate,
+            condensation_mass_tolerance=condensate_tolerance_kg_s,
+            wet_surface_fraction=wet_surface_fraction_new,
+            wet_area=A_wet,
+            wall_temperature_wet_mean=T_wall_wet_mean_new,
+        )
+        h_drained_per_kg_dry = condensate_enthalpy_rate / m_dot_dry_carrier
         h_out_target = h_in_outside - Q_total / m_dot_dry_carrier - h_drained_per_kg_dry
 
         T_out_outside_new = invert_wet_gas_enthalpy(
@@ -390,6 +393,7 @@ def solve_outside_condensation(
             capability=outside_capability,
             T_wall_mean=T_wall_mean,
             T_in_wet_gas=T_in_outside,
+            evaluator=enthalpy_evaluator,
         )
 
         cp_inside_mean = inside_provider.at(T=T_mean_inside, p=p_inside).cp

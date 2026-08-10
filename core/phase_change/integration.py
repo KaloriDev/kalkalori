@@ -59,6 +59,7 @@ from core.phase_change.outside_condensation_solver import (
     solve_outside_condensation,
 )
 from core.phase_change.inside_condensation_solver import solve_inside_condensation
+from core.phase_change.condensation_solver_helpers import condensate_enthalpy_flow
 from core.phase_change.regime import (
     OnsetDecision,
     decide_regime,
@@ -69,6 +70,7 @@ from core.phase_change.regime import (
 from core.phase_change.types import PhaseChangeCapability, PhaseChangeDirection, PhaseChangeMode, PhaseChangeResult
 from core.phase_change.water_equilibrium import is_frost_regime, water_dew_point, water_partial_pressure
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
+from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
 
 DEFAULT_ONSET_TOLERANCE_K = 0.0
 DEFAULT_ACTIVATION_BAND_K = 0.5
@@ -906,21 +908,21 @@ def _apply_inside_condensation(
         m_dot_water_vapor_out + solution.m_dot_condensate
     )
 
-    from core.properties.water import water_saturation_liquid_enthalpy
-    from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
-
-    h_in = h_wet_gas_dry_basis(inside.T_in, inside.p, W_in, inside_capability)
-    h_out = h_wet_gas_dry_basis(
+    enthalpy_evaluator = WetGasEnthalpyEvaluator(inside.p, inside_capability)
+    h_in = enthalpy_evaluator.enthalpy(inside.T_in, W_in)
+    h_out = enthalpy_evaluator.enthalpy(
         solution.T_out_inside,
-        inside.p,
         solution.W_out,
-        inside_capability,
     )
-    h_liquid = water_saturation_liquid_enthalpy(
-        T=solution.wall_temperature_wet_mean
+    condensate_enthalpy_rate = condensate_enthalpy_flow(
+        m_dot_condensate=solution.m_dot_condensate,
+        condensation_mass_tolerance=settings.condensate_tolerance_kg_s,
+        wet_surface_fraction=solution.wet_surface_fraction,
+        wet_area=solution.wet_area,
+        wall_temperature_wet_mean=solution.wall_temperature_wet_mean,
     )
-    Q_enthalpy = m_dot_dry_carrier * (
-        h_in - h_out - (W_in - solution.W_out) * h_liquid
+    Q_enthalpy = (
+        m_dot_dry_carrier * (h_in - h_out) - condensate_enthalpy_rate
     )
     energy_balance_error = solution.Q_total - Q_enthalpy
 
@@ -1314,6 +1316,8 @@ def _build_capability_side_result(
         wall_temperature_min=wall_temperature_min,
         wall_temperature_mean=wall_temperature_mean,
         wall_temperature_max=wall_temperature_max,
+        wet_surface_fraction=0.0 if capability.capable else None,
+        wet_area=0.0 if capability.capable else None,
         Q_sensible=0.0,
         Q_latent=0.0,
         Q_total=0.0,

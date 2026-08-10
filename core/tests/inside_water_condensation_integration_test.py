@@ -5,18 +5,22 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
-from core.models.simulation import HXSideInput
+from core.models.simulation import HXSideInput, run_simulation
+from core.phase_change import condensation_solver_helpers as solver_helpers
+from core.phase_change import integration as phase_change_integration
 from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change.integration import PureWaterSteamCondensationNotSupportedError
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
 from core.phase_change.warning_codes import (
     CONDENSATE_FILM_HYDRAULICS_NOT_MODELLED,
+    CONDENSATE_STATE_INCONSISTENT,
     PHASE_CHANGE_DISABLED_BUT_POSSIBLE,
 )
 from core.phase_change.wet_gas_composition import (
@@ -112,7 +116,88 @@ def test_wet_gas_with_dry_inside_wall_is_not_active() -> None:
     assert pc.capable is True
     assert pc.possible is False
     assert pc.active is False
+    assert pc.wet_surface_fraction == 0.0
+    assert pc.wet_area == 0.0
+    assert pc.wall_temperature_wet_mean is None
     assert pc.m_dot_condensate == 0.0
+    assert not any(w.code == CONDENSATE_STATE_INCONSISTENT for w in pc.warnings)
+
+
+def test_locked_active_zero_condensate_needs_no_liquid_state(monkeypatch) -> None:
+    """A locked regime may converge back to the legal dry limit."""
+    hx = _hx()
+    inside = HXSideInput(
+        provider=GasMixturePropertyProvider(_wet_spec()),
+        m_dot=1.0,
+        T_in=360.0,
+        p=101_325.0,
+    )
+    outside = HXSideInput(
+        provider=GasMixturePropertyProvider(_dry_spec()),
+        m_dot=5.0,
+        T_in=290.0,
+        p=101_325.0,
+    )
+    dry = run_simulation(hx, inside, outside)
+    thermal = dry.thermal_state
+    envelope = dry.wall_temperature_envelope
+    capability = detect_phase_change_capability(inside.provider)
+    zero_solution = SimpleNamespace(
+        converged=True,
+        iterations=2,
+        residuals={},
+        T_out_inside=dry.T_out_inside,
+        T_out_outside=dry.T_out_outside,
+        T_wall_inside=thermal.inside_wall_temperature,
+        T_wall_outside=thermal.outside_wall_temperature,
+        W_out=capability.W_in,
+        m_dot_condensate=0.0,
+        Q_sensible=dry.q,
+        Q_latent=0.0,
+        Q_total=dry.q,
+        alfa_i_dry=thermal.alfa_i,
+        alfa_i_effective=thermal.alfa_i,
+        alfa_o=thermal.alfa_o,
+        U_effective=thermal.U,
+        UA_effective=thermal.UA,
+        wall_temperature_min=envelope.inside_min,
+        wall_temperature_max=envelope.inside_max,
+        wall_temperature_wet_mean=None,
+        wet_surface_fraction=0.0,
+        wet_surface_fraction_method="dry_limit",
+        wet_area=0.0,
+        inside_total_area=hx.bundle.total_inner_area,
+        W_sat_wet_surface=None,
+        inside_bulk_props=thermal.inside_bulk_props,
+        outside_bulk_props=thermal.outside_bulk_props,
+        inside_wall_props=thermal.inside_wall_props,
+        outside_wall_props=thermal.outside_wall_props,
+        diagnostics=thermal.diagnostics,
+        warnings=(),
+    )
+
+    monkeypatch.setattr(
+        phase_change_integration,
+        "solve_inside_condensation",
+        lambda *args, **kwargs: zero_solution,
+    )
+
+    def fail_if_called(*, T=None, p=None):
+        raise AssertionError("zero condensate must not evaluate liquid enthalpy")
+
+    monkeypatch.setattr(
+        solver_helpers,
+        "water_saturation_liquid_enthalpy",
+        fail_if_called,
+    )
+    result = hx.simulate(inside, outside)
+    pc = result.inside_phase_change
+    assert pc.active is True
+    assert pc.m_dot_condensate == 0.0
+    assert pc.wet_surface_fraction == 0.0
+    assert pc.wet_area == 0.0
+    assert pc.wall_temperature_wet_mean is None
+    assert not any(w.code == CONDENSATE_STATE_INCONSISTENT for w in pc.warnings)
 
 
 def test_partial_inside_condensation_and_key_local_onset(partial_result) -> None:
@@ -134,6 +219,7 @@ def test_partial_inside_condensation_and_key_local_onset(partial_result) -> None
     assert pc.Q_latent > 0.0
     assert pc.Q_total == pytest.approx(pc.Q_sensible + pc.Q_latent, rel=1e-12)
     assert pc.alfa_effective > pc.alfa_dry
+    assert not any(w.code == CONDENSATE_STATE_INCONSISTENT for w in pc.warnings)
 
 
 def test_inside_water_and_full_enthalpy_balances(partial_result) -> None:
@@ -159,8 +245,9 @@ def test_inside_water_and_full_enthalpy_balances(partial_result) -> None:
     h_condensate = water_saturation_liquid_enthalpy(
         T=pc.wall_temperature_wet_mean
     )
-    Q_enthalpy = pc.m_dot_dry_carrier * (
-        h_in - h_out - (pc.W_in - pc.W_out) * h_condensate
+    Q_enthalpy = (
+        pc.m_dot_dry_carrier * (h_in - h_out)
+        - pc.m_dot_condensate * h_condensate
     )
     assert Q_enthalpy == pytest.approx(pc.Q_total, rel=5e-4)
     assert pc.energy_balance_error == pytest.approx(pc.Q_total - Q_enthalpy)

@@ -127,16 +127,25 @@ class CoolPropFluidProvider:
 
     def at(self, T: float, p: float) -> FluidTransportProperties:
         """Return transport properties at T [K] and p [Pa]."""
+        return coolprop_transport_properties(
+            T=T,
+            p=p,
+            fluid=self.fluid,
+            imposed_phase=self.imposed_phase,
+        )
+
+    def full_at(self, T: float, p: float) -> CoolPropProperties:
+        """Return transport and thermodynamic properties at T [K] and p [Pa]."""
         return coolprop_props(
             T=T,
             p=p,
             fluid=self.fluid,
             imposed_phase=self.imposed_phase,
-        ).transport
+        )
 
-    def full_at(self, T: float, p: float) -> CoolPropProperties:
-        """Return transport and thermodynamic properties at T [K] and p [Pa]."""
-        return coolprop_props(
+    def specific_enthalpy(self, T: float, p: float) -> float:
+        """Return only specific enthalpy [J/kg] at T [K], p [Pa]."""
+        return coolprop_specific_enthalpy(
             T=T,
             p=p,
             fluid=self.fluid,
@@ -206,17 +215,26 @@ class CoolPropGasMixtureProvider:
     def at(self, T: float, p: float) -> FluidTransportProperties:
         """Return transport properties at T [K] and p [Pa]."""
         require_coolprop_backend(self.backend)
-        return coolprop_props(
+        return coolprop_transport_properties(
             T=T,
             p=p,
             fluid=self.fluid,
             imposed_phase=self.imposed_phase,
-        ).transport
+        )
 
     def full_at(self, T: float, p: float) -> CoolPropProperties:
         """Return transport and thermodynamic properties at T [K] and p [Pa]."""
         require_coolprop_backend(self.backend)
         return coolprop_props(
+            T=T,
+            p=p,
+            fluid=self.fluid,
+            imposed_phase=self.imposed_phase,
+        )
+
+    def specific_enthalpy(self, T: float, p: float) -> float:
+        """Return only specific enthalpy [J/kg] at T [K], p [Pa]."""
+        return coolprop_specific_enthalpy(
             T=T,
             p=p,
             fluid=self.fluid,
@@ -318,6 +336,83 @@ def coolprop_props(
         fluid=fluid,
         warnings=warnings,
     )
+
+
+def coolprop_transport_properties(
+    T: float,
+    p: float,
+    fluid: str,
+    *,
+    imposed_phase: str | None = None,
+) -> FluidTransportProperties:
+    """Return only transport properties for one CoolProp T,p state.
+
+    Unlike :func:`coolprop_props`, this path deliberately does not query
+    specific enthalpy or phase because callers of ``PropertyProvider.at``
+    cannot observe either value.
+    """
+    _validate_temperature(T)
+    _validate_pressure(p)
+    _validate_fluid_string(fluid)
+    _validate_imposed_phase(imposed_phase)
+    backend = backend_from_fluid_string(fluid)
+    if backend is not None:
+        require_coolprop_backend(backend)
+    CP = _coolprop_module()
+    T_key = _input_key_with_imposed_phase("T", imposed_phase)
+    try:
+        return FluidTransportProperties(
+            rho=CP.PropsSI("Dmass", T_key, T, "P", p, fluid),
+            mu=CP.PropsSI("V", T_key, T, "P", p, fluid),
+            k=CP.PropsSI("L", T_key, T, "P", p, fluid),
+            cp=CP.PropsSI("Cpmass", T_key, T, "P", p, fluid),
+        )
+    except Exception as exc:
+        phase_note = (
+            f", imposed_phase={imposed_phase!r}"
+            if imposed_phase is not None
+            else ""
+        )
+        raise ValueError(
+            f"CoolProp transport properties failed for fluid={fluid!r}, "
+            f"T={T} K, p={p} Pa{phase_note}. CoolProp error: {exc}"
+        ) from exc
+
+
+def coolprop_specific_enthalpy(
+    T: float,
+    p: float,
+    fluid: str,
+    *,
+    imposed_phase: str | None = None,
+) -> float:
+    """Return only CoolProp ``Hmass`` [J/kg] for one T,p state.
+
+    This is the enthalpy-only counterpart of :func:`coolprop_props`.  It is
+    used by iterative energy-balance roots that do not need density,
+    viscosity, conductivity, heat capacity, or a phase query at every trial.
+    """
+    _validate_temperature(T)
+    _validate_pressure(p)
+    _validate_fluid_string(fluid)
+    _validate_imposed_phase(imposed_phase)
+    backend = backend_from_fluid_string(fluid)
+    if backend is not None:
+        require_coolprop_backend(backend)
+    CP = _coolprop_module()
+    T_key = _input_key_with_imposed_phase("T", imposed_phase)
+    try:
+        return float(CP.PropsSI("Hmass", T_key, T, "P", p, fluid))
+    except Exception as exc:
+        phase_note = (
+            f", imposed_phase={imposed_phase!r}"
+            if imposed_phase is not None
+            else ""
+        )
+        raise ValueError(
+            f"CoolProp enthalpy failed for fluid={fluid!r}, T={T} K, "
+            f"p={p} Pa{phase_note}. CoolProp error: {exc}"
+        ) from exc
 
 
 def coolprop_temperature_from_h_p(

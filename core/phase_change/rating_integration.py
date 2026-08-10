@@ -68,7 +68,7 @@ from core.phase_change.types import (
 )
 from core.properties.water import water_latent_heat_of_vaporization, water_saturation_liquid_enthalpy
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
-from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
+from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.phase_change.water_equilibrium import saturated_water_ratio
 
@@ -84,6 +84,7 @@ def _solve_rating_water_ratio_for_side(
     Q_required: float,
     m_dot_dry_carrier: float,
     condensate_temperature: float,
+    enthalpy_evaluator: WetGasEnthalpyEvaluator | None = None,
 ) -> tuple[float, float]:
     """Close Rating's wet-side enthalpy balance at one condensate temperature.
 
@@ -97,15 +98,15 @@ def _solve_rating_water_ratio_for_side(
     if wet_side.T_out is None:
         raise ValueError("Active wet-gas condensation requires an explicit wet-side T_out.")
 
-    h_in = h_wet_gas_dry_basis(
-        wet_side.T_in, wet_side.p, W_in, capability
+    evaluator = enthalpy_evaluator or WetGasEnthalpyEvaluator(
+        wet_side.p,
+        capability,
     )
+    h_in = evaluator.enthalpy(wet_side.T_in, W_in)
     h_liquid = water_saturation_liquid_enthalpy(T=condensate_temperature)
 
     def residual(W_out: float) -> float:
-        h_out = h_wet_gas_dry_basis(
-            wet_side.T_out, wet_side.p, W_out, capability
-        )
+        h_out = evaluator.enthalpy(wet_side.T_out, W_out)
         h_drained = (W_in - W_out) * h_liquid
         Q_implied = m_dot_dry_carrier * (h_in - h_out - h_drained)
         return Q_implied - Q_required
@@ -156,6 +157,7 @@ def _rating_enthalpy_residual_at_state(
     m_dot_dry_carrier: float,
     W_out: float,
     condensate_temperature: float,
+    enthalpy_evaluator: WetGasEnthalpyEvaluator | None = None,
 ) -> float:
     """Return the outside enthalpy residual for one fully specified state."""
     W_in = capability.W_in
@@ -163,12 +165,12 @@ def _rating_enthalpy_residual_at_state(
         raise ValueError(
             "Active outside condensation requires W_in and outside.T_out."
         )
-    h_in = h_wet_gas_dry_basis(
-        wet_side.T_in, wet_side.p, W_in, capability
+    evaluator = enthalpy_evaluator or WetGasEnthalpyEvaluator(
+        wet_side.p,
+        capability,
     )
-    h_out = h_wet_gas_dry_basis(
-        wet_side.T_out, wet_side.p, W_out, capability
-    )
+    h_in = evaluator.enthalpy(wet_side.T_in, W_in)
+    h_out = evaluator.enthalpy(wet_side.T_out, W_out)
     h_liquid = water_saturation_liquid_enthalpy(
         T=condensate_temperature
     )
@@ -383,6 +385,7 @@ def apply_phase_change_to_rating(
     W_in = outside_capability.W_in
     if W_in is None:
         raise ValueError("Active outside condensation requires an inlet water ratio.")
+    enthalpy_evaluator = WetGasEnthalpyEvaluator(outside.p, outside_capability)
     m_dot_dry_carrier = outside.m_dot / (1.0 + W_in)
 
     dT_outside = outside.T_in - outside.T_out
@@ -484,6 +487,7 @@ def apply_phase_change_to_rating(
             Q_required=Q_required,
             m_dot_dry_carrier=m_dot_dry_carrier,
             condensate_temperature=condensate_temperature,
+            enthalpy_evaluator=enthalpy_evaluator,
         )
         wet_rating_result = run_wet_rating(W_out_iter)
 
@@ -547,6 +551,7 @@ def apply_phase_change_to_rating(
             Q_required=Q_required,
             m_dot_dry_carrier=m_dot_dry_carrier,
             condensate_temperature=wet_wall_temperature,
+            enthalpy_evaluator=enthalpy_evaluator,
         )
         W_out_fixed_point_residual = abs(
             W_out_at_wet_wall - W_out_iter
@@ -563,6 +568,7 @@ def apply_phase_change_to_rating(
             m_dot_dry_carrier=m_dot_dry_carrier,
             W_out=W_out_iter,
             condensate_temperature=wet_wall_temperature,
+            enthalpy_evaluator=enthalpy_evaluator,
         )
         outer_residuals = {
             "W_out": max(W_out_residual, W_out_fixed_point_residual),
@@ -875,6 +881,7 @@ def _apply_inside_condensation_to_rating(
     W_in = inside_capability.W_in
     if W_in is None:
         raise ValueError("Active inside condensation requires an inlet water ratio.")
+    enthalpy_evaluator = WetGasEnthalpyEvaluator(inside.p, inside_capability)
     m_dot_dry_carrier = inside.m_dot / (1.0 + W_in)
     dT_inside = inside.T_in - inside.T_out
     if dT_inside <= 0.0:
@@ -956,6 +963,7 @@ def _apply_inside_condensation_to_rating(
             Q_required=Q_required,
             m_dot_dry_carrier=m_dot_dry_carrier,
             condensate_temperature=condensate_temperature,
+            enthalpy_evaluator=enthalpy_evaluator,
         )
         wet_rating_result = run_wet_rating(W_out)
         W_mean = 0.5 * (W_in + W_out)
@@ -991,6 +999,7 @@ def _apply_inside_condensation_to_rating(
             Q_required=Q_required,
             m_dot_dry_carrier=m_dot_dry_carrier,
             condensate_temperature=wet_wall_temperature,
+            enthalpy_evaluator=enthalpy_evaluator,
         )
         successive = (
             abs(W_out - previous_W_out)
@@ -1006,6 +1015,7 @@ def _apply_inside_condensation_to_rating(
             m_dot_dry_carrier=m_dot_dry_carrier,
             W_out=W_out,
             condensate_temperature=wet_wall_temperature,
+            enthalpy_evaluator=enthalpy_evaluator,
         )
         failed_probes = sum(
             not probe.converged

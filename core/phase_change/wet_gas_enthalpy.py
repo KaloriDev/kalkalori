@@ -82,6 +82,44 @@ from core.phase_change.wet_gas_composition import dry_gas_spec
 DEFAULT_TEMPERATURE_BRACKET_K = (274.0, 640.0)
 
 
+class WetGasEnthalpyEvaluator:
+    """Solve-local wet-gas enthalpy evaluator with component snapshots.
+
+    The dry-carrier composition and pressure are invariant during one wet
+    solve.  Reusing their provider avoids rebuilding it for every root trial,
+    while the two small temperature caches avoid repeating identical dry-gas
+    and water-vapor evaluations across successive bounded inversions.
+    """
+
+    def __init__(self, p: float, capability: PhaseChangeCapability) -> None:
+        if not math.isfinite(p) or p <= 0.0:
+            raise ValueError("p must be a positive finite value [Pa].")
+        self.p = p
+        self.capability = capability
+        self._dry_provider = GasMixturePropertyProvider(dry_gas_spec(capability))
+        self._dry_enthalpy_by_temperature: dict[float, float] = {}
+        self._water_vapor_enthalpy_by_temperature: dict[float, float] = {}
+
+    def enthalpy(self, T: float, W: float) -> float:
+        """Return wet-gas enthalpy [J/kg dry carrier] for one T,W state."""
+        if not math.isfinite(W) or W < 0.0:
+            raise ValueError(
+                f"W must be a non-negative finite value [kg/kg], got {W!r}."
+            )
+        if T not in self._dry_enthalpy_by_temperature:
+            self._dry_enthalpy_by_temperature[T] = (
+                self._dry_provider.specific_enthalpy(T=T, p=self.p)
+            )
+        if T not in self._water_vapor_enthalpy_by_temperature:
+            self._water_vapor_enthalpy_by_temperature[T] = (
+                water_saturation_vapor_enthalpy(T=T)
+            )
+        return (
+            self._dry_enthalpy_by_temperature[T]
+            + W * self._water_vapor_enthalpy_by_temperature[T]
+        )
+
+
 def dry_gas_enthalpy(T: float, p: float, capability: PhaseChangeCapability) -> float:
     """Return the dry-gas-only specific enthalpy [J/kg dry gas] at (T, p).
 
@@ -90,7 +128,7 @@ def dry_gas_enthalpy(T: float, p: float, capability: PhaseChangeCapability) -> f
     from the water-vapor enthalpy term.
     """
     provider = GasMixturePropertyProvider(dry_gas_spec(capability))
-    return provider.full_at(T=T, p=p).h
+    return provider.specific_enthalpy(T=T, p=p)
 
 
 def h_wet_gas_dry_basis(
@@ -120,6 +158,7 @@ def temperature_from_h_wet_gas_dry_basis(
     T_bracket: tuple[float, float] = DEFAULT_TEMPERATURE_BRACKET_K,
     tolerance_K: float = 1e-4,
     max_iterations: int = 200,
+    evaluator: WetGasEnthalpyEvaluator | None = None,
 ) -> float:
     """Invert ``h_wet_gas_dry_basis`` for temperature, by bisection.
 
@@ -133,9 +172,21 @@ def temperature_from_h_wet_gas_dry_basis(
         ValueError: if ``h_target`` is not bracketed by
             ``h_wet_gas_dry_basis`` evaluated at the bracket endpoints.
     """
+    if evaluator is not None:
+        if evaluator.p != p or evaluator.capability != capability:
+            raise ValueError(
+                "WetGasEnthalpyEvaluator does not match the requested "
+                "pressure/capability state."
+            )
+        evaluate = lambda temperature: evaluator.enthalpy(temperature, W)
+    else:
+        evaluate = lambda temperature: h_wet_gas_dry_basis(
+            temperature, p, W, capability
+        )
+
     T_lo, T_hi = T_bracket
-    h_lo = h_wet_gas_dry_basis(T_lo, p, W, capability)
-    h_hi = h_wet_gas_dry_basis(T_hi, p, W, capability)
+    h_lo = evaluate(T_lo)
+    h_hi = evaluate(T_hi)
     if not (h_lo <= h_target <= h_hi):
         raise ValueError(
             f"temperature_from_h_wet_gas_dry_basis: h_target={h_target:.6g} J/kg "
@@ -145,7 +196,7 @@ def temperature_from_h_wet_gas_dry_basis(
 
     for _ in range(max_iterations):
         T_mid = 0.5 * (T_lo + T_hi)
-        h_mid = h_wet_gas_dry_basis(T_mid, p, W, capability)
+        h_mid = evaluate(T_mid)
         if h_mid < h_target:
             T_lo = T_mid
         else:
