@@ -5,6 +5,14 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.6.2] — Unreleased
+
+### Added
+
+- Added water-steam inlet states based on temperature, enthalpy or vapor quality.
+
+---
+
 ## [0.6.1] — Inside wet-gas water condensation
 
 ### Added

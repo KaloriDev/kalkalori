@@ -1074,23 +1074,41 @@ class BareTubeHeatExchanger:
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
 
-        dry_result = run_simulation(
-            self,
-            inside,
-            outside,
-            surface_margin=surface_margin,
-            iterate=iterate,
-            flow_arrangement=flow_arrangement,
-            K_inlet=K_inlet,
-            K_outlet=K_outlet,
-            K_turn=K_turn,
-            euler_provider=euler_provider,
-            max_iter=max_iter,
-            temperature_tolerance_K=temperature_tolerance_K,
-            relative_duty_tolerance=relative_duty_tolerance,
-            relaxation_factor=relaxation_factor,
-            relative_alfa_tolerance=relative_alfa_tolerance,
-        )
+        try:
+            dry_result = run_simulation(
+                self,
+                inside,
+                outside,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet,
+                K_outlet=K_outlet,
+                K_turn=K_turn,
+                euler_provider=euler_provider,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+            )
+        except ValueError as exc:
+            # v0.6.2 state resolution deliberately rejects an unqualified
+            # T+p point on the saturation line. Until the steam solver is
+            # integrated, preserve the established controlled scope error
+            # instead of leaking an internal dry-baseline ambiguity.
+            from core.phase_change.capability import is_pure_water_provider
+            from core.phase_change.integration import PureWaterSteamCondensationNotSupportedError
+
+            if (
+                is_pure_water_provider(inside.provider)
+                and "T+p lies on the water saturation line" in str(exc)
+            ):
+                raise PureWaterSteamCondensationNotSupportedError(
+                    "Pure-water/steam condensation inside tubes requires the "
+                    "v0.6.2 steam-heater solver, which is not integrated in this stage."
+                ) from exc
+            raise
 
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,

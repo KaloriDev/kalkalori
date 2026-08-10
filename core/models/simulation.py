@@ -130,7 +130,7 @@ Conventions
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
@@ -205,19 +205,49 @@ class HXSideInput:
 
     provider: PropertyProvider
     m_dot: float
-    T_in: float
-    p: float
+    T_in: float | None = None
+    p: float | None = None
     phase_change_mode: PhaseChangeMode = PhaseChangeMode.AUTO
+    h_in: float | None = None
+    quality_in: float | None = None
+    water_steam_state: object | None = field(default=None, init=False, repr=False)
+    state_specification: str = field(default="T+p", init=False)
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.m_dot) or self.m_dot <= 0.0:
             raise ValueError("m_dot must be a positive finite value [kg/s].")
-        if not math.isfinite(self.T_in) or self.T_in <= 0.0:
-            raise ValueError("T_in must be a positive finite value [K].")
-        if not math.isfinite(self.p) or self.p <= 0.0:
+        if self.p is None or not math.isfinite(self.p) or self.p <= 0.0:
             raise ValueError("p must be a positive finite value [Pa].")
         if not isinstance(self.phase_change_mode, PhaseChangeMode):
             raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
+
+        from core.properties.water import IAPWS97WaterSteamProvider
+
+        if isinstance(self.provider, IAPWS97WaterSteamProvider):
+            supplied = sum(value is not None for value in (self.T_in, self.h_in, self.quality_in))
+            if supplied != 1:
+                raise ValueError(
+                    "A pure water/steam inlet requires exactly one of T_in, h_in, or quality_in."
+                )
+            if self.T_in is not None:
+                state = self.provider.state(T=self.T_in, p=self.p)
+                specification = "T+p"
+            elif self.h_in is not None:
+                state = self.provider.state(h=self.h_in, p=self.p)
+                specification = "p+h"
+            else:
+                state = self.provider.state(x=self.quality_in, p=self.p)
+                specification = "p+x"
+            object.__setattr__(self, "T_in", state.T)
+            object.__setattr__(self, "h_in", state.h)
+            object.__setattr__(self, "quality_in", state.quality)
+            object.__setattr__(self, "water_steam_state", state)
+            object.__setattr__(self, "state_specification", specification)
+        else:
+            if self.h_in is not None or self.quality_in is not None:
+                raise ValueError("h_in and quality_in are supported only by the water/steam inlet provider.")
+            if self.T_in is None or not math.isfinite(self.T_in) or self.T_in <= 0.0:
+                raise ValueError("T_in must be a positive finite value [K].")
 
 
 # ---------------------------------------------------------------------------

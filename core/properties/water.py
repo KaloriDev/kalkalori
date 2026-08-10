@@ -23,6 +23,7 @@ Properties of Water and Steam.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import math
 from typing import Optional
 
@@ -52,13 +53,25 @@ def _warning(code: str, message: str, severity: str = "warning") -> ModelWarning
     )
 
 
+class WaterSteamPhase(str, Enum):
+    """Unambiguous pure-water phase classification below the critical point."""
+
+    SUBCOOLED_LIQUID = "subcooled_liquid"
+    SATURATED_LIQUID = "saturated_liquid"
+    TWO_PHASE = "two_phase"
+    SATURATED_VAPOR = "saturated_vapor"
+    SUPERHEATED_VAPOR = "superheated_vapor"
+
+
 @dataclass(frozen=True)
 class WaterSteamProperties:
     """Water/steam properties at one thermodynamic state.
 
     Attributes:
         transport:
-            Transport properties in KalKalori SI units.
+            Single-phase transport properties in KalKalori SI units, or
+            ``None`` for a two-phase equilibrium state. KalKalori does not
+            invent mixture ``cp``/``mu``/``k`` values in the saturation dome.
         h:
             Specific enthalpy [J/kg].
         phase:
@@ -67,16 +80,65 @@ class WaterSteamProperties:
             Applicability / interpretation warnings.
     """
 
-    transport: FluidTransportProperties
+    T: float
+    p: float
+    transport: FluidTransportProperties | None
     h: float
-    phase: str
+    phase: WaterSteamPhase
+    quality: float | None
     warnings: list[ModelWarning]
+
+    @property
+    def x(self) -> float | None:
+        """Compatibility/engineering alias for vapor quality."""
+        return self.quality
+
+    @property
+    def rho(self) -> float | None:
+        return None if self.transport is None else self.transport.rho
+
+    @property
+    def mu(self) -> float | None:
+        return None if self.transport is None else self.transport.mu
+
+    @property
+    def k(self) -> float | None:
+        return None if self.transport is None else self.transport.k
+
+    @property
+    def cp(self) -> float | None:
+        return None if self.transport is None else self.transport.cp
+
+    @property
+    def Pr(self) -> float | None:
+        if self.transport is None:
+            return None
+        return self.transport.cp * self.transport.mu / self.transport.k
+
+
+@dataclass(frozen=True)
+class WaterSteamSaturationProperties:
+    """Immutable saturation snapshot at one pressure.
+
+    The snapshot deliberately carries both endpoint states so a zone solver
+    can evaluate ``Tsat``, ``hf``, ``hg`` and transport properties once per
+    nominal pressure rather than repeating identical IAPWS calls in residuals.
+    """
+
+    p: float
+    Tsat: float
+    hf: float
+    hg: float
+    hfg: float
+    saturated_liquid: WaterSteamProperties
+    saturated_vapor: WaterSteamProperties
 
 
 def water_steam_props_iapws97(
     T: Optional[float] = None,
     p: Optional[float] = None,
     x: Optional[float] = None,
+    h: Optional[float] = None,
 ) -> WaterSteamProperties:
     """Return water/steam properties from IAPWS-IF97.
 
@@ -89,9 +151,13 @@ def water_steam_props_iapws97(
             Saturated state at pressure.
             p [Pa], x [-].
 
+        p + h:
+            State classified from pressure and specific enthalpy.
+            p [Pa], h [J/kg].
+
         T + x:
-            Saturated state at temperature.
-            T [K], x [-].
+            Saturated state at temperature. Retained as a lower-level
+            compatibility mode; public exchanger inlets use p+x.
 
     Args:
         T:
@@ -109,7 +175,8 @@ def water_steam_props_iapws97(
     Notes:
         This function is a thin SI-unit adapter around `iapws.IAPWS97`.
 
-        Exactly two of `T`, `p`, and `x` must be provided.
+        Exactly one supported pair must be provided. Public inlet state
+        specifications are T+p, p+x and p+h.
 
         The `iapws` package expects pressure in MPa and returns enthalpy
         and cp in kJ/kg-based units. This adapter converts them to KalKalori
@@ -125,11 +192,19 @@ def water_steam_props_iapws97(
     has_T = T is not None
     has_p = p is not None
     has_x = x is not None
+    has_h = h is not None
 
-    if sum((has_T, has_p, has_x)) != 2:
+    mode = (has_T, has_p, has_x, has_h)
+    supported = {
+        (True, True, False, False),   # T+p
+        (False, True, True, False),   # p+x
+        (False, True, False, True),   # p+h
+        (True, False, True, False),   # T+x compatibility
+    }
+    if mode not in supported:
         raise ValueError(
-            "Exactly two of T, p and x must be provided. "
-            "Supported modes are T+p, p+x, and T+x."
+            "Provide exactly one water/steam state specification: T+p, "
+            "p+x, or p+h (T+x is retained as a lower-level compatibility mode)."
         )
 
     if has_T:
@@ -138,38 +213,41 @@ def water_steam_props_iapws97(
         _validate_pressure(p)
     if has_x:
         _validate_vapor_quality(x)
+    if has_h:
+        _validate_enthalpy(h)
+
+    if has_p and p >= WATER_CRITICAL_PRESSURE_PA:
+        raise ValueError(
+            "Pure-water phase-state interpretation at or above the critical "
+            "pressure is unsupported."
+        )
 
     try:
         if has_T and has_p:
-            state = IAPWS97(
-                T=T,
-                P=_pa_to_mpa(p),
-            )
+            return _state_from_temperature_pressure(T=T, p=p)
 
         elif has_p and has_x:
-            state = IAPWS97(
-                P=_pa_to_mpa(p),
-                x=x,
-            )
+            return _state_from_pressure_quality(p=p, x=x)
+
+        elif has_p and has_h:
+            return _state_from_pressure_enthalpy(p=p, h=h)
 
         elif has_T and has_x:
-            state = IAPWS97(
-                T=T,
-                x=x,
-            )
+            state = IAPWS97(T=T, x=x)
+            return _state_from_pressure_quality(p=float(state.P) * 1.0e6, x=x)
 
         else:
             raise ValueError(
                 "Unsupported IAPWS-IF97 input mode. "
-                "Supported modes are T+p, p+x, and T+x."
+                "Supported modes are T+p, p+x, p+h, and compatibility T+x."
             )
 
+    except ValueError:
+        raise
     except Exception as exc:
         raise ValueError(
-            f"IAPWS-IF97 failed for T={T}, p={p}, x={x}."
+            f"IAPWS-IF97 failed for T={T}, p={p}, x={x}, h={h}."
         ) from exc
-
-    return _props_from_iapws_state(state)
 
 
 @dataclass(frozen=True)
@@ -185,7 +263,10 @@ class IAPWS97WaterSteamProvider:
 
     def at(self, T: float, p: float) -> FluidTransportProperties:
         """Return transport properties at T [K] and p [Pa]."""
-        return water_steam_props_iapws97(T=T, p=p).transport
+        state = water_steam_props_iapws97(T=T, p=p)
+        if state.transport is None:
+            raise ValueError("Two-phase water/steam has no single-phase transport state.")
+        return state.transport
 
     def full_at(self, T: float, p: float) -> WaterSteamProperties:
         """Return transport and specific enthalpy at T [K] and p [Pa]."""
@@ -193,25 +274,30 @@ class IAPWS97WaterSteamProvider:
 
     def temperature_from_h_p(self, h: float, p: float) -> float:
         """Invert specific enthalpy and pressure to temperature [K]."""
-        if not math.isfinite(h):
-            raise ValueError("Specific enthalpy must be finite [J/kg].")
-        _validate_pressure(p)
-        try:
-            state = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
-        except Exception as exc:
-            raise ValueError(
-                f"IAPWS-IF97 failed for h={h} J/kg, p={p} Pa."
-            ) from exc
-        return float(state.T)
+        return water_steam_props_iapws97(p=p, h=h).T
+
+    def state(
+        self,
+        *,
+        T: float | None = None,
+        p: float,
+        h: float | None = None,
+        x: float | None = None,
+    ) -> WaterSteamProperties:
+        """Resolve an unambiguous T+p, p+h or p+x state."""
+        return water_steam_props_iapws97(T=T, p=p, h=h, x=x)
 
 
-def _props_from_iapws_state(state: IAPWS97) -> WaterSteamProperties:
+def _props_from_iapws_state(
+    state: IAPWS97,
+    *,
+    phase: WaterSteamPhase,
+    quality: float | None,
+) -> WaterSteamProperties:
     """Convert an IAPWS97 state object to KalKalori SI property container."""
     warnings: list[ModelWarning] = []
 
-    phase = _normalize_phase(state.phase)
-
-    if phase in {"two_phase", "two-phase", "two_phases"}:
+    if phase is WaterSteamPhase.TWO_PHASE:
         warnings.append(
             _warning(
                 code="WATER_STEAM_TWO_PHASE_STATE",
@@ -223,28 +309,119 @@ def _props_from_iapws_state(state: IAPWS97) -> WaterSteamProperties:
             )
         )
 
-    try:
-        transport = FluidTransportProperties(
-            rho=state.rho,
-            mu=state.mu,
-            k=state.k,
-            cp=state.cp * 1000.0,
-        )
-    except Exception as exc:
-        raise ValueError(
-            "Failed to extract complete transport properties from IAPWS-IF97 state. "
-            "This may happen for states where transport properties are not available "
-            "or not meaningful."
-        ) from exc
+    transport: FluidTransportProperties | None = None
+    if phase is not WaterSteamPhase.TWO_PHASE:
+        try:
+            transport = FluidTransportProperties(
+                rho=float(state.rho),
+                mu=float(state.mu),
+                k=float(state.k),
+                cp=float(state.cp) * 1000.0,
+            )
+        except Exception as exc:
+            raise ValueError(
+                "Failed to extract single-phase transport properties from IAPWS-IF97 state."
+            ) from exc
 
     h = state.h * 1000.0
 
     return WaterSteamProperties(
+        T=float(state.T),
+        p=float(state.P) * 1.0e6,
         transport=transport,
-        h=h,
+        h=float(h),
         phase=phase,
+        quality=quality,
         warnings=warnings,
     )
+
+
+def water_saturation_snapshot(p: float) -> WaterSteamSaturationProperties:
+    """Return one cached-ready IAPWS saturation snapshot at pressure p [Pa]."""
+    _validate_saturation_pressure(p)
+    if p >= WATER_CRITICAL_PRESSURE_PA:
+        raise ValueError("Saturated liquid/vapor endpoints are undefined at the critical point.")
+    try:
+        liquid_raw = IAPWS97(P=_pa_to_mpa(p), x=0.0)
+        vapor_raw = IAPWS97(P=_pa_to_mpa(p), x=1.0)
+    except Exception as exc:
+        raise ValueError(f"IAPWS-IF97 saturation snapshot failed for p={p} Pa.") from exc
+    liquid = _props_from_iapws_state(
+        liquid_raw, phase=WaterSteamPhase.SATURATED_LIQUID, quality=0.0
+    )
+    vapor = _props_from_iapws_state(
+        vapor_raw, phase=WaterSteamPhase.SATURATED_VAPOR, quality=1.0
+    )
+    return WaterSteamSaturationProperties(
+        p=float(p),
+        Tsat=liquid.T,
+        hf=liquid.h,
+        hg=vapor.h,
+        hfg=vapor.h - liquid.h,
+        saturated_liquid=liquid,
+        saturated_vapor=vapor,
+    )
+
+
+def _state_from_temperature_pressure(*, T: float, p: float) -> WaterSteamProperties:
+    saturation: WaterSteamSaturationProperties | None = None
+    if WATER_TRIPLE_POINT_PRESSURE_PA <= p < WATER_CRITICAL_PRESSURE_PA:
+        saturation = water_saturation_snapshot(p)
+        if math.isclose(T, saturation.Tsat, rel_tol=0.0, abs_tol=1.0e-6):
+            raise ValueError(
+                "T+p lies on the water saturation line and does not identify "
+                "saturated liquid, saturated vapor, or mixture quality; use p+x or p+h."
+            )
+    raw = IAPWS97(T=T, P=_pa_to_mpa(p))
+    if saturation is not None:
+        phase = (
+            WaterSteamPhase.SUPERHEATED_VAPOR
+            if T > saturation.Tsat
+            else WaterSteamPhase.SUBCOOLED_LIQUID
+        )
+    else:
+        raw_phase = _normalize_phase(raw.phase)
+        phase = (
+            WaterSteamPhase.SUPERHEATED_VAPOR
+            if "vapour" in raw_phase or "vapor" in raw_phase
+            else WaterSteamPhase.SUBCOOLED_LIQUID
+        )
+    return _props_from_iapws_state(raw, phase=phase, quality=None)
+
+
+def _state_from_pressure_quality(*, p: float, x: float) -> WaterSteamProperties:
+    saturation = water_saturation_snapshot(p)
+    if x == 0.0:
+        return saturation.saturated_liquid
+    if x == 1.0:
+        return saturation.saturated_vapor
+    h = saturation.hf + x * saturation.hfg
+    raw = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
+    return _props_from_iapws_state(
+        raw, phase=WaterSteamPhase.TWO_PHASE, quality=float(x)
+    )
+
+
+def _state_from_pressure_enthalpy(*, p: float, h: float) -> WaterSteamProperties:
+    saturation = water_saturation_snapshot(p)
+    tolerance = max(1.0e-3, 1.0e-9 * max(abs(saturation.hf), abs(saturation.hg)))
+    if abs(h - saturation.hf) <= tolerance:
+        return saturation.saturated_liquid
+    if abs(h - saturation.hg) <= tolerance:
+        return saturation.saturated_vapor
+    if saturation.hf < h < saturation.hg:
+        quality = (h - saturation.hf) / saturation.hfg
+        raw = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
+        return _props_from_iapws_state(
+            raw, phase=WaterSteamPhase.TWO_PHASE, quality=quality
+        )
+    raw = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
+    phase = (
+        WaterSteamPhase.SUPERHEATED_VAPOR
+        if h > saturation.hg
+        else WaterSteamPhase.SUBCOOLED_LIQUID
+    )
+    return _props_from_iapws_state(raw, phase=phase, quality=None)
 
 
 def _normalize_phase(phase: object) -> str:
@@ -282,6 +459,11 @@ def _validate_vapor_quality(x: Optional[float]) -> None:
         raise ValueError("Vapor quality must be finite [-].")
     if x < 0.0 or x > 1.0:
         raise ValueError("Vapor quality x must be in range 0.0 ... 1.0 [-].")
+
+
+def _validate_enthalpy(h: Optional[float]) -> None:
+    if h is None or not math.isfinite(h):
+        raise ValueError("Specific enthalpy must be finite [J/kg].")
 
 
 # ---------------------------------------------------------------------------
@@ -323,11 +505,13 @@ def water_saturation_temperature(p: float) -> float:
     Ref: IAPWS-IF97, Region 4 (saturation line).
     """
     _validate_saturation_pressure(p)
+    if p < WATER_CRITICAL_PRESSURE_PA:
+        return water_saturation_snapshot(p).Tsat
     try:
         state = IAPWS97(P=_pa_to_mpa(p), x=0.0)
+        return float(state.T)
     except Exception as exc:
         raise ValueError(f"IAPWS-IF97 saturation temperature failed for p={p} Pa.") from exc
-    return float(state.T)
 
 
 def water_saturation_liquid_enthalpy(
@@ -383,6 +567,9 @@ def _saturation_enthalpy(
         _validate_saturation_temperature(T)
         return water_steam_props_iapws97(T=T, x=x).h
     _validate_saturation_pressure(p)
+    if p < WATER_CRITICAL_PRESSURE_PA:
+        snapshot = water_saturation_snapshot(p)
+        return snapshot.hf if x == 0.0 else snapshot.hg
     return water_steam_props_iapws97(p=p, x=x).h
 
 
