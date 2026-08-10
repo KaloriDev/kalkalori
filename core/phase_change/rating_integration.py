@@ -50,23 +50,35 @@ from core.models.rating import run_rating
 from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 
 from core.phase_change import warning_codes as WC
-from core.phase_change.capability import detect_phase_change_capability
+from core.phase_change.capability import detect_phase_change_capability, is_pure_water_provider
 from core.phase_change.integration import (
     ONSET_TEMPERATURE_METHOD,
+    PhaseChangeDisabledButRequiredError,
     PhaseChangeSettings,
+    ReverseDirectionEvaporationNotSupportedError,
     _build_capability_side_result,
     _dew_point_at_ratio,
     _evaluate_side_onset,
-    _raise_if_inside_pure_steam_condensation,
+    _pure_steam_capability_only_result,
+    _raise_if_outside_pure_steam_condensation,
+    _resolve_pure_steam_inlet_state,
     check_single_active_side,
 )
+from core.phase_change.inside_pure_steam_zones import solve_inside_steam_zones_required_area
+from core.properties.averaging import mean_temperature
 from core.phase_change.types import (
     PhaseChangeCapability,
     PhaseChangeDirection,
     PhaseChangeMode,
     PhaseChangeResult,
+    WaterSteamPhaseChangeResult,
 )
-from core.properties.water import water_latent_heat_of_vaporization, water_saturation_liquid_enthalpy
+from core.properties.water import (
+    WaterPhaseRegion,
+    water_latent_heat_of_vaporization,
+    water_saturation_liquid_enthalpy,
+    water_steam_state,
+)
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
@@ -242,6 +254,20 @@ def apply_phase_change_to_rating(
     """
     settings = settings or PhaseChangeSettings()
 
+    # Pure water/steam inside tubes (v0.6.2) is handled by an entirely
+    # separate path -- see core.phase_change.inside_pure_steam_zones and
+    # the module docstring of core.phase_change.integration.
+    if is_pure_water_provider(inside.provider):
+        return _apply_inside_pure_steam_to_rating(
+            hx, inside=inside, outside=outside, Q=Q, effectiveness=effectiveness,
+            flow_arrangement=flow_arrangement, K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            euler_provider=euler_provider, include_simulation=include_simulation,
+            over_specified_tolerance=over_specified_tolerance, max_iterations=max_iterations,
+            wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
+            settings=settings,
+        )
+
     closed_balance = close_heat_balance(
         inside, outside, Q=Q, effectiveness=effectiveness,
         over_specified_tolerance=over_specified_tolerance,
@@ -257,7 +283,7 @@ def apply_phase_change_to_rating(
     inside_capability = detect_phase_change_capability(inside.provider)
     outside_capability = detect_phase_change_capability(outside.provider)
 
-    _raise_if_inside_pure_steam_condensation(inside, dry_result)
+    _raise_if_outside_pure_steam_condensation(outside, dry_result)
 
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
@@ -820,6 +846,303 @@ def apply_phase_change_to_rating(
 
     return replace(
         wet_rating_result,
+        inside_phase_change=inside_result,
+        outside_phase_change=outside_result,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pure water/steam inside tubes (v0.6.2)
+# ---------------------------------------------------------------------------
+def _resolve_pure_steam_outlet_state(inside: BalanceSideSpec):
+    """Classify the inside pure water/steam outlet state.
+
+    Rating requires an explicit, fully-known outlet on the phase-changing
+    side (matching the existing wet-gas Rating pattern, which also expects
+    an explicit ``T_out`` on the condensing side) -- v0.6.2 does not solve
+    for an unknown outlet on a phase-changing side.
+    """
+    if inside.x_out is not None or inside.h_out is not None:
+        return water_steam_state(p=inside.p, x=inside.x_out, h=inside.h_out)
+    if inside.T_out is None:
+        raise ValueError(
+            "Rating requires an explicit outlet state (T_out, or x_out/h_out) "
+            "on the pure water/steam side; solving for an unknown outlet on "
+            "a phase-changing side is not supported in v0.6.2."
+        )
+    return water_steam_state(T=inside.T_out, p=inside.p)
+
+
+def _apply_inside_pure_steam_to_rating(
+    hx,
+    *,
+    inside: BalanceSideSpec,
+    outside: BalanceSideSpec,
+    Q: float | None,
+    effectiveness: float | None,
+    flow_arrangement: str | None,
+    K_inlet: float,
+    K_outlet: float,
+    K_turn: float,
+    euler_provider: str,
+    include_simulation: bool,
+    over_specified_tolerance: float,
+    max_iterations: int,
+    wall_temperature_tolerance_K: float,
+    relative_alfa_tolerance: float,
+    relaxation_factor: float,
+    settings: PhaseChangeSettings,
+):
+    """Rating direction for pure water/steam inside tubes (v0.6.2).
+
+    Both endpoints are known (a closed heat balance), so this reuses
+    ``core.phase_change.inside_pure_steam_zones.
+    solve_inside_steam_zones_required_area`` (no root-find needed for the
+    zone split itself) instead of the v0.6.1 wet-gas machinery.
+
+    Unlike a sensible side, the pure-steam side's actual capacity is
+    dominated by latent heat, not its single-phase cp -- passing it
+    through the generic ``close_heat_balance``/``run_rating`` machinery
+    verbatim (which infers capacity rate from ``m_dot * cp``) would
+    understate ``Q_max`` and make the required effectiveness exceed 1.
+    Exactly like the existing wet-gas Rating path
+    (``_apply_inside_condensation_to_rating``), this builds the
+    ``ClosedBalance`` by hand with an *effective* capacity rate,
+    ``C_effective = Q_required / (T_in - T_out)``, backed out from the
+    exact enthalpy balance -- so the unmodified ``core.models.rating.
+    run_rating`` can still be reused verbatim for
+    ``UA_actual``/wall-temperature/outside-HTC diagnostics, without
+    duplicating epsilon-NTU logic.
+    """
+    if inside.m_dot is None:
+        raise ValueError("inside.m_dot must be specified for pure water/steam Rating.")
+    if inside.T_in is None:
+        raise ValueError("inside.T_in (or x_in/h_in) must be specified for pure water/steam Rating.")
+    if outside.m_dot is None or outside.T_in is None or outside.T_out is None:
+        raise ValueError(
+            "Rating for a pure water/steam side requires the opposite side "
+            "to be fully specified (m_dot, T_in, T_out); v0.6.2 does not "
+            "solve for an unknown opposite-side quantity together with "
+            "phase change."
+        )
+
+    inlet_state = _resolve_pure_steam_inlet_state(inside)
+    outlet_state = _resolve_pure_steam_outlet_state(inside)
+
+    Q_pure_steam = inside.m_dot * (inlet_state.h - outlet_state.h)
+    Q_required = Q if Q is not None else Q_pure_steam
+
+    if Q_required <= 0.0:
+        raise ReverseDirectionEvaporationNotSupportedError(
+            "Rating requires a positive duty (h_in > h_out) on the pure "
+            "water/steam side; heating/evaporating this stream is not "
+            "implemented in v0.6.2 (see docs/roadmap.md, v0.6.3)."
+        )
+    T_mean_outside = mean_temperature(outside.T_in, outside.T_out)
+    cp_outside = outside.provider.at(T=T_mean_outside, p=outside.p).cp
+    C_outside = outside.m_dot * cp_outside
+
+    dT_inside = inlet_state.T - outlet_state.T
+    if dT_inside > 0.0:
+        C_effective_inside = Q_required / dT_inside
+    else:
+        # Pure isothermal condensation (T_in == T_out == T_sat, only
+        # quality changes): the standard eps-NTU convention for an
+        # isothermal phase-changing stream is an infinite effective
+        # capacity rate, so it can never be C_min. A large-but-finite
+        # sentinel (rather than math.inf) keeps it compatible with
+        # core.heat_transfer.ntu's finiteness checks; it is always at
+        # least many orders of magnitude above any physical C_outside, so
+        # C_min below still resolves to C_outside exactly.
+        C_effective_inside = 1.0e12 * max(C_outside, 1.0)
+
+    hot_is_inside = inlet_state.T >= outside.T_in
+    C_min = min(C_effective_inside, C_outside)
+    T_hot_in = inlet_state.T if hot_is_inside else outside.T_in
+    T_cold_in = outside.T_in if hot_is_inside else inlet_state.T
+    Q_max = C_min * (T_hot_in - T_cold_in)
+    if not (Q_max > 0.0) or Q_required > Q_max:
+        raise ValueError(
+            f"Rating: the required duty ({Q_required:.6g} W, from the exact "
+            "pure water/steam enthalpy balance) exceeds the thermodynamic "
+            f"maximum ({Q_max:.6g} W) for this closed balance; check the "
+            "specified inlet/outlet temperatures and flow rates."
+        )
+
+    inside_closed = ClosedBalanceSide(
+        provider=inside.provider, p=inside.p, m_dot=inside.m_dot,
+        T_in=inlet_state.T, T_out=outlet_state.T,
+        cp_mean=C_effective_inside / inside.m_dot, C=C_effective_inside,
+    )
+    outside_closed = ClosedBalanceSide(
+        provider=outside.provider, p=outside.p, m_dot=outside.m_dot,
+        T_in=outside.T_in, T_out=outside.T_out, cp_mean=cp_outside, C=C_outside,
+    )
+    closed_balance = ClosedBalance(
+        inside=inside_closed,
+        outside=outside_closed,
+        hot_is_inside=hot_is_inside,
+        Q=Q_required,
+        Q_max=Q_max,
+        effectiveness=Q_required / Q_max,
+        warnings=[
+            make_warning(
+                code=WC.EFFECTIVE_CAPACITY_RATE_0D_APPROXIMATION,
+                message=(
+                    "inside: epsilon-NTU uses an effective pure water/steam "
+                    "capacity rate derived from the exact latent+sensible "
+                    "enthalpy balance, not the steam side's own single-phase cp."
+                ),
+                source=SOURCE,
+                severity="info",
+            )
+        ],
+    )
+    dry_result = run_rating(
+        hx, closed_balance,
+        flow_arrangement=flow_arrangement, K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+        euler_provider=euler_provider, include_simulation=include_simulation,
+        max_iterations=max_iterations, wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+        relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
+    )
+
+    _raise_if_outside_pure_steam_condensation(outside, dry_result)
+
+    outside_capability = detect_phase_change_capability(outside.provider)
+    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = _evaluate_side_onset(
+        side="outside", mode=outside.phase_change_mode, capability=outside_capability, p=outside.p,
+        thermal_state=dry_result.thermal_state, envelope=dry_result.wall_temperature_envelope, settings=settings,
+    )
+    outside_possible = bool(outside_onset is not None and outside_onset.possible)
+    outside_near_onset = bool(outside_onset is not None and outside_onset.near_onset)
+    outside_result = _build_capability_side_result(
+        side="outside", mode=outside.phase_change_mode, capability=outside_capability,
+        possible=outside_possible, near_onset=outside_near_onset, dew_point=outside_dew_point,
+        p=outside.p, m_dot_gas=outside.m_dot, onset=outside_onset,
+        wall_temperature_min=outside_wall_min, wall_temperature_mean=outside_wall_mean,
+        wall_temperature_max=outside_wall_max,
+    )
+
+    if inside.phase_change_mode is PhaseChangeMode.DISABLED:
+        requires_phase_change = (
+            inlet_state.quality is not None
+            or outlet_state.quality is not None
+            or inlet_state.phase is not outlet_state.phase
+        )
+        if requires_phase_change:
+            raise PhaseChangeDisabledButRequiredError(
+                "inside: PhaseChangeMode.DISABLED cannot represent this pure "
+                "water/steam Rating case (the inlet/outlet span a phase "
+                "change, or either endpoint has a defined vapor quality). "
+                "Use PhaseChangeMode.AUTO."
+            )
+        inside_result = _pure_steam_capability_only_result(inside, inlet_state, possible=False)
+        return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
+
+    D_i = hx.bundle.tube.D_i
+    flow_area = hx.bundle.internal_flow_area_per_pass
+    A_inside_total = hx.bundle.total_inner_area
+    A_outside_total = hx.bundle.total_outer_area
+    R_wall_total = hx.tube_wall_resistance()
+    alpha_outside = dry_result.thermal_state.alfa_o
+    T_sink = mean_temperature(closed_balance.outside.T_in, closed_balance.outside.T_out)
+
+    solution = solve_inside_steam_zones_required_area(
+        p=inside.p, inlet=inlet_state, outlet=outlet_state, m_dot_total=inside.m_dot,
+        D_i=D_i, flow_area=flow_area, A_inside_total=A_inside_total, A_outside_total=A_outside_total,
+        R_wall_total=R_wall_total, T_sink=T_sink, alpha_outside=alpha_outside,
+    )
+
+    A_required_outside = solution.A_required * (A_outside_total / A_inside_total)
+    UA_required = sum(zone.U * zone.A for zone in solution.zones)
+    EMTD = solution.Q_total / UA_required if UA_required > 0.0 else 0.0
+    overdesign_factor = dry_result.A_o / A_required_outside - 1.0 if A_required_outside > 0.0 else math.inf
+    ua_margin = dry_result.UA_actual / UA_required - 1.0 if UA_required > 0.0 else math.inf
+
+    zone_alphas = {zone.kind: zone.alpha_inside for zone in solution.zones}
+
+    warnings_list: list[ModelWarning] = list(solution.warnings)
+    warnings_list.append(
+        make_warning(
+            code=WC.INSIDE_CONDENSATION_DETECTED,
+            message=(
+                "inside: pure water/steam multi-zone Rating was solved "
+                f"({', '.join(zone.kind for zone in solution.zones) or 'no active zone'})."
+            ),
+            source=SOURCE,
+            severity="info",
+        )
+    )
+    warnings_list.append(
+        make_warning(
+            code=WC.EFFECTIVE_CAPACITY_RATE_0D_APPROXIMATION,
+            message=(
+                "inside: UA_actual/alfa_i/alfa_o on this result remain the "
+                "sensible-only dry-baseline diagnostics (not multi-zone-"
+                "aware); overdesign_factor, A_required, UA_required and "
+                "inside_phase_change use the accurate multi-zone physics."
+            ),
+            source=SOURCE,
+            severity="info",
+        )
+    )
+    warnings_list = _deduplicate_rating_warnings(warnings_list)
+
+    inside_result = WaterSteamPhaseChangeResult(
+        side="inside",
+        mode=inside.phase_change_mode,
+        direction=(
+            PhaseChangeDirection.CONDENSATION if solution.Q_condensation > 0.0 else PhaseChangeDirection.NONE
+        ),
+        capable=True,
+        possible=True,
+        active=True,
+        converged=True,
+        phase_in=solution.phase_in,
+        phase_out=solution.phase_out,
+        p=inside.p,
+        T_in=solution.T_in,
+        T_out=solution.T_out,
+        T_sat=solution.T_sat,
+        h_in=solution.h_in,
+        h_out=solution.h_out,
+        quality_in=solution.quality_in,
+        quality_out=solution.quality_out,
+        Q_desuperheat=solution.Q_desuperheat,
+        Q_condensation=solution.Q_condensation,
+        Q_subcooling=solution.Q_subcooling,
+        Q_sensible=solution.Q_desuperheat + solution.Q_subcooling,
+        Q_latent=solution.Q_condensation,
+        Q_total=solution.Q_total,
+        A_desuperheat=solution.A_desuperheat,
+        A_condensation=solution.A_condensation,
+        A_subcooling=solution.A_subcooling,
+        A_total=solution.A_required,
+        f_desuperheat=solution.f_desuperheat,
+        f_condensation=solution.f_condensation,
+        f_subcooling=solution.f_subcooling,
+        zone_alpha_desuperheat=zone_alphas.get("desuperheat"),
+        zone_alpha_condensation=zone_alphas.get("condensation"),
+        zone_alpha_subcooling=zone_alphas.get("subcooling"),
+        m_dot_total=solution.m_dot_total,
+        two_phase_pressure_drop_supported=solution.two_phase_pressure_drop_supported,
+        assumptions=(
+            "closed_heat_balance_both_endpoints_known",
+            "0d_isothermal_bulk_sink_zone_allocation",
+            "outside_bulk_mean_temperature_from_closed_balance",
+        ),
+        warnings=tuple(warnings_list),
+    )
+
+    return replace(
+        dry_result,
+        overdesign_factor=overdesign_factor,
+        ua_margin=ua_margin,
+        A_required=A_required_outside,
+        UA_required=UA_required,
+        EMTD=EMTD,
+        Q_required=solution.Q_total,
+        warnings=warnings_list,
         inside_phase_change=inside_result,
         outside_phase_change=outside_result,
     )

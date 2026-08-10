@@ -35,13 +35,18 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.6.1)
+## Current Capabilities (v0.6.2)
 
 - Partial H2O condensation from a water-containing gas mixture either
   inside bare tubes or outside a bare-tube bank, with automatic detection
   (`PhaseChangeMode.AUTO`) and a dry-only override
   (`PhaseChangeMode.DISABLED`); see
   [`docs/property_models.md`](docs/property_models.md#15-v061--wet-gas-water-condensation)
+- Pure water/steam cooling and condensation inside tubes: automatic
+  desuperheating, saturated/wet-steam condensation, and condensate
+  subcooling zones, with inlet/outlet specified by temperature, vapor
+  quality, or enthalpy; see
+  [`docs/property_models.md`](docs/property_models.md#16-v062--pure-watersteam-cooling-and-condensation-inside-tubes)
 - Bare tube heat exchangers
 - Tube-side forced convection
 - Outside forced convection (mass-flow driven)

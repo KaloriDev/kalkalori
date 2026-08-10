@@ -187,10 +187,19 @@ class HXSideInput:
             total wet-gas mass flow (dry carrier + water vapor) at the
             inlet, unchanged from prior versions -- see
             ``core.phase_change`` for how it is normalized internally.
-        T_in: Inlet bulk temperature [K].
+        T_in: Inlet bulk temperature [K]. Exactly one of `T_in`, `x_in`, `h_in`
+            must be provided.
         p: Bulk pressure used for property evaluation [Pa]. Constant along the
             side in this 0D simulation (pressure drop does not feed back into
             properties here).
+        x_in: Inlet vapor quality [-] for a pure water/steam side (v0.6.2),
+            `0 <= x_in <= 1`. Only valid together with a pure water/steam
+            provider (``core.phase_change.capability.is_pure_water_provider``);
+            resolves `T_in` to the saturation temperature at `p`
+            (``core.properties.water.water_steam_state``).
+        h_in: Inlet specific enthalpy [J/kg] for a pure water/steam side
+            (v0.6.2). Same provider restriction as `x_in`; resolves `T_in`
+            by classifying `h_in` against the saturation dome at `p`.
         phase_change_mode: ``PhaseChangeMode.AUTO`` (default) lets
             ``BareTubeHeatExchanger.simulate`` detect phase-change capability
             (``core.phase_change.capability``) and solve inside or outside
@@ -205,19 +214,43 @@ class HXSideInput:
 
     provider: PropertyProvider
     m_dot: float
-    T_in: float
     p: float
+    T_in: float | None = None
+    x_in: float | None = None
+    h_in: float | None = None
     phase_change_mode: PhaseChangeMode = PhaseChangeMode.AUTO
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.m_dot) or self.m_dot <= 0.0:
             raise ValueError("m_dot must be a positive finite value [kg/s].")
-        if not math.isfinite(self.T_in) or self.T_in <= 0.0:
-            raise ValueError("T_in must be a positive finite value [K].")
         if not math.isfinite(self.p) or self.p <= 0.0:
             raise ValueError("p must be a positive finite value [Pa].")
         if not isinstance(self.phase_change_mode, PhaseChangeMode):
             raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
+
+        given = sum(v is not None for v in (self.T_in, self.x_in, self.h_in))
+        if given == 0:
+            raise ValueError("Exactly one of T_in, x_in, or h_in must be provided.")
+        if given > 1:
+            raise ValueError(
+                "T_in, x_in, and h_in are mutually exclusive; provide exactly one "
+                "to define the inlet state."
+            )
+
+        if self.x_in is not None or self.h_in is not None:
+            from core.phase_change.capability import is_pure_water_provider
+            from core.properties.water import water_steam_state
+
+            if not is_pure_water_provider(self.provider):
+                raise ValueError(
+                    "x_in/h_in inlet specification is only supported for pure "
+                    "water/steam providers (e.g. IAPWS97WaterSteamProvider); "
+                    "other media must specify T_in."
+                )
+            resolved = water_steam_state(p=self.p, x=self.x_in, h=self.h_in)
+            object.__setattr__(self, "T_in", resolved.T)
+        elif not math.isfinite(self.T_in) or self.T_in <= 0.0:
+            raise ValueError("T_in must be a positive finite value [K].")
 
 
 # ---------------------------------------------------------------------------

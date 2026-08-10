@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.6.1`
+**Current version:** `v0.6.2`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -62,7 +62,7 @@ scope may be adjusted based on validation results as each step lands.
 - Partial H2O condensation from a water-containing gas outside bare tubes.
 - Automatic outside condensation detection and partial wet-surface handling.
 
-#### v0.6.1 — Inside wet-gas water condensation (this release)
+#### v0.6.1 — Inside wet-gas water condensation
 
 - Partial H2O condensation from wet gas inside bare tubes.
 - Automatic inside condensation detection.
@@ -72,15 +72,16 @@ scope may be adjusted based on validation results as each step lands.
 - Gas-phase hydraulic-state update.
 - One active phase-changing side per call.
 
-#### v0.6.2 — Pure water/steam cooling and condensation inside tubes
+#### v0.6.2 — Pure water/steam cooling and condensation inside tubes (this release)
 
 - Superheated-steam desuperheating.
 - Saturated-steam condensation.
 - Two-phase steam/condensate inlet with vapor quality `0 < x < 1`.
 - Partial and complete condensation.
 - Saturated-liquid state handling.
-- Optional condensate subcooling.
-- Automatic allocation of surface between vapor, condensation and liquid zones.
+- Condensate subcooling.
+- Automatic allocation of surface between desuperheating, condensation and
+  subcooling zones.
 - Pure-steam condensation outside tubes is outside planned scope.
 
 #### v0.6.3 — Explicit-inventory evaporation

@@ -1056,20 +1056,29 @@ class BareTubeHeatExchanger:
         See ``core.models.simulation.run_simulation`` for the full algorithm,
         arguments and result fields.
 
-        Phase change (v0.6.1)
-        ----------------------
+        Phase change (v0.6.1 / v0.6.2)
+        -------------------------------
         After the sensible-only dry baseline above, this method calls
         ``core.phase_change.integration.apply_phase_change``, which detects
         H2O phase-change capability (``inside.provider``/``outside.provider``)
         and, when ``phase_change_mode=PhaseChangeMode.AUTO`` (the default,
-        set per side on ``HXSideInput``) shows a side's minimum wall
-        temperature below its water dew point, solves partial wet-gas H2O
-        condensation inside or outside. Only one side can be active.
-        See that module and ``core.phase_change.types.PhaseChangeMode`` for
-        the full AUTO/DISABLED semantics, and ``docs/property_models.md``
-        for the physical model. The ``phase_change_*`` keyword arguments
-        here control only the phase-change onset/iteration; they have no
-        effect for a call where neither side is phase-change capable.
+        set per side on ``HXSideInput``):
+
+        - for a wet-gas provider (``GasMixturePropertyProvider`` with H2O),
+          shows a side's minimum wall temperature below its water dew
+          point, solves partial wet-gas H2O condensation inside or outside
+          (v0.6.1);
+        - for a pure water/steam provider (e.g. ``IAPWS97WaterSteamProvider``)
+          on the inside, solves automatic desuperheating/condensation/
+          subcooling zones (v0.6.2); pure-steam condensation outside tubes
+          is outside KalKalori's planned scope.
+
+        Only one side can be active. See that module and
+        ``core.phase_change.types.PhaseChangeMode`` for the full AUTO/
+        DISABLED semantics, and ``docs/property_models.md`` for the
+        physical model. The ``phase_change_*`` keyword arguments here
+        control only the phase-change onset/iteration; they have no effect
+        for a call where neither side is phase-change capable.
         """
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
@@ -1165,14 +1174,19 @@ class BareTubeHeatExchanger:
         For Simulation (computing achievable outlet temperatures from known
         inlets), see ``.simulate(...)``.
 
-        Phase change (v0.6.1)
-        ----------------------
+        Phase change (v0.6.1 / v0.6.2)
+        -------------------------------
         See
         ``core.phase_change.rating_integration.apply_phase_change_to_rating``
-        for inside/outside wet-gas H2O condensation Rating and its scope.
-        The active wet side requires a specified mass flow and temperature
-        program; duty must come from explicit ``Q`` or the fully specified
-        non-condensing side. ``phase_change_mode`` is per ``BalanceSideSpec``.
+        for inside/outside wet-gas H2O condensation Rating (v0.6.1) and
+        inside pure water/steam Rating (v0.6.2, ``IAPWS97WaterSteamProvider``
+        or similar) and their scope. The active wet-gas side requires a
+        specified mass flow and temperature program; duty must come from
+        explicit ``Q`` or the fully specified non-condensing side. The
+        pure-steam side requires an explicit, fully-known inlet and outlet
+        (``T_in``/``x_in``/``h_in`` and ``T_out``/``x_out``/``h_out``) plus
+        a fully specified opposite side. ``phase_change_mode`` is per
+        ``BalanceSideSpec``.
         """
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings

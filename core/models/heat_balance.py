@@ -63,8 +63,18 @@ class BalanceSideSpec:
         provider: Point-property provider exposing ``at(T, p)``.
         p: Bulk pressure used for property evaluation [Pa].
         m_dot: Mass flow through this side [kg/s], or None if unknown.
-        T_in: Inlet bulk temperature [K]. Required by ``close_heat_balance``.
-        T_out: Outlet bulk temperature [K], or None if unknown.
+        T_in: Inlet bulk temperature [K]. Required by ``close_heat_balance``
+            unless `x_in`/`h_in` is given instead (pure water/steam, v0.6.2).
+        T_out: Outlet bulk temperature [K], or None if unknown. Mutually
+            exclusive with `x_out`/`h_out`.
+        x_in, h_in: Inlet vapor quality [-] / specific enthalpy [J/kg] for a
+            pure water/steam side (v0.6.2), as an alternative to `T_in`. Only
+            valid together with a pure water/steam provider
+            (``core.phase_change.capability.is_pure_water_provider``);
+            resolves `T_in` via ``core.properties.water.water_steam_state``.
+        x_out, h_out: Outlet vapor quality [-] / specific enthalpy [J/kg] for
+            a pure water/steam side (v0.6.2), as an alternative to `T_out`.
+            Same provider restriction and resolution as `x_in`/`h_in`.
         phase_change_mode: See ``core.models.simulation.HXSideInput.
             phase_change_mode``; same AUTO/DISABLED semantics, consumed by
             ``core.phase_change.rating_integration`` for Rating.
@@ -75,6 +85,10 @@ class BalanceSideSpec:
     m_dot: float | None = None
     T_in: float | None = None
     T_out: float | None = None
+    x_in: float | None = None
+    h_in: float | None = None
+    x_out: float | None = None
+    h_out: float | None = None
     phase_change_mode: PhaseChangeMode = PhaseChangeMode.AUTO
 
     def __post_init__(self) -> None:
@@ -85,6 +99,35 @@ class BalanceSideSpec:
                 raise ValueError(f"{name} must be a positive finite value when provided.")
         if not isinstance(self.phase_change_mode, PhaseChangeMode):
             raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
+
+        if sum(v is not None for v in (self.T_in, self.x_in, self.h_in)) > 1:
+            raise ValueError(
+                "T_in, x_in, and h_in are mutually exclusive; provide at "
+                "most one to define the inlet state."
+            )
+        if sum(v is not None for v in (self.T_out, self.x_out, self.h_out)) > 1:
+            raise ValueError(
+                "T_out, x_out, and h_out are mutually exclusive; provide at "
+                "most one to define the outlet state."
+            )
+
+        if any(v is not None for v in (self.x_in, self.h_in, self.x_out, self.h_out)):
+            from core.phase_change.capability import is_pure_water_provider
+            from core.properties.water import water_steam_state
+
+            if not is_pure_water_provider(self.provider):
+                raise ValueError(
+                    "x_in/h_in/x_out/h_out inlet-state specification is only "
+                    "supported for pure water/steam providers (e.g. "
+                    "IAPWS97WaterSteamProvider); other media must specify "
+                    "T_in/T_out."
+                )
+            if self.x_in is not None or self.h_in is not None:
+                resolved_in = water_steam_state(p=self.p, x=self.x_in, h=self.h_in)
+                object.__setattr__(self, "T_in", resolved_in.T)
+            if self.x_out is not None or self.h_out is not None:
+                resolved_out = water_steam_state(p=self.p, x=self.x_out, h=self.h_out)
+                object.__setattr__(self, "T_out", resolved_out.T)
 
 
 # ---------------------------------------------------------------------------

@@ -566,3 +566,287 @@ def _solve_condensation_outlet_quality(
             break
 
     return best_x, best_result, best_U
+
+
+# ---------------------------------------------------------------------------
+# Rating direction: both endpoints already known (closed heat balance) ->
+# required area, rather than Simulation's "fixed area -> outlet" direction.
+# Shares the same zone physics (Shah HTC, sensible HTC, per-unit-inside-area
+# resistance network) but needs no partial-zone root-find at all, since both
+# ends of every zone are already given.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class InsideSteamZonesRequiredAreaResult:
+    """Required-area counterpart of ``InsideSteamZonesResult`` (Rating).
+
+    See ``InsideSteamZonesResult`` for field semantics; ``A_required``
+    replaces ``A_total`` (the area needed to go from `inlet` to `outlet`,
+    rather than the area available).
+    """
+
+    phase_in: WaterPhaseRegion
+    phase_out: WaterPhaseRegion
+    T_in: float
+    T_out: float
+    p: float
+    h_in: float
+    h_out: float
+    quality_in: Optional[float]
+    quality_out: Optional[float]
+    T_sat: float
+
+    Q_desuperheat: float
+    Q_condensation: float
+    Q_subcooling: float
+    Q_total: float
+
+    A_desuperheat: float
+    A_condensation: float
+    A_subcooling: float
+    A_required: float
+
+    f_desuperheat: float
+    f_condensation: float
+    f_subcooling: float
+
+    zones: tuple[SteamZoneDiagnostics, ...]
+    m_dot_total: float
+    two_phase_pressure_drop_supported: bool
+    warnings: list[ModelWarning]
+
+
+def solve_inside_steam_zones_required_area(
+    *,
+    p: float,
+    inlet: WaterSteamState,
+    outlet: WaterSteamState,
+    m_dot_total: float,
+    D_i: float,
+    flow_area: float,
+    A_inside_total: float,
+    A_outside_total: float,
+    R_wall_total: float,
+    T_sink: float,
+    alpha_outside: float,
+) -> InsideSteamZonesRequiredAreaResult:
+    """Required inside area to cool pure water/steam from `inlet` to `outlet`.
+
+    Both endpoints are already known (Rating: a closed heat balance), so
+    each zone's required area follows directly from its own exact duty
+    and HTC -- unlike ``solve_inside_steam_zones`` (Simulation), no
+    partial-zone root-find is needed here.
+
+    Args:
+        inlet, outlet: Classified endpoint states at the same `p`; `outlet`
+            must be coolable from `inlet` (`outlet.h <= inlet.h`).
+        A_inside_total, A_outside_total: The actual exchanger's total
+            inside/outside heat-transfer area [m2] -- used only to convert
+            the (geometry-invariant) wall and outside-film resistances to
+            a per-unit-inside-area basis; the *result* area is independent
+            of these (see module docstring: wall resistance times inside
+            area is invariant to how a tube's length is partitioned).
+        Other args: see ``solve_inside_steam_zones``.
+
+    Returns:
+        InsideSteamZonesRequiredAreaResult.
+
+    Raises:
+        ReverseDirectionEvaporationNotSupportedError: if `outlet` is not
+            coolable from `inlet` given `T_sink`.
+        ValueError: for invalid geometry/flow inputs.
+    """
+    if inlet.p != p or outlet.p != p:
+        raise ValueError("inlet.p and outlet.p must match p.")
+    for name, value in (
+        ("m_dot_total", m_dot_total),
+        ("D_i", D_i),
+        ("flow_area", flow_area),
+        ("A_inside_total", A_inside_total),
+        ("A_outside_total", A_outside_total),
+        ("R_wall_total", R_wall_total),
+        ("alpha_outside", alpha_outside),
+    ):
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be a positive finite value.")
+    if not math.isfinite(T_sink):
+        raise ValueError("T_sink must be finite.")
+
+    if outlet.h > inlet.h + 1e-6 * max(abs(inlet.h), 1.0):
+        raise ReverseDirectionEvaporationNotSupportedError(
+            f"outlet enthalpy ({outlet.h} J/kg) exceeds inlet enthalpy "
+            f"({inlet.h} J/kg); heating/evaporating this stream is not "
+            "implemented in v0.6.2 (see docs/roadmap.md, v0.6.3)."
+        )
+    if T_sink >= inlet.T:
+        raise ReverseDirectionEvaporationNotSupportedError(
+            f"T_sink={T_sink} K is at or above the inlet temperature "
+            f"T_in={inlet.T} K; cooling this stream is not possible "
+            "without evaporation/boiling, which is not implemented in "
+            "v0.6.2 (see docs/roadmap.md, v0.6.3)."
+        )
+
+    R_wall_per_Ai = R_wall_total * A_inside_total
+    R_outside_per_Ai = (1.0 / alpha_outside) * (A_outside_total / A_inside_total)
+    R_shared_per_Ai = R_wall_per_Ai + R_outside_per_Ai
+
+    state = inlet
+    zones: list[SteamZoneDiagnostics] = []
+    warnings: list[ModelWarning] = []
+    Q_desuperheat = A_desuperheat = 0.0
+    Q_condensation = A_condensation = 0.0
+    Q_subcooling = A_subcooling = 0.0
+
+    if state.phase is WaterPhaseRegion.SUPERHEATED_VAPOR:
+        if outlet.phase is WaterPhaseRegion.SUPERHEATED_VAPOR:
+            zone_T_out, zone_h_out, reaches_boundary = outlet.T, outlet.h, False
+        else:
+            zone_T_out, zone_h_out, reaches_boundary = state.T_sat, state.h_g, True
+        zone = _required_area_sensible_zone(
+            kind="desuperheat", p=p, T_in=state.T, h_in=state.h,
+            T_out=zone_T_out, h_out=zone_h_out, m_dot_total=m_dot_total,
+            D_i=D_i, flow_area=flow_area, R_shared_per_Ai=R_shared_per_Ai, T_sink=T_sink,
+        )
+        zones.append(zone)
+        warnings.extend(zone.warnings)
+        Q_desuperheat, A_desuperheat = zone.Q, zone.A
+        state = water_steam_state(p=p, x=1.0) if reaches_boundary else outlet
+
+    if (
+        state.phase in (WaterPhaseRegion.SATURATED_VAPOR, WaterPhaseRegion.TWO_PHASE)
+        and outlet.phase is not WaterPhaseRegion.SUPERHEATED_VAPOR
+    ):
+        x_in = state.quality
+        if outlet.phase in (WaterPhaseRegion.SATURATED_VAPOR, WaterPhaseRegion.TWO_PHASE):
+            x_out, reaches_boundary = outlet.quality, False
+        else:
+            x_out, reaches_boundary = 0.0, True
+        if x_out < x_in:
+            result = solve_inside_condensation_zone(
+                p=p, x_in=x_in, x_out=x_out, m_dot_total=m_dot_total, D_i=D_i, flow_area=flow_area
+            )
+            U = 1.0 / (1.0 / result.alpha_condensation_effective + R_shared_per_Ai)
+            dT = state.T_sat - T_sink
+            A_zone = result.Q_condensation / (U * dT)
+            zone = SteamZoneDiagnostics(
+                kind="condensation",
+                T_in=state.T_sat,
+                T_out=state.T_sat,
+                h_in=result.h_in,
+                h_out=result.h_out,
+                quality_in=x_in,
+                quality_out=x_out,
+                Q=result.Q_condensation,
+                A=A_zone,
+                alpha_inside=result.alpha_condensation_effective,
+                U=U,
+                fully_traversed=reaches_boundary,
+                warnings=list(result.warnings),
+            )
+            zones.append(zone)
+            warnings.extend(zone.warnings)
+            Q_condensation, A_condensation = zone.Q, zone.A
+            state = water_steam_state(p=p, x=0.0) if reaches_boundary else outlet
+
+    if (
+        state.phase in (WaterPhaseRegion.SATURATED_LIQUID, WaterPhaseRegion.SUBCOOLED_LIQUID)
+        and outlet.phase in (WaterPhaseRegion.SATURATED_LIQUID, WaterPhaseRegion.SUBCOOLED_LIQUID)
+        and outlet.T < state.T
+    ):
+        zone = _required_area_sensible_zone(
+            kind="subcooling", p=p, T_in=state.T, h_in=state.h,
+            T_out=outlet.T, h_out=outlet.h, m_dot_total=m_dot_total,
+            D_i=D_i, flow_area=flow_area, R_shared_per_Ai=R_shared_per_Ai, T_sink=T_sink,
+        )
+        zones.append(zone)
+        warnings.extend(zone.warnings)
+        Q_subcooling, A_subcooling = zone.Q, zone.A
+        state = outlet
+
+    Q_total = Q_desuperheat + Q_condensation + Q_subcooling
+    A_required = A_desuperheat + A_condensation + A_subcooling
+    two_phase_dp_supported = not any(zone.kind == "condensation" for zone in zones)
+
+    return InsideSteamZonesRequiredAreaResult(
+        phase_in=inlet.phase,
+        phase_out=outlet.phase,
+        T_in=inlet.T,
+        T_out=outlet.T,
+        p=p,
+        h_in=inlet.h,
+        h_out=outlet.h,
+        quality_in=inlet.quality,
+        quality_out=outlet.quality,
+        T_sat=inlet.T_sat,
+        Q_desuperheat=Q_desuperheat,
+        Q_condensation=Q_condensation,
+        Q_subcooling=Q_subcooling,
+        Q_total=Q_total,
+        A_desuperheat=A_desuperheat,
+        A_condensation=A_condensation,
+        A_subcooling=A_subcooling,
+        A_required=A_required,
+        f_desuperheat=(A_desuperheat / A_required) if A_required > 0.0 else 0.0,
+        f_condensation=(A_condensation / A_required) if A_required > 0.0 else 0.0,
+        f_subcooling=(A_subcooling / A_required) if A_required > 0.0 else 0.0,
+        zones=tuple(zones),
+        m_dot_total=m_dot_total,
+        two_phase_pressure_drop_supported=two_phase_dp_supported,
+        warnings=warnings,
+    )
+
+
+def _required_area_sensible_zone(
+    *,
+    kind: str,
+    p: float,
+    T_in: float,
+    h_in: float,
+    T_out: float,
+    h_out: float,
+    m_dot_total: float,
+    D_i: float,
+    flow_area: float,
+    R_shared_per_Ai: float,
+    T_sink: float,
+) -> SteamZoneDiagnostics:
+    T_rep = 0.5 * (T_in + T_out)
+    rep_props = water_steam_props_iapws97(T=T_rep, p=p)
+    fluid_props = FluidProps(
+        rho=rep_props.transport.rho,
+        mu=rep_props.transport.mu,
+        k=rep_props.transport.k,
+        cp=rep_props.transport.cp,
+    )
+    _v, _Re, _Pr, alpha_inside, htc_warnings = heat_transfer_coefficient_internal(
+        m_dot_total, D_i, flow_area, fluid_props
+    )
+    U = 1.0 / (1.0 / alpha_inside + R_shared_per_Ai)
+
+    dT_in = T_in - T_sink
+    dT_out = T_out - T_sink
+    if dT_in <= 0.0 or dT_out <= 0.0:
+        raise ReverseDirectionEvaporationNotSupportedError(
+            f"Cannot reach T_out={T_out} K against T_sink={T_sink} K (a "
+            "non-positive driving temperature difference would be "
+            "required somewhere in this zone)."
+        )
+    NTU = math.log(dT_in / dT_out)
+    C_zone = m_dot_total * rep_props.transport.cp
+    A_zone = NTU * C_zone / U
+    Q_zone = m_dot_total * (h_in - h_out)
+
+    return SteamZoneDiagnostics(
+        kind=kind,
+        T_in=T_in,
+        T_out=T_out,
+        h_in=h_in,
+        h_out=h_out,
+        quality_in=None,
+        quality_out=None,
+        Q=Q_zone,
+        A=A_zone,
+        alpha_inside=alpha_inside,
+        U=U,
+        fully_traversed=True,
+        warnings=list(htc_warnings),
+    )

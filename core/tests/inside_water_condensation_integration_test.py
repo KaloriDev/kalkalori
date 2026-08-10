@@ -16,7 +16,6 @@ from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change import condensation_solver_helpers as solver_helpers
 from core.phase_change import integration as phase_change_integration
 from core.phase_change.capability import detect_phase_change_capability
-from core.phase_change.integration import PureWaterSteamCondensationNotSupportedError
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
 from core.phase_change.warning_codes import (
     CONDENSATE_FILM_HYDRAULICS_NOT_MODELLED,
@@ -417,19 +416,34 @@ def test_inside_disabled_returns_sensible_only_with_warning() -> None:
     assert any(w.code == PHASE_CHANGE_DISABLED_BUT_POSSIBLE for w in pc.warnings)
 
 
-def test_pure_steam_inside_is_controlled_v062_unsupported() -> None:
-    with pytest.raises(PureWaterSteamCondensationNotSupportedError, match="v0.6.2"):
-        _hx().simulate(
-            HXSideInput(
-                provider=IAPWS97WaterSteamProvider(),
-                m_dot=1.0,
-                T_in=400.0,
-                p=101_325.0,
-            ),
-            HXSideInput(
-                provider=GasMixturePropertyProvider(_dry_spec()),
-                m_dot=5.0,
-                T_in=290.0,
-                p=101_325.0,
-            ),
-        )
+def test_pure_steam_inside_is_supported_since_v062() -> None:
+    # Pure-water/steam condensation inside tubes became supported in
+    # v0.6.2 (core.phase_change.inside_pure_steam_zones); this scenario
+    # (superheated steam cooled by a colder dry-gas outside stream) no
+    # longer raises PureWaterSteamCondensationNotSupportedError -- that
+    # exception is now reserved for pure-steam condensation OUTSIDE tubes,
+    # which remains out of scope.
+    from core.phase_change.types import WaterSteamPhaseChangeResult
+
+    result = _hx().simulate(
+        HXSideInput(
+            provider=IAPWS97WaterSteamProvider(),
+            m_dot=1.0,
+            T_in=400.0,
+            p=101_325.0,
+        ),
+        HXSideInput(
+            provider=GasMixturePropertyProvider(_dry_spec()),
+            m_dot=5.0,
+            T_in=290.0,
+            p=101_325.0,
+        ),
+    )
+    pc = result.inside_phase_change
+    assert isinstance(pc, WaterSteamPhaseChangeResult)
+    assert pc.capable is True
+    assert pc.possible is True
+    assert pc.active is True
+    assert pc.side == "inside"
+    assert pc.Q_total == pytest.approx(pc.Q_sensible + pc.Q_latent)
+    assert pc.Q_total == pytest.approx(1.0 * (pc.h_in - pc.h_out), rel=1e-6)

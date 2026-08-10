@@ -30,9 +30,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping
+from typing import Mapping, Optional
 
 from core.common.warnings import ModelWarning
+from core.properties.water import WaterPhaseRegion
 
 
 class PhaseChangeMode(str, Enum):
@@ -221,6 +222,131 @@ class PhaseChangeResult:
     def total_area(self) -> float | None:
         """Total side area used by full-area sensible convection."""
         return self.inside_total_area if self.side == "inside" else self.outside_total_area
+
+    @property
+    def is_condensing(self) -> bool:
+        return self.active and self.direction is PhaseChangeDirection.CONDENSATION
+
+
+@dataclass(frozen=True)
+class WaterSteamPhaseChangeResult:
+    """Pure water/steam phase-change result for one side (v0.6.2).
+
+    Deliberately a *separate* typed result from ``PhaseChangeResult``
+    rather than an extension of it: pure H2O condensation inside tubes is
+    a direct vapor-liquid phase-equilibrium problem parameterized by
+    vapor quality, not the dry-carrier humidity-ratio (W) / dew-point /
+    Chilton-Colburn mass-transfer problem ``PhaseChangeResult`` was
+    designed around (see ``core.phase_change.inside_pure_steam_zones``).
+    Fields that are semantically shared between the two result types
+    (``side``, ``mode``, ``direction``, ``active``, ``converged``,
+    ``Q_sensible``, ``Q_latent``, ``Q_total``, ``warnings``) use the same
+    names and meaning so callers that only care about those can treat
+    either result uniformly; steam-specific fields have no W-based
+    equivalent and are simply absent (not padded with unused ``None``
+    wet-gas fields).
+
+    ``HXSimulationResult.inside_phase_change`` and
+    ``HXRatingResult.inside_phase_change`` accept either this type or
+    ``PhaseChangeResult`` -- callers should check the concrete type (or
+    duck-type on the shared fields above) before reading steam-specific
+    fields.
+
+    Attributes:
+        side: Always ``"inside"`` in v0.6.2 (pure-steam condensation
+            outside tubes is out of scope, see ``docs/roadmap.md``).
+        mode: The ``PhaseChangeMode`` this side was evaluated under.
+        direction: ``CONDENSATION`` if any condensation zone was active,
+            else ``NONE`` (pure sensible desuperheat/subcool only).
+        capable: Whether the provider is recognized as pure water/steam
+            (``core.phase_change.capability.is_pure_water_provider``).
+        possible: Whether cooling this stream at all is thermodynamically
+            possible given the opposite-side bulk state (`False` only for
+            the reverse-direction/evaporation-required case).
+        active: Whether the multi-zone solver actually ran (`False` under
+            ``PhaseChangeMode.DISABLED``, or when the inlet/outlet never
+            leave the single sensible-only region it started in).
+        converged: Whether the (bounded) internal root-find for a
+            partially-traversed condensation zone converged; `True` when
+            no such solve was needed.
+        phase_in, phase_out: Inlet/outlet phase region
+            (``core.properties.water.WaterPhaseRegion``).
+        p: Nominal tube-side pressure [Pa] (constant; two-phase pressure
+            drop is not modelled, see `two_phase_pressure_drop_supported`).
+        T_in, T_out: Inlet/outlet temperature [K].
+        T_sat: Saturation temperature at `p` [K].
+        h_in, h_out: Inlet/outlet specific enthalpy [J/kg].
+        quality_in, quality_out: Inlet/outlet vapor quality [-], `None`
+            outside the saturation dome.
+        Q_desuperheat, Q_condensation, Q_subcooling: Duty released by each
+            zone [W] (`0.0` for a zone not constructed).
+        Q_sensible: `Q_desuperheat + Q_subcooling` [W].
+        Q_latent: `Q_condensation` [W].
+        Q_total: `Q_sensible + Q_latent` [W], exactly
+            `m_dot_total * (h_in - h_out)`.
+        A_desuperheat, A_condensation, A_subcooling: Heat-transfer area
+            allocated to each zone [m2].
+        A_total: Total inside heat-transfer area available [m2].
+        f_desuperheat, f_condensation, f_subcooling: Area fractions [-].
+        zone_alpha_desuperheat, zone_alpha_condensation,
+            zone_alpha_subcooling: Zone-representative inside heat
+            transfer coefficient [W/(m2*K)], `None` for a zone not
+            constructed.
+        m_dot_total: Total tube-side mass flow [kg/s] (constant).
+        two_phase_pressure_drop_supported: `False` whenever a
+            condensation zone is active; the tube-side pressure drop
+            result does not represent a full two-phase dp in that case
+            (see ``core.phase_change.inside_pure_steam_condensation``).
+        assumptions: Short machine-readable labels for the 0D modelling
+            assumptions in effect (e.g. the isothermal-bulk-sink zone
+            allocation, see ``core.phase_change.inside_pure_steam_zones``).
+        warnings: Applicability/limitation warnings.
+    """
+
+    side: str  # "inside" (only value supported in v0.6.2)
+    mode: PhaseChangeMode
+    direction: PhaseChangeDirection
+    capable: bool
+    possible: bool
+    active: bool
+    converged: bool = True
+
+    phase_in: Optional[WaterPhaseRegion] = None
+    phase_out: Optional[WaterPhaseRegion] = None
+    p: Optional[float] = None
+    T_in: Optional[float] = None
+    T_out: Optional[float] = None
+    T_sat: Optional[float] = None
+    h_in: Optional[float] = None
+    h_out: Optional[float] = None
+    quality_in: Optional[float] = None
+    quality_out: Optional[float] = None
+
+    Q_desuperheat: float = 0.0
+    Q_condensation: float = 0.0
+    Q_subcooling: float = 0.0
+    Q_sensible: float = 0.0
+    Q_latent: float = 0.0
+    Q_total: float = 0.0
+
+    A_desuperheat: float = 0.0
+    A_condensation: float = 0.0
+    A_subcooling: float = 0.0
+    A_total: Optional[float] = None
+
+    f_desuperheat: float = 0.0
+    f_condensation: float = 0.0
+    f_subcooling: float = 0.0
+
+    zone_alpha_desuperheat: Optional[float] = None
+    zone_alpha_condensation: Optional[float] = None
+    zone_alpha_subcooling: Optional[float] = None
+
+    m_dot_total: Optional[float] = None
+    two_phase_pressure_drop_supported: bool = True
+
+    assumptions: tuple[str, ...] = ()
+    warnings: tuple[ModelWarning, ...] = ()
 
     @property
     def is_condensing(self) -> bool:

@@ -881,3 +881,101 @@ See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
 and heat/mass-transfer model details, and
 `core/tests/outside_water_condensation_examples.ipynb` and
 `core/tests/inside_water_condensation_examples.ipynb` for worked examples.
+
+## 16. v0.6.2 — Pure Water/Steam Cooling and Condensation Inside Tubes
+
+v0.6.1's condensation solver (section 15) is for water vapor mixed into a
+non-condensable carrier gas. **v0.6.2 adds a second, physically distinct
+model**: cooling and condensing **pure H2O** (no carrier gas) flowing
+inside tubes -- a steam heater / desuperheater-condenser-subcooler. This
+does not use `GasMixtureSpec`, `W`, dew point, or the Chilton-Colburn/
+Lewis analogy at all; it is a direct vapor-liquid phase-equilibrium
+problem parameterized by vapor quality `x`, solved with
+`IAPWS97WaterSteamProvider` as the inside `HXSideInput`/`BalanceSideSpec`
+provider.
+
+### 16.1 Specifying a pure water/steam inlet (and Rating outlet)
+
+`HXSideInput`/`BalanceSideSpec` accept exactly one of `T_in`, `x_in`, or
+`h_in` to define the inlet state (`BalanceSideSpec` similarly accepts
+`T_out`/`x_out`/`h_out` for Rating's closed-balance outlet):
+
+- `T_in` + `p`: sufficient for superheated vapor or subcooled liquid.
+  Rejected as ambiguous if `T_in` falls on the saturation line at `p`
+  (saturated liquid, saturated vapor, and any two-phase mixture all share
+  the same temperature there) -- use `x_in` or `h_in` instead.
+- `p` + `x_in`: a saturated state, `x_in = 0` (saturated liquid) through
+  `x_in = 1` (saturated vapor).
+- `p` + `h_in`: classified against the saturation dome at `p`.
+
+See `core.properties.water.water_steam_state` for the underlying
+classification (`core.properties.water.WaterPhaseRegion`).
+
+### 16.2 Automatic zone detection
+
+`BareTubeHeatExchanger.simulate()`/`.rate()` automatically solve up to
+three zones, in this fixed order (never reversed):
+
+1. **Desuperheating** -- superheated vapor cooling down to `T_sat`.
+2. **Condensation** -- saturated vapor / wet steam condensing to a lower
+   quality (Shah, 1979 correlation; see `docs/references.md`).
+3. **Subcooling** -- saturated/subcooled liquid cooling further.
+
+Not every case uses every zone -- e.g. a saturated-vapor inlet skips
+desuperheating; a case with little available surface may only partially
+traverse the first zone it reaches. Which zones are constructed, and
+their allocated area (`f_desuperheat`/`f_condensation`/`f_subcooling`),
+are reported on `inside_phase_change`, a
+`core.phase_change.types.WaterSteamPhaseChangeResult` -- a **separate**,
+steam-specific result type from `PhaseChangeResult` (section 15's
+wet-gas result), since the two have no shared W-based fields. Check the
+concrete type (or duck-type on the shared `side`/`mode`/`direction`/
+`active`/`converged`/`Q_sensible`/`Q_latent`/`Q_total`/`warnings` fields)
+before reading steam-specific fields such as `quality_in`/`quality_out`.
+
+### 16.3 `PhaseChangeMode.DISABLED`
+
+Unlike wet-gas condensation, a pure water/steam side has **no
+sensible-only fallback** once it needs to cross the saturation boundary:
+`cp` is not defined for a mixture undergoing isobaric phase change, so
+there is nothing to hold DISABLED's approximation to. `DISABLED` is only
+valid when the case stays entirely on one side of the saturation dome
+(e.g. superheated vapor cooled to a still-superheated outlet); otherwise
+it raises `PhaseChangeDisabledButRequiredError`
+(`PHASE_CHANGE_DISABLED_BUT_REQUIRED`) rather than silently extrapolating
+a single-phase result across the phase boundary.
+
+### 16.4 Scope (v0.6.2)
+
+- Inside-tube cooling/condensation of **pure** H2O only; a non-condensable
+  carrier gas is section 15's model, not this one.
+- **Pure-steam condensation outside tubes is outside KalKalori's planned
+  scope** -- if detected as thermodynamically required, it raises
+  `PureWaterSteamCondensationNotSupportedError`.
+- Cooling only: reverse heat direction requiring evaporation/boiling
+  raises `ReverseDirectionEvaporationNotSupportedError` (planned for
+  v0.6.3).
+- At most one active phase-changing side per call, exactly as section
+  15.3 -- inside pure-steam condensation and outside wet-gas condensation
+  cannot both be active simultaneously.
+- The model remains 0D: the opposite side is represented by a single bulk
+  temperature/heat-transfer coefficient shared by all three zones (not a
+  spatially resolved counterflow/crossflow temperature profile per zone).
+  Zone-area fractions are 0D estimated allocations, not resolved
+  phase-front locations. See `core.phase_change.inside_pure_steam_zones`
+  module docstring for the exact resistance-network treatment.
+- Nominal (constant) pressure is used for phase equilibrium; two-phase
+  condensation-zone pressure drop is **not modelled**
+  (`TWO_PHASE_PRESSURE_DROP_NOT_SUPPORTED`) -- the reported tube-side dp
+  when a condensation zone is active is the single-phase dry baseline,
+  not a true two-phase result. Full phase-change hydraulics are planned
+  for v0.6.7.
+- Rating requires an explicit, fully-known outlet (`T_out`/`x_out`/
+  `h_out`) on the pure water/steam side -- solving for an unknown outlet
+  together with phase change is not supported.
+
+See `core/phase_change/inside_pure_steam_condensation.py` and
+`core/phase_change/inside_pure_steam_zones.py` module docstrings for the
+condensation-HTC and multi-zone model details, and
+`core/tests/inside_pure_steam_condensation_examples.ipynb` for worked
+examples.

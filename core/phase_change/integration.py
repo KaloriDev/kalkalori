@@ -59,6 +59,10 @@ from core.phase_change.outside_condensation_solver import (
     solve_outside_condensation,
 )
 from core.phase_change.inside_condensation_solver import solve_inside_condensation
+from core.phase_change.inside_pure_steam_zones import (
+    ReverseDirectionEvaporationNotSupportedError,
+    solve_inside_steam_zones,
+)
 from core.phase_change.condensation_solver_helpers import condensate_enthalpy_flow
 from core.phase_change.regime import (
     OnsetDecision,
@@ -67,10 +71,17 @@ from core.phase_change.regime import (
     representative_wall_temperature,
     validate_onset_settings,
 )
-from core.phase_change.types import PhaseChangeCapability, PhaseChangeDirection, PhaseChangeMode, PhaseChangeResult
+from core.phase_change.types import (
+    PhaseChangeCapability,
+    PhaseChangeDirection,
+    PhaseChangeMode,
+    PhaseChangeResult,
+    WaterSteamPhaseChangeResult,
+)
 from core.phase_change.water_equilibrium import is_frost_regime, water_dew_point, water_partial_pressure
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
+from core.properties.water import WaterPhaseRegion, water_steam_state
 
 DEFAULT_ONSET_TOLERANCE_K = 0.0
 DEFAULT_ACTIVATION_BAND_K = 0.5
@@ -93,9 +104,30 @@ class MultiplePhaseChangeSidesError(RuntimeError):
 
 
 class PureWaterSteamCondensationNotSupportedError(RuntimeError):
-    """Raised for pure-water/steam condensation, planned for v0.6.2."""
+    """Raised for pure-water/steam condensation OUTSIDE tubes.
+
+    Inside-tube pure-water/steam condensation is supported since v0.6.2
+    (``core.phase_change.inside_pure_steam_zones``); pure-steam
+    condensation outside tubes remains outside KalKalori's planned scope
+    (see ``docs/roadmap.md``).
+    """
 
     warning_code = WC.PURE_WATER_STEAM_CONDENSATION_NOT_SUPPORTED
+
+
+class PhaseChangeDisabledButRequiredError(RuntimeError):
+    """Raised when ``PhaseChangeMode.DISABLED`` cannot represent a pure
+    water/steam side (v0.6.2).
+
+    Unlike wet-gas condensation (where a disabled side can always fall
+    back to a sensible-only approximation), a pure water/steam side has no
+    sensible-only interpretation at all once the inlet is inside the
+    saturation dome, or once the sensible-only dry baseline's own outlet
+    would cross the saturation boundary (cp is not defined there). See
+    ``core.phase_change.inside_pure_steam_zones``.
+    """
+
+    warning_code = WC.PHASE_CHANGE_DISABLED_BUT_REQUIRED
 
 
 @dataclass(frozen=True)
@@ -167,6 +199,43 @@ def check_single_active_side(
             "operating point."
         )
     if (inside_auto_possible or outside_auto_possible) and not iterate:
+        raise ValueError(
+            "Wet-gas water condensation was detected as possible under "
+            "PhaseChangeMode.AUTO, but iterate=False was requested. A "
+            "single-pass sensible-only approximation cannot represent "
+            "condensation; call .simulate(..., iterate=True), or set "
+            "outside.phase_change_mode=DISABLED to accept a sensible-only "
+            "result."
+        )
+
+
+def check_single_active_side_pure_steam(
+    inside_pure_steam_possible: bool,
+    outside_auto_possible: bool,
+    *,
+    iterate: bool,
+) -> None:
+    """Enforce "at most one active phase-changing side" for a pure water/
+    steam inside provider against a wet-gas outside provider (v0.6.2).
+
+    Same "both active" exclusivity rule as ``check_single_active_side``
+    (spec section 19), reused as its own pure decision function for the
+    same unit-testability reason -- but NOT that function's "not iterate"
+    branch: that ValueError is worded specifically for the wet-gas solver
+    (``outside_auto_possible`` here), since the pure-steam solver does not
+    require the iterative thermal state (it reads
+    ``dry_result.outside_alfa_mean``, populated under ``iterate=False``
+    too).
+    """
+    if inside_pure_steam_possible and outside_auto_possible:
+        raise MultiplePhaseChangeSidesError(
+            "Both inside (pure water/steam) and outside (wet-gas) show an "
+            "active condensation tendency under PhaseChangeMode.AUTO in "
+            "the dry baseline; at most one active phase-changing side is "
+            "supported. Set phase_change_mode=DISABLED on one side, or "
+            "investigate the operating point."
+        )
+    if outside_auto_possible and not iterate:
         raise ValueError(
             "Wet-gas water condensation was detected as possible under "
             "PhaseChangeMode.AUTO, but iterate=False was requested. A "
@@ -268,14 +337,26 @@ def apply_phase_change(
 
     Raises:
         InsideCondensationNotSupportedError, MultiplePhaseChangeSidesError,
+        PureWaterSteamCondensationNotSupportedError,
+        PhaseChangeDisabledButRequiredError,
+        ReverseDirectionEvaporationNotSupportedError,
         ValueError (AUTO + possible + iterate=False), FrostingNotSupportedError.
     """
     settings = settings or PhaseChangeSettings()
 
+    # Pure water/steam inside tubes (v0.6.2) is architecturally distinct
+    # from wet-gas condensation (no dry-carrier W basis, no dew point, no
+    # Chilton-Colburn/Lewis mass transfer) and is handled by an entirely
+    # separate path -- see core.phase_change.inside_pure_steam_zones.
+    if is_pure_water_provider(inside.provider):
+        return _apply_inside_pure_steam_path(
+            hx, inside=inside, outside=outside, dry_result=dry_result, iterate=iterate, settings=settings,
+        )
+
     inside_capability = detect_phase_change_capability(inside.provider)
     outside_capability = detect_phase_change_capability(outside.provider)
 
-    _raise_if_inside_pure_steam_condensation(inside, dry_result)
+    _raise_if_outside_pure_steam_condensation(outside, dry_result)
 
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
@@ -1182,25 +1263,339 @@ def _apply_inside_condensation(
     )
 
 
-def _raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
-    """Reject a pure-water vapor-to-liquid tendency with a v0.6.2 message."""
-    if inside.phase_change_mode is PhaseChangeMode.DISABLED:
+def _raise_if_outside_pure_steam_condensation(outside, dry_result) -> None:
+    """Reject a pure-water vapor-to-liquid tendency on the OUTSIDE side.
+
+    Pure-steam condensation outside tubes remains outside KalKalori's
+    planned scope (see ``docs/roadmap.md``); only inside-tube pure-steam
+    condensation is solved (v0.6.2, ``core.phase_change.
+    inside_pure_steam_zones``).
+    """
+    if outside.phase_change_mode is PhaseChangeMode.DISABLED:
         return
-    if not is_pure_water_provider(inside.provider):
+    if not is_pure_water_provider(outside.provider):
         return
     from core.properties.water import water_saturation_temperature
 
     try:
-        T_sat = water_saturation_temperature(inside.p)
+        T_sat = water_saturation_temperature(outside.p)
     except (TypeError, ValueError):
         return
-    wall_min = dry_result.wall_temperature_envelope.inside_min
-    if inside.T_in >= T_sat - 1e-6 and wall_min < T_sat:
+    wall_min = dry_result.wall_temperature_envelope.outside_min
+    if outside.T_in >= T_sat - 1e-6 and wall_min < T_sat:
         raise PureWaterSteamCondensationNotSupportedError(
-            "Pure-water/steam condensation inside tubes is not supported in "
-            "v0.6.1; it is planned for v0.6.2 (including desuperheating, "
-            "vapor quality, complete condensation and condensate subcooling)."
+            "Pure-water/steam condensation outside tubes is outside "
+            "KalKalori's planned scope; only inside-tube pure-steam "
+            "condensation is supported (v0.6.2)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Pure water/steam inside tubes (v0.6.2)
+#
+# Entirely separate from the wet-gas machinery above: no W/dew-point/
+# Chilton-Colburn logic is used anywhere below. See
+# core.phase_change.inside_pure_steam_zones for the multi-zone physics.
+# ---------------------------------------------------------------------------
+def _resolve_pure_steam_inlet_state(inside):
+    """Classify the inside pure water/steam inlet state.
+
+    Prefers the caller's original ``x_in``/``h_in`` specification (exact,
+    never ambiguous) over ``T_in`` (which ``HXSideInput``/``BalanceSideSpec``
+    already eagerly resolved from ``x_in``/``h_in`` when either was used --
+    re-deriving the state from that resolved ``T_in`` alone would lose the
+    quality information for a two-phase inlet, since T alone cannot
+    distinguish a point on the saturation dome).
+    """
+    if inside.x_in is not None or inside.h_in is not None:
+        return water_steam_state(p=inside.p, x=inside.x_in, h=inside.h_in)
+    return water_steam_state(T=inside.T_in, p=inside.p)
+
+
+def _pure_steam_capability_only_result(
+    inside, inlet_state, *, possible: bool, warnings: tuple = ()
+) -> WaterSteamPhaseChangeResult:
+    return WaterSteamPhaseChangeResult(
+        side="inside",
+        mode=inside.phase_change_mode,
+        direction=PhaseChangeDirection.NONE,
+        capable=True,
+        possible=possible,
+        active=False,
+        phase_in=inlet_state.phase,
+        phase_out=inlet_state.phase,
+        p=inside.p,
+        T_in=inlet_state.T,
+        T_out=inlet_state.T,
+        T_sat=inlet_state.T_sat,
+        h_in=inlet_state.h,
+        h_out=inlet_state.h,
+        quality_in=inlet_state.quality,
+        quality_out=inlet_state.quality,
+        m_dot_total=inside.m_dot,
+        assumptions=("sensible_only_no_phase_change",),
+        warnings=warnings,
+    )
+
+
+def _apply_inside_pure_steam_path(hx, *, inside, outside, dry_result, iterate: bool, settings: PhaseChangeSettings):
+    """Entry point for the v0.6.2 pure water/steam inside-tube path.
+
+    Handles ``PhaseChangeMode``, reverse-direction, and single-active-side
+    logic for a pure-water inside provider, independently of the v0.6.1
+    wet-gas dew-point/W-based machinery.
+    """
+    _raise_if_outside_pure_steam_condensation(outside, dry_result)
+
+    outside_capability = detect_phase_change_capability(outside.provider)
+    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = _evaluate_side_onset(
+        side="outside", mode=outside.phase_change_mode, capability=outside_capability, p=outside.p,
+        thermal_state=dry_result.thermal_state, envelope=dry_result.wall_temperature_envelope, settings=settings,
+    )
+    outside_possible = bool(outside_onset is not None and outside_onset.possible)
+    outside_near_onset = bool(outside_onset is not None and outside_onset.near_onset)
+    outside_auto_possible = bool(
+        outside_onset is not None and outside_onset.active and outside.phase_change_mode is PhaseChangeMode.AUTO
+    )
+    outside_result = _build_capability_side_result(
+        side="outside", mode=outside.phase_change_mode, capability=outside_capability,
+        possible=outside_possible, near_onset=outside_near_onset, dew_point=outside_dew_point,
+        p=outside.p, m_dot_gas=outside.m_dot, onset=outside_onset,
+        wall_temperature_min=outside_wall_min, wall_temperature_mean=outside_wall_mean,
+        wall_temperature_max=outside_wall_max,
+    )
+
+    inlet_state = _resolve_pure_steam_inlet_state(inside)
+    T_sink_estimate = dry_result.T_mean_outside
+    inside_pure_steam_possible = T_sink_estimate < inlet_state.T
+
+    if inside.phase_change_mode is PhaseChangeMode.DISABLED:
+        inside_result = _apply_inside_pure_steam_disabled(inside, inlet_state, dry_result)
+        return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
+
+    check_single_active_side_pure_steam(inside_pure_steam_possible, outside_auto_possible, iterate=iterate)
+
+    if not inside_pure_steam_possible:
+        raise ReverseDirectionEvaporationNotSupportedError(
+            f"The opposite-side bulk temperature ({T_sink_estimate:.6g} K) is "
+            f"at or above the inside pure water/steam inlet temperature "
+            f"({inlet_state.T:.6g} K); cooling this stream is not possible "
+            "without evaporation/boiling, which is not implemented in "
+            "v0.6.2 (see docs/roadmap.md, v0.6.3)."
+        )
+
+    if outside_auto_possible:
+        # Outside wet-gas condensation is the active side instead; report
+        # the inside pure-steam side as capable/possible but not active.
+        inside_result = _pure_steam_capability_only_result(inside, inlet_state, possible=True)
+        return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
+
+    return _apply_inside_pure_steam_active(
+        hx, inside=inside, outside=outside, dry_result=dry_result,
+        inlet_state=inlet_state, outside_result=outside_result, settings=settings,
+    )
+
+
+def _apply_inside_pure_steam_disabled(inside, inlet_state, dry_result) -> WaterSteamPhaseChangeResult:
+    """``PhaseChangeMode.DISABLED`` for a pure water/steam inside side (4D).
+
+    A saturated/two-phase inlet, or a dry sensible-only outlet that would
+    cross the saturation temperature, has no sensible-only interpretation
+    at all (cp is not defined across the phase boundary) -- unlike wet-gas
+    condensation, DISABLED cannot silently fall back to an extrapolated
+    single-phase result in that case.
+    """
+    if inlet_state.phase in (
+        WaterPhaseRegion.TWO_PHASE,
+        WaterPhaseRegion.SATURATED_VAPOR,
+        WaterPhaseRegion.SATURATED_LIQUID,
+    ):
+        raise PhaseChangeDisabledButRequiredError(
+            "inside: the inlet is a saturated/two-phase pure water/steam "
+            "state (vapor quality is defined); PhaseChangeMode.DISABLED has "
+            "no sensible-only interpretation for this inlet. Use "
+            "PhaseChangeMode.AUTO."
+        )
+
+    T_sat = inlet_state.T_sat
+    if T_sat is not None:
+        T_in = inlet_state.T
+        T_out_dry = dry_result.T_out_inside
+        straddles = (T_in - T_sat) * (T_out_dry - T_sat) < 0.0
+        if straddles or abs(T_out_dry - T_sat) < 1e-6:
+            raise PhaseChangeDisabledButRequiredError(
+                "inside: PhaseChangeMode.DISABLED was requested, but the "
+                "sensible-only dry baseline's outlet temperature crosses "
+                "the saturation temperature at this pressure; a purely "
+                "sensible result is not physically valid here (cp is not "
+                "defined across the phase boundary). Use "
+                "PhaseChangeMode.AUTO."
+            )
+
+    return _pure_steam_capability_only_result(inside, inlet_state, possible=False)
+
+
+def _apply_inside_pure_steam_active(hx, *, inside, outside, dry_result, inlet_state, outside_result, settings):
+    """Solve the active v0.6.2 pure water/steam multi-zone cooling case."""
+    from core.properties.averaging import mean_temperature as _mean_temperature
+
+    D_i = hx.bundle.tube.D_i
+    flow_area = hx.bundle.internal_flow_area_per_pass
+    A_inside_total = hx.bundle.total_inner_area
+    A_outside_total = hx.bundle.total_outer_area
+    R_wall_total = hx.tube_wall_resistance()
+
+    # The opposite side is represented by a single bulk temperature/HTC
+    # (see core.phase_change.inside_pure_steam_zones module docstring).
+    # alpha_outside is held fixed at its dry-baseline value; only the
+    # outside bulk temperature is updated (bounded fixed-point loop) to
+    # close the energy balance at the pure-steam side's actual (generally
+    # much larger, latent-heat-inclusive) duty.
+    alpha_outside = dry_result.outside_alfa_mean
+    cp_outside = dry_result.outside_props_mean.cp
+    T_sink = dry_result.T_mean_outside
+
+    solution = None
+    converged = False
+    iterations = 0
+    for iterations in range(1, max(settings.max_iterations, 1) + 1):
+        solution = solve_inside_steam_zones(
+            p=inside.p, inlet=inlet_state, m_dot_total=inside.m_dot,
+            D_i=D_i, flow_area=flow_area,
+            A_inside_total=A_inside_total, A_outside_total=A_outside_total,
+            R_wall_total=R_wall_total, T_sink=T_sink, alpha_outside=alpha_outside,
+        )
+        T_out_outside_trial = outside.T_in + solution.Q_total / (outside.m_dot * cp_outside)
+        T_sink_new = _mean_temperature(outside.T_in, T_out_outside_trial)
+        delta = abs(T_sink_new - T_sink)
+        T_sink = T_sink + settings.relaxation_factor * (T_sink_new - T_sink)
+        if delta < settings.temperature_tolerance_K:
+            converged = True
+            break
+
+    T_out_outside = outside.T_in + solution.Q_total / (outside.m_dot * cp_outside)
+    T_mean_outside = _mean_temperature(outside.T_in, T_out_outside)
+    T_mean_inside = _mean_temperature(inside.T_in, solution.T_out)
+
+    zone_alphas = {zone.kind: zone.alpha_inside for zone in solution.zones}
+
+    warnings_list: list[ModelWarning] = list(solution.warnings)
+    warnings_list.append(
+        make_warning(
+            code=WC.INSIDE_CONDENSATION_DETECTED,
+            message=(
+                "inside: pure water/steam multi-zone cooling was solved "
+                f"({', '.join(zone.kind for zone in solution.zones) or 'no active zone'})."
+            ),
+            source="phase_change_integration",
+            severity="info",
+        )
+    )
+    if not converged:
+        warnings_list.append(
+            make_warning(
+                code=WC.PURE_STEAM_ZONE_COUPLING_NOT_CONVERGED,
+                message=(
+                    "inside: the outside-side bulk-temperature coupling did "
+                    f"not converge within {settings.max_iterations} "
+                    "iterations; results use the last iterate."
+                ),
+                source="phase_change_integration",
+                severity="warning",
+            )
+        )
+    warnings_list = _deduplicate_warnings(warnings_list)
+
+    inside_result = WaterSteamPhaseChangeResult(
+        side="inside",
+        mode=inside.phase_change_mode,
+        direction=(
+            PhaseChangeDirection.CONDENSATION if solution.Q_condensation > 0.0 else PhaseChangeDirection.NONE
+        ),
+        capable=True,
+        possible=True,
+        active=True,
+        converged=converged,
+        phase_in=solution.phase_in,
+        phase_out=solution.phase_out,
+        p=inside.p,
+        T_in=solution.T_in,
+        T_out=solution.T_out,
+        T_sat=solution.T_sat,
+        h_in=solution.h_in,
+        h_out=solution.h_out,
+        quality_in=solution.quality_in,
+        quality_out=solution.quality_out,
+        Q_desuperheat=solution.Q_desuperheat,
+        Q_condensation=solution.Q_condensation,
+        Q_subcooling=solution.Q_subcooling,
+        Q_sensible=solution.Q_desuperheat + solution.Q_subcooling,
+        Q_latent=solution.Q_condensation,
+        Q_total=solution.Q_total,
+        A_desuperheat=solution.A_desuperheat,
+        A_condensation=solution.A_condensation,
+        A_subcooling=solution.A_subcooling,
+        A_total=solution.A_total,
+        f_desuperheat=solution.f_desuperheat,
+        f_condensation=solution.f_condensation,
+        f_subcooling=solution.f_subcooling,
+        zone_alpha_desuperheat=zone_alphas.get("desuperheat"),
+        zone_alpha_condensation=zone_alphas.get("condensation"),
+        zone_alpha_subcooling=zone_alphas.get("subcooling"),
+        m_dot_total=solution.m_dot_total,
+        two_phase_pressure_drop_supported=solution.two_phase_pressure_drop_supported,
+        assumptions=(
+            "0d_isothermal_bulk_sink_zone_allocation",
+            "outside_alpha_held_at_dry_baseline_value",
+            "outside_bulk_temperature_fixed_point_coupling",
+            "nominal_pressure_phase_equilibrium",
+        ),
+        warnings=tuple(warnings_list),
+    )
+
+    # Effective inside alpha such that UA reconstructs consistently from
+    # the same resistance network used per-zone (area-weighted mean).
+    if solution.zones and solution.A_total > 0.0:
+        alfa_i_mean = sum(zone.alpha_inside * zone.A for zone in solution.zones) / solution.A_total
+    else:
+        alfa_i_mean = dry_result.inside_alfa_mean
+
+    R_wall_per_Ai = R_wall_total * A_inside_total
+    R_outside_per_Ai = (1.0 / alpha_outside) * (A_outside_total / A_inside_total)
+    U_i = 1.0 / (1.0 / alfa_i_mean + R_wall_per_Ai + R_outside_per_Ai)
+    UA = U_i * A_inside_total
+    U_mean_outer = UA / A_outside_total
+
+    final_result = replace(
+        dry_result.final_result,
+        Q=solution.Q_total,
+        T_hot_out=solution.T_out if inside.T_in >= outside.T_in else T_out_outside,
+        T_cold_out=T_out_outside if inside.T_in >= outside.T_in else solution.T_out,
+        UA=UA,
+    )
+
+    envelope = dry_result.wall_temperature_envelope
+
+    return replace(
+        dry_result,
+        converged=converged,
+        iterations=iterations,
+        T_mean_inside=T_mean_inside,
+        T_mean_outside=T_mean_outside,
+        inside_alfa_mean=alfa_i_mean,
+        outside_alfa_mean=alpha_outside,
+        U_mean=U_mean_outer,
+        UA=UA,
+        q=solution.Q_total,
+        T_out_inside=solution.T_out,
+        T_out_outside=T_out_outside,
+        Q_full=solution.Q_total,
+        Q_derated=solution.Q_total,
+        final_result=final_result,
+        wall_temperature_envelope=envelope,
+        inside_phase_change=inside_result,
+        outside_phase_change=outside_result,
+    )
 
 
 def _y_h2o(capability: PhaseChangeCapability) -> float:
