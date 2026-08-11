@@ -3,14 +3,13 @@ import math
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, TubeOrientation
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.heat_balance import BalanceSideSpec
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change import warning_codes as WC
 from core.phase_change.integration import MultiplePhaseChangeSidesError
-from core.phase_change.steam_condensation import SteamTubeOrientation
 from core.phase_change.steam_integration import (
     PhaseChangeDisabledButRequiredError,
     PureSteamOutsideNotSupportedError,
@@ -24,18 +23,19 @@ from core.properties.water import IAPWS97WaterSteamProvider, WaterSteamPhase
 
 
 P = 1.0e6
-ORIENTATION = SteamTubeOrientation.VERTICAL_DOWNWARD
+ORIENTATION = TubeOrientation.VERTICAL_DOWNWARD
 OUTSIDE_PROVIDER = ConstantPropertyProvider(
     FluidTransportProperties(rho=1.2, mu=1.8e-5, k=0.026, cp=1005.0)
 )
 
 
-def _hx(n_rows=10, n_tubes_per_row=10):
+def _hx(n_rows=10, n_tubes_per_row=10, *, orientation=ORIENTATION):
     return BareTubeHeatExchanger(
         TubeBundle(
             tube=BareTube(
                 D_i=0.020, D_o=0.024, length_total=4.0,
                 length_effective=4.0, wall_k=16.0,
+                tube_orientation=orientation,
             ),
             n_rows=n_rows, n_tubes_per_row=n_tubes_per_row,
             pitch_transverse=0.04, pitch_longitudinal=0.04,
@@ -54,7 +54,7 @@ def _outside_sim(m_dot=30.0):
 def _inside_sim(*, m_dot=1.0, **state):
     return HXSideInput(
         provider=IAPWS97WaterSteamProvider(), m_dot=m_dot, p=P,
-        steam_tube_orientation=ORIENTATION, **state,
+        **state,
     )
 
 
@@ -93,7 +93,7 @@ def test_simulation_public_transitions_use_typed_steam_result(inside, expected_p
 
 
 def test_superheated_steam_remaining_superheated_is_detected_without_condensation():
-    result = _hx(n_rows=2, n_tubes_per_row=2).simulate(
+    result = _hx(n_rows=2, n_tubes_per_row=2, orientation=None).simulate(
         _inside_sim(T_in=600.0, m_dot=10.0), _outside_sim()
     )
     steam = result.inside_phase_change
@@ -102,13 +102,28 @@ def test_superheated_steam_remaining_superheated_is_detected_without_condensatio
     assert steam.Q_condensation == 0.0
 
 
+def test_superheated_to_superheated_rating_does_not_require_orientation():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
+        T_in=600.0, T_out=550.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+    )
+    result = _hx(orientation=None).rate(inside, outside)
+    assert result.inside_phase_change.active is False
+    assert result.inside_phase_change.Q_condensation == 0.0
+
+
 def test_disabled_mode_allows_a_same_phase_superheated_result():
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(), m_dot=10.0, p=P,
-        T_in=600.0, steam_tube_orientation=ORIENTATION,
+        T_in=600.0,
         phase_change_mode=PhaseChangeMode.DISABLED,
     )
-    result = _hx(n_rows=2, n_tubes_per_row=2).simulate(inside, _outside_sim())
+    result = _hx(n_rows=2, n_tubes_per_row=2, orientation=None).simulate(
+        inside, _outside_sim()
+    )
     assert result.inside_phase_change.phase_out is WaterSteamPhase.SUPERHEATED_VAPOR
     assert result.inside_phase_change.active is False
 
@@ -133,7 +148,7 @@ def test_saturated_liquid_subcooling_does_not_require_orientation():
         provider=IAPWS97WaterSteamProvider(), m_dot=1.0, p=P,
         quality_in=0.0,
     )
-    result = _hx().simulate(inside, _outside_sim())
+    result = _hx(orientation=None).simulate(inside, _outside_sim())
     assert result.inside_phase_change.phase_in is WaterSteamPhase.SATURATED_LIQUID
     assert result.inside_phase_change.phase_out is WaterSteamPhase.SUBCOOLED_LIQUID
     assert result.inside_phase_change.Q_condensation == 0.0
@@ -153,7 +168,6 @@ def test_saturated_liquid_subcooling_does_not_require_orientation():
 def test_rating_reuses_same_zone_physics(inlet_kwargs, outlet_kwargs, expected_phase):
     inside = BalanceSideSpec(
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
-        steam_tube_orientation=ORIENTATION,
         **inlet_kwargs, **outlet_kwargs,
     )
     outside = BalanceSideSpec(
@@ -174,7 +188,7 @@ def test_rating_reuses_same_zone_physics(inlet_kwargs, outlet_kwargs, expected_p
 def test_steam_rating_rejects_effectiveness_only_target():
     inside = BalanceSideSpec(
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
-        quality_in=1.0, steam_tube_orientation=ORIENTATION,
+        quality_in=1.0,
     )
     outside = BalanceSideSpec(
         provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
@@ -187,7 +201,6 @@ def test_steam_rating_rejects_inconsistent_over_specified_duties():
     inside = BalanceSideSpec(
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
         quality_in=1.0, quality_out=0.5,
-        steam_tube_orientation=ORIENTATION,
     )
     outside = BalanceSideSpec(
         provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
@@ -208,7 +221,7 @@ def test_zone_condensation_alpha_is_physical_and_top_level_alpha_is_reporting_on
 def test_disabled_mode_rejects_required_saturation_crossing():
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(), m_dot=1.0, p=P,
-        quality_in=1.0, steam_tube_orientation=ORIENTATION,
+        quality_in=1.0,
         phase_change_mode=PhaseChangeMode.DISABLED,
     )
     with pytest.raises(PhaseChangeDisabledButRequiredError) as caught:
@@ -216,13 +229,13 @@ def test_disabled_mode_rejects_required_saturation_crossing():
     assert caught.value.warning_code == WC.PHASE_CHANGE_DISABLED_BUT_REQUIRED
 
 
-def test_missing_orientation_is_rejected_instead_of_assumed():
+def test_missing_geometry_orientation_is_rejected_only_when_condensation_is_active():
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(), m_dot=1.0, p=P,
         quality_in=1.0,
     )
-    with pytest.raises(ValueError, match="explicit steam_tube_orientation"):
-        _hx().simulate(inside, _outside_sim())
+    with pytest.raises(ValueError, match="tube_orientation on BareTube"):
+        _hx(orientation=None).simulate(inside, _outside_sim())
 
 
 def test_pure_steam_outside_is_controlled_unsupported_scope():
@@ -242,7 +255,6 @@ def test_rating_rejects_second_auto_phase_changing_wet_gas_side():
     inside = BalanceSideSpec(
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
         quality_in=1.0, quality_out=0.5,
-        steam_tube_orientation=ORIENTATION,
     )
     wet = GasMixturePropertyProvider(
         GasMixtureSpec(

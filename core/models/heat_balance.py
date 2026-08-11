@@ -46,7 +46,6 @@ from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
 from core.common.warnings import ModelWarning, make_warning
 from core.phase_change.types import PhaseChangeMode
-from core.phase_change.steam_condensation import SteamTubeOrientation
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +80,6 @@ class BalanceSideSpec:
     quality_in: float | None = None
     h_out: float | None = None
     quality_out: float | None = None
-    steam_tube_orientation: SteamTubeOrientation | None = None
     water_steam_state: object | None = field(default=None, init=False, repr=False)
     water_steam_outlet_state: object | None = field(default=None, init=False, repr=False)
     state_specification: str = field(default="T+p", init=False)
@@ -94,11 +92,6 @@ class BalanceSideSpec:
                 raise ValueError(f"{name} must be a positive finite value when provided.")
         if not isinstance(self.phase_change_mode, PhaseChangeMode):
             raise ValueError("phase_change_mode must be a PhaseChangeMode value.")
-        if self.steam_tube_orientation is not None and not isinstance(
-            self.steam_tube_orientation, SteamTubeOrientation
-        ):
-            raise ValueError("steam_tube_orientation must be a SteamTubeOrientation value.")
-
         from core.properties.water import IAPWS97WaterSteamProvider
 
         if isinstance(self.provider, IAPWS97WaterSteamProvider):
@@ -143,8 +136,6 @@ class BalanceSideSpec:
         else:
             if any(value is not None for value in (self.h_in, self.quality_in, self.h_out, self.quality_out)):
                 raise ValueError("Enthalpy/quality state fields are supported only by the water/steam provider.")
-            if self.steam_tube_orientation is not None:
-                raise ValueError("steam_tube_orientation is supported only for the water/steam tube side.")
             if self.T_in is not None and (not math.isfinite(self.T_in) or self.T_in <= 0.0):
                 raise ValueError("T_in must be a positive finite value when provided.")
 

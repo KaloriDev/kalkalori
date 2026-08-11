@@ -10,13 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, TubeOrientation
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change import condensation_solver_helpers as solver_helpers
 from core.phase_change import integration as phase_change_integration
 from core.phase_change.capability import detect_phase_change_capability
-from core.phase_change.steam_condensation import SteamTubeOrientation
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
 from core.phase_change.warning_codes import (
     CONDENSATE_FILM_HYDRAULICS_NOT_MODELLED,
@@ -40,6 +39,7 @@ def _hx() -> BareTubeHeatExchanger:
         length_total=2.8,
         length_effective=2.8,
         wall_k=50.0,
+        tube_orientation=TubeOrientation.VERTICAL_DOWNWARD,
     )
     return BareTubeHeatExchanger(
         TubeBundle(
@@ -424,7 +424,6 @@ def test_pure_steam_inside_uses_v062_typed_result() -> None:
             m_dot=1.0,
             T_in=400.0,
             p=101_325.0,
-            steam_tube_orientation=SteamTubeOrientation.VERTICAL_DOWNWARD,
         ),
         HXSideInput(
             provider=GasMixturePropertyProvider(_dry_spec()),

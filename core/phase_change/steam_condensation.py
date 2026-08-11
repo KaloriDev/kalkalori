@@ -24,11 +24,17 @@ is outside the source correlation and is not accepted.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 import math
 from typing import Sequence
 
-from core.common.warnings import ModelWarning, make_warning
+from core.common.warnings import ModelWarning
+from core.geometry.tube import TubeOrientation
+from core.heat_transfer.condensation_inside_shah2009 import (
+    SHAH_2009_CORRELATION,
+    SHAH_2009_DOI,
+    Shah2009LocalResult,
+    shah2009_condensation_alpha_local,
+)
 from core.properties.water import (
     WATER_CRITICAL_PRESSURE_PA,
     WaterSteamProperties,
@@ -37,37 +43,10 @@ from core.properties.water import (
 )
 
 
-SHAH_2009_CORRELATION = "Shah 2009 improved/extended in-tube condensation"
-SHAH_2009_DOI = "10.1080/10789669.2009.10390871"
-GRAVITY = 9.80665
-
-
-class SteamTubeOrientation(str, Enum):
-    """Tube-flow orientations directly covered by Shah (2009)."""
-
-    HORIZONTAL = "horizontal"
-    VERTICAL_DOWNWARD = "vertical_downward"
-    DOWNWARD_INCLINED_15_PLUS = "downward_inclined_15_plus"
-
-
-@dataclass(frozen=True)
-class SteamCondensationLocalResult:
-    alpha: float
-    correlation: str
-    regime: str
-    orientation: SteamTubeOrientation
-    quality: float
-    mass_flux: float
-    reduced_pressure: float
-    Re_LT: float
-    Re_GT: float
-    Re_LS: float
-    Pr_liquid: float
-    J_g: float
-    Z: float
-    h_forced: float
-    h_gravity: float
-    warnings: tuple[ModelWarning, ...]
+# Compatibility names remain importable from the phase-change adapter while
+# their authoritative definitions live at the transport/geometry layers.
+SteamTubeOrientation = TubeOrientation
+SteamCondensationLocalResult = Shah2009LocalResult
 
 
 @dataclass(frozen=True)
@@ -75,7 +54,7 @@ class SteamCondensationZoneResult:
     zone_alpha_condensation: float
     correlation: str
     regimes: tuple[str, ...]
-    orientation: SteamTubeOrientation
+    orientation: TubeOrientation
     quality_in: float
     quality_out: float
     mass_flow_total: float
@@ -150,7 +129,7 @@ def local_steam_condensation_alpha(
     mass_flux: float,
     tube_inner_diameter: float,
     quality: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation,
     saturation: WaterSteamSaturationProperties | None = None,
 ) -> SteamCondensationLocalResult:
     """Evaluate local Shah (2009) pure-fluid condensation HTC.
@@ -161,8 +140,8 @@ def local_steam_condensation_alpha(
     _positive_finite(p, "p")
     _positive_finite(mass_flux, "mass_flux")
     _positive_finite(tube_inner_diameter, "tube_inner_diameter")
-    if not isinstance(orientation, SteamTubeOrientation):
-        raise ValueError("orientation must be an explicit SteamTubeOrientation value.")
+    if not isinstance(orientation, TubeOrientation):
+        raise ValueError("orientation must be an explicit TubeOrientation value.")
     if not math.isfinite(quality) or not 0.0 < quality < 1.0:
         raise ValueError("Local condensation quality must satisfy 0 < x < 1.")
     if p >= WATER_CRITICAL_PRESSURE_PA:
@@ -176,90 +155,19 @@ def local_steam_condensation_alpha(
     if liquid is None or vapor is None:
         raise ValueError("Saturation endpoint transport states are internally inconsistent.")
 
-    G = mass_flux
-    D = tube_inner_diameter
-    x = quality
-    p_r = p / WATER_CRITICAL_PRESSURE_PA
-    Re_LT = G * D / liquid.mu
-    Re_GT = G * D / vapor.mu
-    Re_LS = G * (1.0 - x) * D / liquid.mu
-    Pr_l = liquid.cp * liquid.mu / liquid.k
-    Z = ((1.0 / x) - 1.0) ** 0.8 * p_r**0.4
-    J_g = x * G / math.sqrt(
-        GRAVITY * D * vapor.rho * (liquid.rho - vapor.rho)
-    )
-
-    # Shah (2009), equations 8a/8b. h_LT uses total mass as liquid.
-    h_LT = 0.023 * Re_LT**0.8 * Pr_l**0.4 * liquid.k / D
-    exponent_n = 0.0058 + 0.557 * p_r
-    h_forced = h_LT * (liquid.mu / (14.0 * vapor.mu)) ** exponent_n * (
-        (1.0 - x) ** 0.8
-        + 3.8 * x**0.76 * (1.0 - x) ** 0.04 / p_r**0.38
-    )
-
-    # Shah (2009), equation 9: McAdams-adjusted Nusselt laminar film term.
-    h_gravity = 1.32 * Re_LS ** (-1.0 / 3.0) * (
-        liquid.rho
-        * (liquid.rho - vapor.rho)
-        * GRAVITY
-        * liquid.k**3
-        / liquid.mu**2
-    ) ** (1.0 / 3.0)
-
-    if orientation is SteamTubeOrientation.HORIZONTAL:
-        regime_i_boundary = 0.98 * (Z + 0.263) ** (-0.62)
-        if J_g >= regime_i_boundary:
-            regime = "I"
-            alpha = h_forced
-        else:
-            regime = "II"
-            alpha = h_forced + h_gravity
-    else:
-        regime_i_boundary = 1.0 / (2.4 * Z + 0.73)
-        regime_iii_boundary = 0.89 - 0.93 * math.exp(-0.087 * Z ** (-1.17))
-        if J_g >= regime_i_boundary:
-            regime = "I"
-            alpha = h_forced
-        elif J_g <= regime_iii_boundary:
-            regime = "III"
-            alpha = h_gravity
-        else:
-            regime = "II"
-            alpha = h_forced + h_gravity
-
-    if not math.isfinite(alpha) or alpha <= 0.0:
-        raise ValueError("Shah 2009 produced a non-finite or non-positive HTC.")
-
-    warnings = _applicability_warnings(
+    return shah2009_condensation_alpha_local(
+        p=p,
+        pcritical=WATER_CRITICAL_PRESSURE_PA,
+        tube_inner_diameter=tube_inner_diameter,
+        mass_flux=mass_flux,
+        quality=quality,
         orientation=orientation,
-        D=D,
-        p_r=p_r,
-        G=G,
-        Pr_l=Pr_l,
-        Re_LT=Re_LT,
-        Re_GT=Re_GT,
-        x=x,
-        Z=Z,
-        J_g=J_g,
-        regime=regime,
-    )
-    return SteamCondensationLocalResult(
-        alpha=alpha,
-        correlation=SHAH_2009_CORRELATION,
-        regime=regime,
-        orientation=orientation,
-        quality=x,
-        mass_flux=G,
-        reduced_pressure=p_r,
-        Re_LT=Re_LT,
-        Re_GT=Re_GT,
-        Re_LS=Re_LS,
-        Pr_liquid=Pr_l,
-        J_g=J_g,
-        Z=Z,
-        h_forced=h_forced,
-        h_gravity=h_gravity,
-        warnings=tuple(warnings),
+        liquid_density=liquid.rho,
+        vapor_density=vapor.rho,
+        liquid_viscosity=liquid.mu,
+        vapor_viscosity=vapor.mu,
+        liquid_conductivity=liquid.k,
+        liquid_specific_heat=liquid.cp,
     )
 
 
@@ -271,7 +179,7 @@ def solve_steam_condensation_zone(
     tube_inner_diameter: float,
     quality_in: float,
     quality_out: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation,
     saturation: WaterSteamSaturationProperties | None = None,
 ) -> SteamCondensationZoneResult:
     """Integrate a condensation zone over quality with stable quadrature."""
@@ -299,7 +207,9 @@ def solve_steam_condensation_zone(
 
     # With constant Tsat and a shared zone-scale temperature difference,
     # dA=dQ/(alpha*dT), making the area-consistent zone coefficient the
-    # quality-weighted harmonic mean of local alpha.
+    # quality-weighted harmonic mean of local alpha. A future distributed
+    # model may instead integrate the full local 1/U resistance; that is an
+    # intentional follow-up, not an arithmetic-alpha substitution here.
     inverse_alpha_integral = half_width * sum(
         weight / result.alpha
         for weight, result in zip(_GL8_WEIGHTS, local_results)
@@ -335,79 +245,6 @@ def solve_steam_condensation_zone(
             "two_phase_pressure_drop_not_supported",
         ),
     )
-
-
-def _applicability_warnings(
-    *,
-    orientation: SteamTubeOrientation,
-    D: float,
-    p_r: float,
-    G: float,
-    Pr_l: float,
-    Re_LT: float,
-    Re_GT: float,
-    x: float,
-    Z: float,
-    J_g: float,
-    regime: str,
-) -> list[ModelWarning]:
-    warnings: list[ModelWarning] = []
-    ranges = (
-        ("tube_inner_diameter", D, 0.002, 0.049, "m"),
-        ("reduced_pressure", p_r, 0.0008, 0.905, "-"),
-        ("mass_flux", G, 4.0, 820.0, "kg/(m2*s)"),
-        ("liquid_Prandtl", Pr_l, 1.0, 18.0, "-"),
-        ("Re_LT", Re_LT, 68.0, 84_827.0, "-"),
-        ("Re_GT", Re_GT, 9_534.0, 523_317.0, "-"),
-        ("quality", x, 0.01, 0.99, "-"),
-        ("Z", Z, 0.005, 20.0, "-"),
-        ("J_g", J_g, 0.06, 20.0, "-"),
-    )
-    for name, value, lower, upper, unit in ranges:
-        if value < lower or value > upper:
-            warnings.append(
-                make_warning(
-                    code="STEAM_CONDENSATION_SHAH_2009_OUTSIDE_RANGE",
-                    message=(
-                        f"Shah 2009 applicability: {name}={value:.6g} {unit} "
-                        f"is outside the published [{lower:g}, {upper:g}] range; "
-                        "the value was not clipped."
-                    ),
-                    source="steam_condensation",
-                    severity="warning",
-                )
-            )
-    if (
-        orientation is SteamTubeOrientation.HORIZONTAL
-        and regime == "II"
-        and Re_GT <= 35_000.0
-    ):
-        warnings.append(
-            make_warning(
-                code="STEAM_CONDENSATION_HORIZONTAL_LOW_RE_GT_UNVERIFIED",
-                message=(
-                    "Shah 2009 recommends the horizontal Regime-II sum only "
-                    "for Re_GT > 35000; this low-flow horizontal result retains "
-                    "the gravity term but is an unverified extrapolation."
-                ),
-                source="steam_condensation",
-                severity="warning",
-            )
-        )
-    if orientation is SteamTubeOrientation.DOWNWARD_INCLINED_15_PLUS:
-        warnings.append(
-            make_warning(
-                code="STEAM_CONDENSATION_INCLINED_TREATED_AS_VERTICAL",
-                message=(
-                    "Shah 2009 recommends treating downward inclinations of "
-                    "15 degrees or greater with the vertical regime map, subject "
-                    "to limited validation data."
-                ),
-                source="steam_condensation",
-                severity="info",
-            )
-        )
-    return warnings
 
 
 def _deduplicate_warnings(warnings: Sequence[ModelWarning] | object) -> list[ModelWarning]:

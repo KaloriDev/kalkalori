@@ -88,6 +88,19 @@ def test_zone_conserves_total_water_and_exact_latent_energy():
     assert zone.zone_alpha_condensation > 0.0
     assert zone.two_phase_pressure_drop_supported is False
     assert all(0.0 < item.quality < 1.0 for item in zone.local_results)
+    inverse_alpha = sum(
+        weight / local.alpha
+        for weight, local in zip(
+            (
+                0.1012285362903763, 0.2223810344533745,
+                0.3137066458778873, 0.3626837833783620,
+                0.3626837833783620, 0.3137066458778873,
+                0.2223810344533745, 0.1012285362903763,
+            ),
+            zone.local_results,
+        )
+    ) / 2.0
+    assert zone.zone_alpha_condensation == pytest.approx(1.0 / inverse_alpha)
 
 
 def test_zone_rejects_quality_increase_or_out_of_range():

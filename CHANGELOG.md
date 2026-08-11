@@ -15,6 +15,10 @@ The project follows **Semantic Versioning (SemVer)**:
 - Integrated pure-steam condensation into simulation and rating.
 - Added superheated-steam cooling and condensate subcooling.
 
+### Changed
+
+- Refined the in-tube steam-condensation model architecture.
+
 ---
 
 ## [0.6.1] — Inside wet-gas water condensation

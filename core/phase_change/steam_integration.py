@@ -21,7 +21,6 @@ from core.phase_change.integration import (
     _evaluate_side_onset,
     apply_phase_change,
 )
-from core.phase_change.steam_condensation import SteamTubeOrientation
 from core.phase_change.steam_heater import (
     SteamHeaterSolution,
     SteamHeaterZoneKind,
@@ -108,9 +107,6 @@ def apply_water_steam_simulation(
         raise ValueError("surface_margin must be a non-negative finite value.")
     if not iterate:
         raise ValueError("Pure-steam multi-zone calculation requires iterate=True.")
-    orientation = _orientation_for_state(
-        inside.steam_tube_orientation, inside.water_steam_state
-    )
     solve_kwargs = dict(
         inlet_state=inside.water_steam_state,
         mass_flow_steam=inside.m_dot,
@@ -118,7 +114,7 @@ def apply_water_steam_simulation(
         mass_flow_outside=outside.m_dot,
         T_in_outside=outside.T_in,
         p_outside=outside.p,
-        orientation=orientation,
+        orientation=hx.bundle.tube.tube_orientation,
     )
     full_solution = solve_steam_heater(hx, **solve_kwargs)
     solution = full_solution
@@ -223,9 +219,6 @@ def apply_water_steam_rating(
         )
     if inside.m_dot is None or outside.m_dot is None:
         raise ValueError("Steam Rating requires explicit mass flow on both sides.")
-    orientation = _orientation_for_state(
-        inside.steam_tube_orientation, inside.water_steam_state
-    )
     Q_required = _resolve_rating_duty(
         inside, outside, Q, tolerance=over_specified_tolerance
     )
@@ -237,7 +230,7 @@ def apply_water_steam_rating(
         mass_flow_outside=outside.m_dot,
         T_in_outside=outside.T_in,
         p_outside=outside.p,
-        orientation=orientation,
+        orientation=hx.bundle.tube.tube_orientation,
         Q_total=Q_required,
     )
     steam_result = _steam_result(solution, mode=inside.phase_change_mode)
@@ -636,7 +629,6 @@ def _simulation_side_from_rating(inside):
         m_dot=inside.m_dot,
         p=inside.p,
         phase_change_mode=inside.phase_change_mode,
-        steam_tube_orientation=inside.steam_tube_orientation,
     )
     if inside.state_specification == "p+x":
         kwargs["quality_in"] = inside.quality_in
@@ -645,28 +637,6 @@ def _simulation_side_from_rating(inside):
     else:
         kwargs["T_in"] = inside.T_in
     return HXSideInput(**kwargs)
-
-
-def _require_orientation(orientation) -> SteamTubeOrientation:
-    if orientation is None:
-        raise ValueError(
-            "Pure-steam condensation requires explicit steam_tube_orientation; "
-            "Shah 2009 uses orientation-specific regime boundaries."
-        )
-    if not isinstance(orientation, SteamTubeOrientation):
-        raise ValueError("steam_tube_orientation must be a SteamTubeOrientation value.")
-    return orientation
-
-
-def _orientation_for_state(orientation, inlet_state) -> SteamTubeOrientation:
-    if inlet_state.phase is WaterSteamPhase.SATURATED_LIQUID:
-        # Cooling a saturated-liquid inlet only creates the single-phase
-        # subcooling zone, so the orientation-dependent condensation
-        # correlation is never evaluated.
-        if orientation is not None and not isinstance(orientation, SteamTubeOrientation):
-            raise ValueError("steam_tube_orientation must be a SteamTubeOrientation value.")
-        return orientation or SteamTubeOrientation.HORIZONTAL
-    return _require_orientation(orientation)
 
 
 def _two_phase_dp_warning() -> ModelWarning:

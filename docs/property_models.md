@@ -926,11 +926,17 @@ existing area-weighted compatibility diagnostic; it is not fed back into
 the zone calculation. The authoritative exchanger conductance is
 `UA_total = sum(U_zone * A_zone)`.
 
-Tube orientation must be supplied explicitly through
-`steam_tube_orientation` whenever a vapor/two-phase inlet can exercise the
-orientation-dependent condensation correlation. It is not required for the
-single-phase saturated-liquid-to-subcooled path. Supported values are
-horizontal, vertical downward, and downward inclined by at least 15 degrees.
+The transport-only Shah equations live in
+`core.heat_transfer.condensation_inside_shah2009`; the IAPWS saturation
+adapter and eight-point, area-consistent harmonic quality integration live
+in `core.phase_change.steam_condensation`. The equivalent zone coefficient
+does not yet integrate the full local `1/U` resistance.
+
+Tube orientation is geometry, supplied as `BareTube(tube_orientation=...)`
+with a `TubeOrientation` value. It is required only when the accepted result
+actually contains a condensation zone, not for superheated-to-superheated or
+saturated-liquid-to-subcooled calculations. Supported values are horizontal,
+vertical downward, and downward inclined by at least 15 degrees.
 
 The result is a typed `WaterSteamPhaseChangeResult`. Endpoint properties
 come from the final pressure/enthalpy solution and contain at least `T`, `p`,

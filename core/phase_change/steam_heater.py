@@ -22,6 +22,7 @@ import math
 from time import perf_counter
 
 from core.common.warnings import ModelWarning, make_warning
+from core.geometry.tube import TubeOrientation
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
 from core.heat_transfer.outside_flow import outside_flow_from_mass_flow
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
@@ -35,7 +36,6 @@ from core.properties.water import (
 )
 from core.phase_change.steam_condensation import (
     SteamCondensationZoneResult,
-    SteamTubeOrientation,
     solve_steam_condensation_zone,
 )
 
@@ -194,7 +194,7 @@ def solve_steam_heater(
     mass_flow_outside: float,
     T_in_outside: float,
     p_outside: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation | None,
     available_area: float | None = None,
     max_iterations: int = 80,
     relative_area_tolerance: float = 1.0e-8,
@@ -250,7 +250,21 @@ def solve_steam_heater(
             cache=cache,
         )
 
-    high = trial(q_high)
+    if orientation is None and inlet_state.h > saturation.hf:
+        if inlet_state.h <= saturation.hg:
+            _require_condensation_orientation(orientation)
+        # A superheated inlet may use all available area before reaching the
+        # saturation dome. Evaluate that physical boundary without assuming
+        # an orientation; require one only when the accepted solution must
+        # continue into condensation.
+        q_to_saturated_vapor = mass_flow_steam * (inlet_state.h - saturation.hg)
+        saturated_vapor_trial = trial(q_to_saturated_vapor)
+        if saturated_vapor_trial.required_area < available_area:
+            _require_condensation_orientation(orientation)
+        q_high = q_to_saturated_vapor
+        high = saturated_vapor_trial
+    else:
+        high = trial(q_high)
     if math.isfinite(high.required_area) and high.required_area < available_area:
         raise ValueError(
             "Steam-heater area root was not bracketed before the thermal pinch."
@@ -299,7 +313,7 @@ def rate_steam_heater(
     mass_flow_outside: float,
     T_in_outside: float,
     p_outside: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation | None,
     outlet_state: WaterSteamProperties | None = None,
     Q_total: float | None = None,
 ) -> SteamHeaterSolution:
@@ -362,7 +376,7 @@ def _evaluate_duty(
     mass_flow_outside: float,
     T_in_outside: float,
     p_outside: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation | None,
     Q_total: float,
     cache: _SolveCache,
 ) -> _TrialResult:
@@ -461,7 +475,7 @@ def _evaluate_zone(
     mass_flow_steam: float,
     alpha_outside: float,
     T_mean_outside: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation | None,
     cache: _SolveCache,
 ) -> SteamHeaterZoneResult:
     Q = mass_flow_steam * (spec.h_in - spec.h_out)
@@ -469,6 +483,7 @@ def _evaluate_zone(
     quality_in = quality_out = None
     condensation = None
     if spec.kind is SteamHeaterZoneKind.CONDENSATION:
+        condensation_orientation = _require_condensation_orientation(orientation)
         quality_in = (spec.h_in - saturation.hf) / saturation.hfg
         quality_out = (spec.h_out - saturation.hf) / saturation.hfg
         condensation = solve_steam_condensation_zone(
@@ -478,7 +493,7 @@ def _evaluate_zone(
             tube_inner_diameter=hx.bundle.internal_hydraulic_diameter,
             quality_in=quality_in,
             quality_out=quality_out,
-            orientation=orientation,
+            orientation=condensation_orientation,
             saturation=saturation,
         )
         alpha_inside = condensation.zone_alpha_condensation
@@ -672,7 +687,7 @@ def _validate_common_inputs(
     mass_flow_outside: float,
     T_in_outside: float,
     p_outside: float,
-    orientation: SteamTubeOrientation,
+    orientation: TubeOrientation | None,
 ) -> None:
     if not isinstance(inlet_state, WaterSteamProperties):
         raise ValueError("inlet_state must be a resolved WaterSteamProperties state.")
@@ -684,8 +699,21 @@ def _validate_common_inputs(
     ):
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"{name} must be positive and finite.")
-    if not isinstance(orientation, SteamTubeOrientation):
-        raise ValueError("orientation must be an explicit SteamTubeOrientation value.")
+    if orientation is not None and not isinstance(orientation, TubeOrientation):
+        raise ValueError("orientation must be a TubeOrientation value or None.")
+
+
+def _require_condensation_orientation(
+    orientation: TubeOrientation | None,
+) -> TubeOrientation:
+    if orientation is None:
+        raise ValueError(
+            "Pure-steam condensation requires explicit tube_orientation on BareTube; "
+            "Shah 2009 uses orientation-specific regime boundaries."
+        )
+    if not isinstance(orientation, TubeOrientation):
+        raise ValueError("tube_orientation must be a TubeOrientation value.")
+    return orientation
 
 
 def _deduplicate_warnings(warnings) -> list[ModelWarning]:
