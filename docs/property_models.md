@@ -14,8 +14,8 @@ The goal is to avoid hidden assumptions. KalKalori does not automatically decide
 | Psychrometric moist air    | `MoistAirState`, PsychroLib adapter            | Classical moist air, RH, dew point, saturation, HVAC-like calculations | Onset / limit helpers only        |
 | Moist-air transport helper | `moist_air_transport_props_from_state()`       | Transport properties of moist air in normal engineering range          | No full wet HX solver             |
 | Water/steam                | `water_steam_props_iapws97()`, `IAPWS97WaterSteamProvider` | Water, saturated water, wet or superheated steam | Inside cooling, condensation and subcooling |
-| CoolProp pure fluid        | `CoolPropFluidProvider`                        | Pure fluids and pseudo-pure fluids                                     | Backend dependent                 |
-| Explicit gas mixture       | `GasMixtureSpec`, `GasMixturePropertyProvider` | Dry gases, flue gas, hot humid gas with H2O as gas-phase component     | No condensation                   |
+| CoolProp pure fluid        | `CoolPropFluidProvider`                        | Pure fluids and pseudo-pure fluids                                     | Single-phase Water only; no pure-water phase change |
+| Explicit gas mixture       | `GasMixtureSpec`, `GasMixturePropertyProvider` | Dry gases, flue gas, hot humid gas with H2O as gas-phase component     | Wet-gas H2O condensation; pure-H2O phase change unsupported |
 | Constant properties        | `ConstantPropertyProvider`                     | Debugging, reference calculations, fixed-property cases                | No                                |
 
 ---
@@ -935,7 +935,9 @@ Each zone reports its own duty, outer-reference area, inside HTC, `U` and
 coefficient. The top-level `alfa_i`/`inside_alfa_mean` remains only the
 existing area-weighted compatibility diagnostic; it is not fed back into
 the zone calculation. The authoritative exchanger conductance is
-`UA_total = sum(U_zone * A_zone)`.
+`UA_total = sum(U_zone * A_zone)`. A general redesign of the top-level
+multi-zone alpha belongs to a later thermal-results cleanup and is not part
+of the v0.6.2 condensation physics.
 
 The transport-only Shah equations live in
 `core.heat_transfer.condensation_inside_shah2009`; the IAPWS saturation
@@ -952,8 +954,16 @@ vertical downward, and downward inclined by at least 15 degrees.
 The result is a typed `WaterSteamPhaseChangeResult`. Endpoint properties
 come from the final pressure/enthalpy solution and contain at least `T`, `p`,
 `h`, phase and quality; a two-phase endpoint does not invent single-phase
-transport properties. `PhaseChangeMode.DISABLED` is allowed while the result
-stays in one phase, but raises the controlled
+transport properties. It exposes stable physics and convergence fields, not
+the internal `SteamHeaterSolution` object or wall-clock runtime. Steam
+Simulation and Rating construct their diagnostics directly from the shared
+zone solution. The accepted outside temperature program is evaluated by the
+neutral `core.heat_transfer.outside_side` helper, while every trial duty in
+the steam solver still updates and caches its own outside mean properties and
+HTC. No fake tube-side fluid or sensible full-HX solve is used.
+
+`PhaseChangeMode.DISABLED` is allowed while the result stays in one phase,
+but raises the controlled
 `PHASE_CHANGE_DISABLED_BUT_REQUIRED` error if the required solution crosses
 the saturation dome.
 

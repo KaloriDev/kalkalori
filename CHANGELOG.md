@@ -14,6 +14,7 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added automatic desuperheating, condensation and condensate-subcooling zones.
 - Integrated pure-steam condensation into simulation and rating.
 - Added superheated-steam cooling and condensate subcooling.
+- Added gravity-aware low-mass-flux steam condensation with Shah (2009) applicability diagnostics.
 
 ### Changed
 

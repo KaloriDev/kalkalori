@@ -39,7 +39,9 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 - Pure water/steam cooling inside bare tubes, including superheated steam,
   saturated or wet-steam inlets, partial/complete condensation, and optional
-  condensate subcooling through the public Simulation and Rating APIs; see
+  condensate subcooling through the public Simulation and Rating APIs. The
+  IAPWS-backed model includes gravity-aware low-mass-flux Shah (2009)
+  condensation; see
   [`docs/property_models.md`](docs/property_models.md#16-v062--pure-watersteam-cooling-inside-tubes)
 - Partial H2O condensation from a water-containing gas mixture either
   inside bare tubes or outside a bare-tube bank, with automatic detection

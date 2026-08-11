@@ -72,7 +72,7 @@ scope may be adjusted based on validation results as each step lands.
 - Gas-phase hydraulic-state update.
 - One active phase-changing side per call.
 
-#### v0.6.2 — Pure water/steam cooling and condensation inside tubes — IMPLEMENTED
+#### v0.6.2 — Pure water/steam cooling and condensation inside tubes — IMPLEMENTED / ready for validation
 
 - Superheated-steam desuperheating.
 - Saturated-steam condensation.
@@ -81,6 +81,8 @@ scope may be adjusted based on validation results as each step lands.
 - Saturated-liquid state handling.
 - Optional condensate subcooling.
 - Automatic allocation of surface between vapor, condensation and liquid zones.
+- Gravity-aware Shah (2009) condensation at low, medium and high mass flux.
+- Shared Simulation/Rating zone physics with final pressure/enthalpy endpoint states.
 - Pure-steam condensation outside tubes is outside planned scope.
 
 #### v0.6.3 — Explicit-inventory evaporation — PLANNED
