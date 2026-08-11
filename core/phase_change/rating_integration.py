@@ -50,7 +50,11 @@ from core.models.rating import run_rating
 from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 
 from core.phase_change import warning_codes as WC
-from core.phase_change.capability import detect_phase_change_capability
+from core.phase_change.capability import (
+    detect_phase_change_capability,
+    guard_pure_water_single_phase_provider,
+    reject_unsupported_pure_water_phase_crossing,
+)
 from core.phase_change.integration import (
     ONSET_TEMPERATURE_METHOD,
     PhaseChangeSettings,
@@ -242,8 +246,32 @@ def apply_phase_change_to_rating(
     """
     settings = settings or PhaseChangeSettings()
 
+    guarded_inside_provider = (
+        inside.provider
+        if inside.T_in is None
+        else guard_pure_water_single_phase_provider(
+            inside.provider, T_in=inside.T_in, p=inside.p
+        )
+    )
+    guarded_outside_provider = (
+        outside.provider
+        if outside.T_in is None
+        else guard_pure_water_single_phase_provider(
+            outside.provider, T_in=outside.T_in, p=outside.p
+        )
+    )
+    guarded_inside = (
+        inside
+        if guarded_inside_provider is inside.provider
+        else replace(inside, provider=guarded_inside_provider)
+    )
+    guarded_outside = (
+        outside
+        if guarded_outside_provider is outside.provider
+        else replace(outside, provider=guarded_outside_provider)
+    )
     closed_balance = close_heat_balance(
-        inside, outside, Q=Q, effectiveness=effectiveness,
+        guarded_inside, guarded_outside, Q=Q, effectiveness=effectiveness,
         over_specified_tolerance=over_specified_tolerance,
     )
     dry_result = run_rating(
@@ -253,6 +281,26 @@ def apply_phase_change_to_rating(
         max_iterations=max_iterations, wall_temperature_tolerance_K=wall_temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
     )
+
+    reject_unsupported_pure_water_phase_crossing(
+        inside.provider,
+        T_in=inside.T_in,
+        T_out=closed_balance.inside.T_out,
+        p=inside.p,
+    )
+    reject_unsupported_pure_water_phase_crossing(
+        outside.provider,
+        T_in=outside.T_in,
+        T_out=closed_balance.outside.T_out,
+        p=outside.p,
+    )
+    if guarded_inside is not inside or guarded_outside is not outside:
+        closed_balance = replace(
+            closed_balance,
+            inside=replace(closed_balance.inside, provider=inside.provider),
+            outside=replace(closed_balance.outside, provider=outside.provider),
+        )
+        dry_result = replace(dry_result, closed_balance=closed_balance)
 
     inside_capability = detect_phase_change_capability(inside.provider)
     outside_capability = detect_phase_change_capability(outside.provider)

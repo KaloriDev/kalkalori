@@ -54,13 +54,14 @@ def _warning(code: str, message: str, severity: str = "warning") -> ModelWarning
 
 
 class WaterSteamPhase(str, Enum):
-    """Unambiguous pure-water phase classification below the critical point."""
+    """Unambiguous pure-water phase classification, including supercritical."""
 
     SUBCOOLED_LIQUID = "subcooled_liquid"
     SATURATED_LIQUID = "saturated_liquid"
     TWO_PHASE = "two_phase"
     SATURATED_VAPOR = "saturated_vapor"
     SUPERHEATED_VAPOR = "superheated_vapor"
+    SUPERCRITICAL_FLUID = "supercritical_fluid"
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,7 @@ def water_steam_props_iapws97(
 
     Supported input modes:
         T + p:
-            Single-phase, compressed-liquid, or superheated state.
+            Single-phase compressed-liquid, superheated, or supercritical state.
             T [K], p [Pa].
 
         p + x:
@@ -216,10 +217,9 @@ def water_steam_props_iapws97(
     if has_h:
         _validate_enthalpy(h)
 
-    if has_p and p >= WATER_CRITICAL_PRESSURE_PA:
+    if has_p and has_x and p >= WATER_CRITICAL_PRESSURE_PA:
         raise ValueError(
-            "Pure-water phase-state interpretation at or above the critical "
-            "pressure is unsupported."
+            "Vapor quality is undefined at or above the water critical pressure."
         )
 
     try:
@@ -373,7 +373,9 @@ def _state_from_temperature_pressure(*, T: float, p: float) -> WaterSteamPropert
                 "saturated liquid, saturated vapor, or mixture quality; use p+x or p+h."
             )
     raw = IAPWS97(T=T, P=_pa_to_mpa(p))
-    if saturation is not None:
+    if p >= WATER_CRITICAL_PRESSURE_PA and T >= WATER_CRITICAL_TEMPERATURE_K:
+        phase = WaterSteamPhase.SUPERCRITICAL_FLUID
+    elif saturation is not None:
         phase = (
             WaterSteamPhase.SUPERHEATED_VAPOR
             if T > saturation.Tsat
@@ -403,6 +405,14 @@ def _state_from_pressure_quality(*, p: float, x: float) -> WaterSteamProperties:
 
 
 def _state_from_pressure_enthalpy(*, p: float, h: float) -> WaterSteamProperties:
+    if p >= WATER_CRITICAL_PRESSURE_PA:
+        raw = IAPWS97(P=_pa_to_mpa(p), h=h / 1000.0)
+        phase = (
+            WaterSteamPhase.SUPERCRITICAL_FLUID
+            if float(raw.T) >= WATER_CRITICAL_TEMPERATURE_K
+            else WaterSteamPhase.SUBCOOLED_LIQUID
+        )
+        return _props_from_iapws_state(raw, phase=phase, quality=None)
     saturation = water_saturation_snapshot(p)
     tolerance = max(1.0e-3, 1.0e-9 * max(abs(saturation.hf), abs(saturation.hg)))
     if abs(h - saturation.hf) <= tolerance:
@@ -485,7 +495,8 @@ def _validate_enthalpy(h: Optional[float]) -> None:
 def water_saturation_pressure(T: float) -> float:
     """Return water saturation pressure at temperature T [K] -> Pa.
 
-    Valid for ``WATER_TRIPLE_POINT_TEMPERATURE_K <= T <= WATER_CRITICAL_TEMPERATURE_K``.
+    Valid below the critical point:
+    ``WATER_TRIPLE_POINT_TEMPERATURE_K <= T < WATER_CRITICAL_TEMPERATURE_K``.
 
     Ref: IAPWS-IF97, Region 4 (saturation line).
     """
@@ -500,7 +511,8 @@ def water_saturation_pressure(T: float) -> float:
 def water_saturation_temperature(p: float) -> float:
     """Return water saturation temperature at pressure p [Pa] -> K.
 
-    Valid for ``WATER_TRIPLE_POINT_PRESSURE_PA <= p <= WATER_CRITICAL_PRESSURE_PA``.
+    Valid below the critical point:
+    ``WATER_TRIPLE_POINT_PRESSURE_PA <= p < WATER_CRITICAL_PRESSURE_PA``.
 
     Ref: IAPWS-IF97, Region 4 (saturation line).
     """
@@ -575,7 +587,7 @@ def _saturation_enthalpy(
 
 def _validate_saturation_temperature(T: Optional[float]) -> None:
     _validate_temperature(T)
-    if T < WATER_TRIPLE_POINT_TEMPERATURE_K or T > WATER_CRITICAL_TEMPERATURE_K:
+    if T < WATER_TRIPLE_POINT_TEMPERATURE_K or T >= WATER_CRITICAL_TEMPERATURE_K:
         raise ValueError(
             f"Saturation temperature T={T} K is outside the IAPWS-IF97 "
             f"region-4 validity range "
@@ -585,7 +597,7 @@ def _validate_saturation_temperature(T: Optional[float]) -> None:
 
 def _validate_saturation_pressure(p: Optional[float]) -> None:
     _validate_pressure(p)
-    if p < WATER_TRIPLE_POINT_PRESSURE_PA or p > WATER_CRITICAL_PRESSURE_PA:
+    if p < WATER_TRIPLE_POINT_PRESSURE_PA or p >= WATER_CRITICAL_PRESSURE_PA:
         raise ValueError(
             f"Saturation pressure p={p} Pa is outside the IAPWS-IF97 "
             f"region-4 validity range "

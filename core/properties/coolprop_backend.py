@@ -158,6 +158,10 @@ class CoolPropFluidProvider:
             h=h, p=p, fluid=self.fluid, imposed_phase=self.imposed_phase
         )
 
+    def saturation_temperature(self, p: float) -> float | None:
+        """Return backend-native saturation temperature, or ``None`` above critical."""
+        return coolprop_saturation_temperature(p=p, fluid=self.fluid)
+
 
 @dataclass(frozen=True)
 class CoolPropGasMixtureProvider:
@@ -440,6 +444,31 @@ def coolprop_temperature_from_h_p(
         raise ValueError(
             f"CoolProp h,p inversion failed for fluid={fluid!r}, h={h} J/kg, p={p} Pa"
             f"{phase_note}. CoolProp error: {exc}"
+        ) from exc
+
+
+def coolprop_saturation_temperature(*, p: float, fluid: str) -> float | None:
+    """Return pure-fluid saturation temperature [K] at ``p`` using CoolProp.
+
+    ``None`` is returned at or above the backend's critical pressure. This
+    helper is used only to guard unsupported phase crossings while retaining
+    the caller-selected property backend; it does not substitute IAPWS.
+    """
+    _validate_pressure(p)
+    _validate_fluid_string(fluid)
+    backend = backend_from_fluid_string(fluid)
+    if backend is not None:
+        require_coolprop_backend(backend)
+    CP = _coolprop_module()
+    try:
+        p_critical = float(CP.PropsSI("pcrit", fluid))
+        if p >= p_critical:
+            return None
+        return float(CP.PropsSI("T", "P", p, "Q", 0.0, fluid))
+    except Exception as exc:
+        raise ValueError(
+            f"CoolProp saturation temperature failed for fluid={fluid!r}, p={p} Pa. "
+            f"CoolProp error: {exc}"
         ) from exc
 
 

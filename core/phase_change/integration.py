@@ -52,7 +52,13 @@ from core.properties.averaging import mean_temperature
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.phase_change import warning_codes as WC
-from core.phase_change.capability import detect_phase_change_capability, is_pure_water_provider
+from core.phase_change.capability import (
+    PureWaterPhaseChangeProviderNotSupportedError,
+    detect_phase_change_capability,
+    is_pure_water_provider,
+    pure_water_provider_kind,
+    pure_water_saturation_temperature,
+)
 from core.phase_change.mass_heat_transfer import mass_transfer_coefficient  # noqa: F401 (re-export for callers)
 from core.phase_change.outside_condensation_solver import (
     FrostingNotSupportedError,
@@ -1188,13 +1194,32 @@ def _raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
     """Guard pure-water phase crossings that reached the wet-gas adapter."""
     if not is_pure_water_provider(inside.provider):
         return
-    from core.properties.water import WaterSteamPhase, water_saturation_temperature
+    from core.properties.water import WaterSteamPhase
 
     try:
-        T_sat = water_saturation_temperature(inside.p)
+        T_sat = pure_water_saturation_temperature(inside.provider, p=inside.p)
     except (TypeError, ValueError):
         return
+    if T_sat is None:
+        return
     state = getattr(inside, "water_steam_state", None)
+    provider_kind = pure_water_provider_kind(inside.provider)
+    if provider_kind != "iapws97":
+        T_out_inside = getattr(dry_result, "T_out_inside", None)
+        if T_out_inside is None:
+            T_out_inside = dry_result.closed_balance.inside.T_out
+        if (
+            inside.T_in > T_sat + 1.0e-6
+            and T_out_inside <= T_sat + 1.0e-6
+        ) or (
+            inside.T_in < T_sat - 1.0e-6
+            and T_out_inside >= T_sat - 1.0e-6
+        ):
+            raise PureWaterPhaseChangeProviderNotSupportedError(
+                "Pure-water phase change is supported only by "
+                "IAPWS97WaterSteamProvider; the selected provider was not replaced."
+            )
+        return
     if (
         state is not None
         and state.phase is WaterSteamPhase.SUBCOOLED_LIQUID

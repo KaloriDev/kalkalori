@@ -6,6 +6,7 @@ from core.properties.water import (
     IAPWS97WaterSteamProvider,
     WATER_CRITICAL_PRESSURE_PA,
     WaterSteamPhase,
+    water_saturation_temperature,
     water_saturation_snapshot,
     water_steam_props_iapws97,
 )
@@ -120,11 +121,42 @@ def test_conflicting_state_inputs_are_rejected():
         )
 
 
-def test_supercritical_phase_interpretation_is_unsupported():
-    with pytest.raises(ValueError, match="critical"):
-        water_steam_props_iapws97(T=700.0, p=WATER_CRITICAL_PRESSURE_PA)
-    with pytest.raises(ValueError, match="critical"):
-        water_steam_props_iapws97(p=WATER_CRITICAL_PRESSURE_PA + 1.0, h=3.0e6)
+def test_supercritical_temperature_pressure_and_enthalpy_states_are_supported():
+    provider = IAPWS97WaterSteamProvider()
+    state_tp = water_steam_props_iapws97(
+        T=700.0, p=WATER_CRITICAL_PRESSURE_PA
+    )
+    state_ph = water_steam_props_iapws97(
+        p=WATER_CRITICAL_PRESSURE_PA + 3.0e6, h=3.0e6
+    )
+    assert state_tp.phase is WaterSteamPhase.SUPERCRITICAL_FLUID
+    assert state_ph.phase is WaterSteamPhase.SUPERCRITICAL_FLUID
+    assert state_tp.transport is not None
+    assert provider.at(T=700.0, p=WATER_CRITICAL_PRESSURE_PA) == state_tp.transport
+    side_tp = HXSideInput(provider, 1.0, 700.0, WATER_CRITICAL_PRESSURE_PA)
+    side_ph = HXSideInput(
+        provider=provider, m_dot=1.0,
+        p=WATER_CRITICAL_PRESSURE_PA + 3.0e6, h_in=3.0e6,
+    )
+    assert side_tp.water_steam_state.phase is WaterSteamPhase.SUPERCRITICAL_FLUID
+    assert side_ph.water_steam_state.phase is WaterSteamPhase.SUPERCRITICAL_FLUID
+
+
+def test_quality_and_saturation_helpers_reject_critical_pressure():
+    with pytest.raises(ValueError, match="quality.*critical"):
+        water_steam_props_iapws97(p=WATER_CRITICAL_PRESSURE_PA, x=0.5)
+    with pytest.raises(ValueError, match="validity range"):
+        water_saturation_temperature(WATER_CRITICAL_PRESSURE_PA)
+
+
+def test_hx_side_input_historical_positional_order_is_preserved():
+    provider = IAPWS97WaterSteamProvider()
+    side = HXSideInput(provider, 2.0, 300.0, P)
+    assert side.provider is provider
+    assert side.m_dot == 2.0
+    assert side.T_in == pytest.approx(300.0)
+    assert side.p == P
+    assert side.state_specification == "T+p"
 
 
 def test_simulation_and_rating_inlets_resolve_pressure_quality_and_enthalpy():

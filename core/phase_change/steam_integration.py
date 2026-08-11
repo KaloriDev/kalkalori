@@ -13,7 +13,10 @@ from core.models.heat_balance import ClosedBalance, ClosedBalanceSide
 from core.models.rating import run_rating
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change import warning_codes as WC
-from core.phase_change.capability import detect_phase_change_capability, is_pure_water_provider
+from core.phase_change.capability import (
+    detect_phase_change_capability,
+    is_pure_water_provider,
+)
 from core.phase_change.integration import (
     MultiplePhaseChangeSidesError,
     PhaseChangeSettings,
@@ -67,7 +70,12 @@ def is_inside_water_steam_case(inside) -> bool:
     return (
         is_pure_water_provider(inside.provider)
         and state is not None
-        and state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID
+        and state.phase in {
+            WaterSteamPhase.SATURATED_LIQUID,
+            WaterSteamPhase.TWO_PHASE,
+            WaterSteamPhase.SATURATED_VAPOR,
+            WaterSteamPhase.SUPERHEATED_VAPOR,
+        }
     )
 
 
@@ -76,6 +84,8 @@ def reject_unsupported_outside_pure_steam(outside) -> None:
         return
     state = getattr(outside, "water_steam_state", None)
     if state is None:
+        return
+    if state.phase is WaterSteamPhase.SUPERCRITICAL_FLUID:
         return
     if state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
         raise PureSteamOutsideNotSupportedError(

@@ -906,7 +906,18 @@ saturated liquid, saturated vapor and a two-phase mixture. Use `quality_in`
 or `h_in` there. Quality is the vapor mass fraction and is defined only in
 the saturation dome: `x=0` is saturated liquid, `x=1` is saturated vapor,
 and `0<x<1` is wet steam. Superheated vapor and subcooled liquid have
-`quality=None`.
+`quality=None`. IAPWS T+p and p+h states remain available above the critical
+pressure when IF97 supports the state; p+x and saturation helpers are
+rejected at and above the critical point.
+
+`IAPWS97WaterSteamProvider` is the supported provider for pure-water phase
+change. `CoolPropFluidProvider("Water")` remains a CoolProp calculation for
+single-phase water, without backend substitution. Likewise, a pure-H2O
+`GasMixturePropertyProvider` is never routed through the wet-gas model. If
+either non-IAPWS representation would need a phase crossing or a quality/
+enthalpy phase-state input, the call raises the controlled
+`PURE_WATER_PHASE_CHANGE_PROVIDER_NOT_SUPPORTED` error instead of silently
+switching to IAPWS.
 
 For Rating, the equivalent outlet fields are `T_out`, `quality_out` and
 `h_out`; an explicit `Q` or a fully specified opposing-side temperature

@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.geometry.bundle import TubeBundle
 
@@ -1092,6 +1092,10 @@ class BareTubeHeatExchanger:
             reject_unsupported_outside_pure_steam,
             translate_saturation_crossing_error,
         )
+        from core.phase_change.capability import (
+            guard_pure_water_single_phase_provider,
+            reject_unsupported_pure_water_phase_crossing,
+        )
 
         reject_unsupported_outside_pure_steam(outside)
         if is_inside_water_steam_case(inside):
@@ -1112,11 +1116,28 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
 
+        guarded_inside_provider = guard_pure_water_single_phase_provider(
+            inside.provider, T_in=inside.T_in, p=inside.p
+        )
+        guarded_outside_provider = guard_pure_water_single_phase_provider(
+            outside.provider, T_in=outside.T_in, p=outside.p
+        )
+        dry_inside = (
+            inside
+            if guarded_inside_provider is inside.provider
+            else replace(inside, provider=guarded_inside_provider)
+        )
+        dry_outside = (
+            outside
+            if guarded_outside_provider is outside.provider
+            else replace(outside, provider=guarded_outside_provider)
+        )
+
         try:
             dry_result = run_simulation(
                 self,
-                inside,
-                outside,
+                dry_inside,
+                dry_outside,
                 surface_margin=surface_margin,
                 iterate=iterate,
                 flow_arrangement=flow_arrangement,
@@ -1132,6 +1153,18 @@ class BareTubeHeatExchanger:
             )
         except ValueError as exc:
             translate_saturation_crossing_error(inside, exc)
+        reject_unsupported_pure_water_phase_crossing(
+            inside.provider,
+            T_in=inside.T_in,
+            T_out=dry_result.T_out_inside,
+            p=inside.p,
+        )
+        reject_unsupported_pure_water_phase_crossing(
+            outside.provider,
+            T_in=outside.T_in,
+            T_out=dry_result.T_out_outside,
+            p=outside.p,
+        )
         return apply_phase_change(
             self, inside, outside, dry_result,
             iterate=iterate, euler_provider=euler_provider, settings=settings,

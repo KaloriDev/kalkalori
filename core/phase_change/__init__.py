@@ -49,6 +49,9 @@ from core.phase_change.types import (
     PhaseChangeResult,
     WaterSteamPhaseChangeResult,
 )
+from core.phase_change.capability import (
+    PureWaterPhaseChangeProviderNotSupportedError,
+)
 from core.phase_change.steam_condensation import (
     SteamCondensationLocalResult,
     SteamCondensationZoneResult,
@@ -72,6 +75,7 @@ __all__ = [
     "PhaseChangeMode",
     "PhaseChangeResult",
     "WaterSteamPhaseChangeResult",
+    "PureWaterPhaseChangeProviderNotSupportedError",
     "SteamCondensationLocalResult",
     "SteamCondensationZoneResult",
     "SteamTubeOrientation",

@@ -135,6 +135,16 @@ class BalanceSideSpec:
                 object.__setattr__(self, "water_steam_outlet_state", outlet_state)
         else:
             if any(value is not None for value in (self.h_in, self.quality_in, self.h_out, self.quality_out)):
+                from core.phase_change.capability import (
+                    PureWaterPhaseChangeProviderNotSupportedError,
+                    is_pure_water_provider,
+                )
+
+                if is_pure_water_provider(self.provider):
+                    raise PureWaterPhaseChangeProviderNotSupportedError(
+                        "Pure-water p+h/p+x exchanger states require "
+                        "IAPWS97WaterSteamProvider; the selected provider was not replaced."
+                    )
                 raise ValueError("Enthalpy/quality state fields are supported only by the water/steam provider.")
             if self.T_in is not None and (not math.isfinite(self.T_in) or self.T_in <= 0.0):
                 raise ValueError("T_in must be a positive finite value when provided.")

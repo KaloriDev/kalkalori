@@ -248,6 +248,16 @@ class HXSideInput:
             object.__setattr__(self, "state_specification", specification)
         else:
             if self.h_in is not None or self.quality_in is not None:
+                from core.phase_change.capability import (
+                    PureWaterPhaseChangeProviderNotSupportedError,
+                    is_pure_water_provider,
+                )
+
+                if is_pure_water_provider(self.provider):
+                    raise PureWaterPhaseChangeProviderNotSupportedError(
+                        "Pure-water p+h/p+x exchanger states require "
+                        "IAPWS97WaterSteamProvider; the selected provider was not replaced."
+                    )
                 raise ValueError("h_in and quality_in are supported only by the water/steam inlet provider.")
             if self.T_in is None or not math.isfinite(self.T_in) or self.T_in <= 0.0:
                 raise ValueError("T_in must be a positive finite value [K].")
