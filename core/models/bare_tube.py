@@ -370,7 +370,7 @@ class HXResult:
 
     # Diagnostics
     tube_side_thermal: HXOutSideThermalResults
-    tube_side_hydraulic: HXTubeSideHydraulicResults
+    tube_side_hydraulic: HXTubeSideHydraulicResults | None
 
     outside_side_thermal: HXOutSideThermalResults
     outside_side_hydraulic: HXOutSideHydraulicResults
@@ -378,27 +378,27 @@ class HXResult:
     # Complete pressure-drop flow-path results (v0.5.6 architecture):
     # stage-by-stage/grouped irreversible losses plus separate signed
     # dynamic- and static-pressure changes for each side.
-    tube_side_pressure_drop: HXTubeSidePressureDropResults
+    tube_side_pressure_drop: HXTubeSidePressureDropResults | None
     outside_side_pressure_drop: HXOutsidePressureDropResults
 
     # Warnings and applicability diagnostics
     warnings: list[ModelWarning] | None = None
 
     @property
-    def tube_bundle_hydraulic(self) -> TubeBundleHydraulicResult:
-        return self.tube_side_hydraulic.tube_bundle
+    def tube_bundle_hydraulic(self) -> TubeBundleHydraulicResult | None:
+        return None if self.tube_side_hydraulic is None else self.tube_side_hydraulic.tube_bundle
 
     @property
-    def inside_properties_inlet(self) -> TubeSideHydraulicPoint:
-        return self.tube_bundle_hydraulic.inlet
+    def inside_properties_inlet(self) -> TubeSideHydraulicPoint | None:
+        return None if self.tube_bundle_hydraulic is None else self.tube_bundle_hydraulic.inlet
 
     @property
-    def inside_properties_midpoint(self) -> TubeSideHydraulicPoint:
-        return self.tube_bundle_hydraulic.midpoint
+    def inside_properties_midpoint(self) -> TubeSideHydraulicPoint | None:
+        return None if self.tube_bundle_hydraulic is None else self.tube_bundle_hydraulic.midpoint
 
     @property
-    def inside_properties_outlet(self) -> TubeSideHydraulicPoint:
-        return self.tube_bundle_hydraulic.outlet
+    def inside_properties_outlet(self) -> TubeSideHydraulicPoint | None:
+        return None if self.tube_bundle_hydraulic is None else self.tube_bundle_hydraulic.outlet
 
     @property
     def outside_properties_inlet(self) -> OutsideHydraulicPoint | None:
@@ -417,15 +417,15 @@ class HXResult:
 
     @property
     def inside_dp_friction(self) -> float:
-        return self.tube_side_hydraulic.dp_friction
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_friction
 
     @property
     def inside_dp_acceleration(self) -> float:
-        return self.tube_side_hydraulic.dp_acceleration
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_acceleration
 
     @property
     def inside_dp_tube_bundle(self) -> float:
-        return self.tube_side_hydraulic.dp_tube_bundle
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_tube_bundle
 
     @property
     def inside_dp_total(self) -> float:
@@ -443,63 +443,63 @@ class HXResult:
 
     @property
     def inside_dp_tube_bundle_friction(self) -> float:
-        return self.tube_side_hydraulic.dp_friction
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_friction
 
     @property
     def inside_dp_tube_bundle_acceleration(self) -> float:
-        return self.tube_side_hydraulic.dp_acceleration
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_acceleration
 
     @property
     def inside_dp_straight_tube_friction(self) -> float:
-        return self.tube_side_hydraulic.dp_friction
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_friction
 
     @property
     def inside_dp_straight_tube_acceleration(self) -> float:
-        return self.tube_side_hydraulic.dp_acceleration
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_acceleration
 
     @property
     def inside_dp_straight_tubes(self) -> float:
-        return self.tube_side_hydraulic.dp_straight_tubes
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_straight_tubes
 
     @property
     def inside_dp_tube_entrances(self) -> float:
-        return self.tube_side_hydraulic.dp_tube_entrances
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_tube_entrances
 
     @property
     def inside_dp_tube_exits(self) -> float:
-        return self.tube_side_hydraulic.dp_tube_exits
+        return math.nan if self.tube_side_hydraulic is None else self.tube_side_hydraulic.dp_tube_exits
 
     @property
     def tube_path_type(self):
-        return self.tube_side_hydraulic.tube_path_type
+        return None if self.tube_side_hydraulic is None else self.tube_side_hydraulic.tube_path_type
 
     @property
     def entrance_count(self) -> int:
-        return self.tube_side_hydraulic.entrance_count
+        return 0 if self.tube_side_hydraulic is None else self.tube_side_hydraulic.entrance_count
 
     @property
     def exit_count(self) -> int:
-        return self.tube_side_hydraulic.exit_count
+        return 0 if self.tube_side_hydraulic is None else self.tube_side_hydraulic.exit_count
 
     @property
     def pass_boundary_method(self) -> str:
-        return self.tube_side_hydraulic.pass_boundary_method
+        return None if self.tube_side_hydraulic is None else self.tube_side_hydraulic.pass_boundary_method
 
     @property
     def pass_boundary_states(self):
-        return self.tube_side_hydraulic.pass_boundary_states
+        return () if self.tube_side_hydraulic is None else self.tube_side_hydraulic.pass_boundary_states
 
     @property
     def entrance_results(self):
-        return self.tube_side_hydraulic.entrance_results
+        return () if self.tube_side_hydraulic is None else self.tube_side_hydraulic.entrance_results
 
     @property
     def exit_results(self):
-        return self.tube_side_hydraulic.exit_results
+        return () if self.tube_side_hydraulic is None else self.tube_side_hydraulic.exit_results
 
     @property
     def inside_dp_local(self) -> float:
-        return self.tube_side_pressure_drop.dp_local
+        return math.nan if self.tube_side_pressure_drop is None else self.tube_side_pressure_drop.dp_local
 
     @property
     def outside_tube_bank_hydraulic(self) -> OutsideTubeBankHydraulicResult | None:

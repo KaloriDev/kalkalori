@@ -1,3 +1,5 @@
+import ast
+import inspect
 import math
 
 import pytest
@@ -14,6 +16,7 @@ from core.phase_change.steam_integration import (
     PhaseChangeDisabledButRequiredError,
     PureSteamOutsideNotSupportedError,
 )
+import core.phase_change.steam_integration as steam_integration
 from core.phase_change.types import PhaseChangeMode, WaterSteamPhaseChangeResult
 from core.phase_change.steam_heater import SteamEvaporationNotSupportedError
 from core.properties.common import FluidTransportProperties
@@ -27,6 +30,16 @@ ORIENTATION = TubeOrientation.VERTICAL_DOWNWARD
 OUTSIDE_PROVIDER = ConstantPropertyProvider(
     FluidTransportProperties(rho=1.2, mu=1.8e-5, k=0.026, cp=1005.0)
 )
+
+
+class TemperatureDependentOutsideProvider:
+    def at(self, T, p):
+        return FluidTransportProperties(
+            rho=1.2 * 300.0 / T,
+            mu=1.8e-5 * (T / 300.0) ** 0.7,
+            k=0.026 * (T / 300.0) ** 0.8,
+            cp=1005.0 + 0.25 * (T - 300.0),
+        )
 
 
 def _hx(n_rows=10, n_tubes_per_row=10, *, orientation=ORIENTATION):
@@ -85,7 +98,12 @@ def test_simulation_public_transitions_use_typed_steam_result(inside, expected_p
     assert result.inside_properties_inlet is steam.state_in
     assert result.inside_properties_outlet is steam.state_out
     assert result.inside_properties_outlet.quality == steam.quality_out
+    assert steam.p == P
+    assert result.tube_side_hydraulic is None
+    assert result.tube_side_pressure_drop is None
     assert math.isnan(result.inside_dp_total)
+    assert result.outside_tube_bank_hydraulic is not None
+    assert math.isfinite(result.outside_dp_total)
     assert steam.two_phase_pressure_drop_status == "not_supported"
     assert WC.STEAM_TWO_PHASE_PRESSURE_DROP_NOT_SUPPORTED in {
         warning.code for warning in steam.warnings
@@ -143,6 +161,39 @@ def test_surface_margin_derates_public_steam_simulation():
     )
 
 
+def test_outside_properties_and_alpha_follow_final_trial_temperature():
+    provider = TemperatureDependentOutsideProvider()
+    cold = HXSideInput(provider=provider, m_dot=30.0, T_in=280.0, p=101325.0)
+    warm = HXSideInput(provider=provider, m_dot=30.0, T_in=340.0, p=101325.0)
+    cold_result = _hx().simulate(_inside_sim(quality_in=1.0), cold)
+    warm_result = _hx().simulate(_inside_sim(quality_in=1.0), warm)
+    for result, outside in ((cold_result, cold), (warm_result, warm)):
+        T_mean = 0.5 * (outside.T_in + result.T_out_outside)
+        assert result.outside_props_mean == provider.at(T_mean, outside.p)
+        assert result.outside_alfa_mean == pytest.approx(
+            result.final_result.outside_side_thermal.alfa
+        )
+    assert cold_result.outside_alfa_mean != pytest.approx(warm_result.outside_alfa_mean)
+
+
+def test_steam_adapter_has_no_fake_provider_or_private_wet_gas_imports():
+    source = inspect.getsource(steam_integration)
+    assert "ConstantPropertyProvider" not in source
+    tree = ast.parse(source)
+    private_imports = [
+        name.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module in {
+            "core.phase_change.integration",
+            "core.phase_change.rating_integration",
+        }
+        for name in node.names
+        if name.name.startswith("_")
+    ]
+    assert private_imports == []
+
+
 def test_saturated_liquid_subcooling_does_not_require_orientation():
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(), m_dot=1.0, p=P,
@@ -177,7 +228,7 @@ def test_rating_reuses_same_zone_physics(inlet_kwargs, outlet_kwargs, expected_p
     steam = result.inside_phase_change
     assert isinstance(steam, WaterSteamPhaseChangeResult)
     assert steam.phase_out is expected_phase
-    assert result.UA_required == pytest.approx(sum(zone.U * zone.area for zone in steam.solution.zones))
+    assert result.UA_required == pytest.approx(steam.UA_total)
     assert result.UA_actual == pytest.approx(
         result.UA_required * result.A_o / result.A_required
     )
@@ -213,9 +264,11 @@ def test_zone_condensation_alpha_is_physical_and_top_level_alpha_is_reporting_on
     result = _hx().simulate(_inside_sim(T_in=520.0), _outside_sim())
     steam = result.inside_phase_change
     assert steam.zone_alpha_condensation > 0.0
-    assert result.inside_alfa_mean == pytest.approx(steam.solution.inside_alfa_mean)
-    assert result.UA == pytest.approx(sum(zone.U * zone.area for zone in steam.solution.zones))
+    assert result.inside_alfa_mean > 0.0
+    assert result.UA == pytest.approx(steam.UA_total)
     assert steam.zone_alpha_condensation != pytest.approx(result.inside_alfa_mean)
+    assert not hasattr(steam, "solution")
+    assert not hasattr(steam, "runtime_s")
 
 
 def test_disabled_mode_rejects_required_saturation_crossing():
@@ -312,6 +365,6 @@ def test_public_low_g_case_keeps_finite_condensation_zone_htc():
         _outside_sim(m_dot=20.0),
     )
     steam = result.inside_phase_change
-    assert steam.solution.mass_flux < 5.0
+    assert steam.mass_flux < 5.0
     assert steam.zone_alpha_condensation > 1000.0
     assert all(math.isfinite(value) for value in (result.q, result.UA, steam.A_total))

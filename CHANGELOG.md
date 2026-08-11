@@ -19,6 +19,7 @@ The project follows **Semantic Versioning (SemVer)**:
 
 - Refined the in-tube steam-condensation model architecture.
 - Restored water/steam property compatibility and clarified pure-water phase-change provider support.
+- Simplified steam-side integration and final-state diagnostics.
 
 ---
 

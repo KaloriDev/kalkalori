@@ -97,6 +97,7 @@ class SteamHeaterSolution:
     zone_alpha_subcooling: float | None
     inside_alfa_mean: float
     outside_alpha: float
+    outside_props_mean: FluidTransportProperties
     U_equivalent: float
     zones: tuple[SteamHeaterZoneResult, ...]
     converged: bool
@@ -152,6 +153,7 @@ class _TrialResult:
     required_area: float
     UA_total: float
     outside_alpha: float
+    outside_props_mean: FluidTransportProperties
     mass_flux: float
     warnings: tuple[ModelWarning, ...]
 
@@ -438,6 +440,7 @@ def _evaluate_duty(
         required_area=required_area,
         UA_total=UA_total,
         outside_alpha=alpha_outside,
+        outside_props_mean=outside_props,
         mass_flux=mass_flow_steam / hx.bundle.internal_flow_area_per_pass,
         warnings=tuple(_deduplicate_warnings(trial_warnings)),
     )
@@ -662,6 +665,7 @@ def _build_solution(
         zone_alpha_subcooling=value(SteamHeaterZoneKind.SUBCOOLING, "alpha_inside", None),
         inside_alfa_mean=inside_alfa_mean,
         outside_alpha=trial.outside_alpha,
+        outside_props_mean=trial.outside_props_mean,
         U_equivalent=UA_total / A_total,
         zones=trial.zones,
         converged=converged,

@@ -173,11 +173,11 @@ class ThermalIterationDiagnostics:
     on the outside (crossflow) side in the current model.
     """
 
-    inside_Nu_base: float
-    inside_Nu_corrected: float
-    inside_length_correction: float
-    inside_wall_temperature_correction: float
-    inside_combined_correction: float
+    inside_Nu_base: float | None
+    inside_Nu_corrected: float | None
+    inside_length_correction: float | None
+    inside_wall_temperature_correction: float | None
+    inside_combined_correction: float | None
     inside_alfa_base: float
     inside_alfa_corrected: float
 
@@ -196,7 +196,7 @@ class IterativeThermalState:
     inside_wall_temperature: float    # [K] tube inner-surface temperature
     outside_wall_temperature: float   # [K] tube outer-surface temperature
 
-    inside_bulk_props: FluidTransportProperties
+    inside_bulk_props: FluidTransportProperties | None
     inside_wall_props: FluidTransportProperties | None
 
     outside_bulk_props: FluidTransportProperties
@@ -239,7 +239,7 @@ class WallTemperatureProbe:
     inside_wall_props: FluidTransportProperties | None = None
     outside_bulk_props: FluidTransportProperties | None = None
     outside_wall_props: FluidTransportProperties | None = None
-    inside_nusselt: float = math.nan
+    inside_nusselt: float | None = None
     outside_nusselt: float = math.nan
     heat_rate_probe: float = math.nan
     residual: float = math.inf

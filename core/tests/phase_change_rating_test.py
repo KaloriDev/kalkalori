@@ -19,7 +19,7 @@ from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.heat_balance import BalanceSideSpec
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
 from core.phase_change.capability import detect_phase_change_capability
-from core.phase_change.integration import _dew_point_at_ratio
+from core.phase_change.integration import dew_point_at_ratio
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
 from core.phase_change.wet_gas_composition import (
     wet_gas_provider_at_water_ratio,
@@ -102,7 +102,7 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
 
     capability = detect_phase_change_capability(outside.provider)
     W_mid = 0.5 * (pc.W_in + pc.W_out)
-    dew_point_mid = _dew_point_at_ratio(capability, W_mid, p=outside.p)
+    dew_point_mid = dew_point_at_ratio(capability, W_mid, p=outside.p)
     assert dew_point_mid is not None
     assert pc.wall_temperature_wet_mean is not None
     assert pc.W_sat_wet_surface is not None

@@ -36,7 +36,6 @@ from core.common.warnings import ModelWarning
 
 if TYPE_CHECKING:
     from core.properties.water import WaterSteamPhase, WaterSteamProperties
-    from core.phase_change.steam_heater import SteamHeaterSolution
 
 
 class PhaseChangeMode(str, Enum):
@@ -253,6 +252,7 @@ class WaterSteamPhaseChangeResult:
     T_in: float
     T_out: float
     Tsat: float
+    p: float
     h_in: float
     h_out: float
     quality_in: float | None
@@ -281,14 +281,13 @@ class WaterSteamPhaseChangeResult:
     UA_total: float
 
     mass_flow_total: float
+    mass_flux: float
     m_dot_condensate: float
     two_phase_pressure_drop_supported: bool
     two_phase_pressure_drop_status: str
     iterations: int
     root_iterations: int
     property_evaluations: int
-    runtime_s: float
-    solution: "SteamHeaterSolution"
     warnings: tuple[ModelWarning, ...] = ()
     assumptions: tuple[str, ...] = ()
 

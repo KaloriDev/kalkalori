@@ -183,7 +183,7 @@ def check_single_active_side(
         )
 
 
-def _capability_only_result(side: str, mode: PhaseChangeMode, capability: PhaseChangeCapability) -> PhaseChangeResult:
+def capability_only_result(side: str, mode: PhaseChangeMode, capability: PhaseChangeCapability) -> PhaseChangeResult:
     return PhaseChangeResult(
         side=side,
         mode=mode,
@@ -198,7 +198,7 @@ def _capability_only_result(side: str, mode: PhaseChangeMode, capability: PhaseC
     )
 
 
-def _evaluate_side_onset(
+def evaluate_side_onset(
     *,
     side: str,
     mode: PhaseChangeMode,
@@ -283,23 +283,23 @@ def apply_phase_change(
     outside_capability = detect_phase_change_capability(outside.provider)
 
     if not skip_inside_pure_steam_guard:
-        _raise_if_inside_pure_steam_condensation(inside, dry_result)
+        raise_if_inside_pure_steam_condensation(inside, dry_result)
 
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
             dry_result,
-            inside_phase_change=_capability_only_result("inside", inside.phase_change_mode, inside_capability),
-            outside_phase_change=_capability_only_result("outside", outside.phase_change_mode, outside_capability),
+            inside_phase_change=capability_only_result("inside", inside.phase_change_mode, inside_capability),
+            outside_phase_change=capability_only_result("outside", outside.phase_change_mode, outside_capability),
         )
 
     thermal_state = dry_result.thermal_state
     envelope = dry_result.wall_temperature_envelope
 
-    inside_onset, inside_dew_point, inside_wall_min, inside_wall_mean, inside_wall_max = _evaluate_side_onset(
+    inside_onset, inside_dew_point, inside_wall_min, inside_wall_mean, inside_wall_max = evaluate_side_onset(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability, p=inside.p,
         thermal_state=thermal_state, envelope=envelope, settings=settings,
     )
-    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = _evaluate_side_onset(
+    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = evaluate_side_onset(
         side="outside", mode=outside.phase_change_mode, capability=outside_capability, p=outside.p,
         thermal_state=thermal_state, envelope=envelope, settings=settings,
     )
@@ -345,7 +345,7 @@ def apply_phase_change(
             settings=settings,
         )
 
-    inside_result = _build_capability_side_result(
+    inside_result = build_capability_side_result(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability,
         possible=inside_possible, near_onset=inside_near_onset,
         dew_point=inside_dew_point, p=inside.p,
@@ -355,7 +355,7 @@ def apply_phase_change(
     )
 
     if not outside_auto_possible:
-        outside_result = _build_capability_side_result(
+        outside_result = build_capability_side_result(
             side="outside", mode=outside.phase_change_mode, capability=outside_capability,
             possible=outside_possible, near_onset=outside_near_onset,
             dew_point=outside_dew_point, p=outside.p,
@@ -371,7 +371,7 @@ def apply_phase_change(
     )
     if is_frost_regime(p_h2o_in):
         outside_result = replace(
-            _build_capability_side_result(
+            build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=True, near_onset=False, dew_point=None, p=outside.p,
                 m_dot_gas=outside.m_dot,
@@ -424,7 +424,7 @@ def apply_phase_change(
         )
     except FrostingNotSupportedError as exc:
         outside_result = replace(
-            _build_capability_side_result(
+            build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=True, near_onset=False, dew_point=outside_dew_point, p=outside.p,
                 m_dot_gas=outside.m_dot,
@@ -557,7 +557,7 @@ def apply_phase_change(
         m_dot_gas_in=m_dot_gas_in,
         m_dot_gas_out=m_dot_gas_out,
         dew_point_in=outside_dew_point,
-        dew_point_out=_dew_point_at_ratio(outside_capability, solution.W_out, p=outside.p),
+        dew_point_out=dew_point_at_ratio(outside_capability, solution.W_out, p=outside.p),
         wall_temperature_mean=solution.T_wall_outside,
         wall_temperature_min=solution.wall_temperature_min,
         wall_temperature_max=solution.wall_temperature_max,
@@ -800,7 +800,7 @@ def _apply_inside_condensation(
     settings: PhaseChangeSettings,
 ):
     """Apply the active inside wet-gas solution to a dry Simulation result."""
-    outside_result = _build_capability_side_result(
+    outside_result = build_capability_side_result(
         side="outside",
         mode=outside.phase_change_mode,
         capability=outside_capability,
@@ -818,7 +818,7 @@ def _apply_inside_condensation(
     p_h2o_in = water_partial_pressure(_y_h2o(inside_capability), inside.p)
     if is_frost_regime(p_h2o_in):
         inside_result = replace(
-            _build_capability_side_result(
+            build_capability_side_result(
                 side="inside",
                 mode=inside.phase_change_mode,
                 capability=inside_capability,
@@ -878,7 +878,7 @@ def _apply_inside_condensation(
         )
     except FrostingNotSupportedError as exc:
         inside_result = replace(
-            _build_capability_side_result(
+            build_capability_side_result(
                 side="inside",
                 mode=inside.phase_change_mode,
                 capability=inside_capability,
@@ -999,7 +999,7 @@ def _apply_inside_condensation(
         m_dot_gas_in=inside.m_dot,
         m_dot_gas_out=m_dot_gas_out,
         dew_point_in=inside_dew_point,
-        dew_point_out=_dew_point_at_ratio(
+        dew_point_out=dew_point_at_ratio(
             inside_capability,
             solution.W_out,
             p=inside.p,
@@ -1190,7 +1190,7 @@ def _apply_inside_condensation(
     )
 
 
-def _raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
+def raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
     """Guard pure-water phase crossings that reached the wet-gas adapter."""
     if not is_pure_water_provider(inside.provider):
         return
@@ -1247,7 +1247,7 @@ def _y_h2o(capability: PhaseChangeCapability) -> float:
     return water_mole_fraction_from_ratio(capability.W_in, M_dry=capability.M_dry, M_h2o=capability.M_condensable)
 
 
-def _dew_point_at_ratio(capability: PhaseChangeCapability, W: float, *, p: float) -> float | None:
+def dew_point_at_ratio(capability: PhaseChangeCapability, W: float, *, p: float) -> float | None:
     from core.phase_change.water_equilibrium import water_mole_fraction_from_ratio
 
     if W <= 0.0:
@@ -1259,7 +1259,7 @@ def _dew_point_at_ratio(capability: PhaseChangeCapability, W: float, *, p: float
     return water_dew_point(p_h2o)
 
 
-def _build_capability_side_result(
+def build_capability_side_result(
     *,
     side: str,
     mode: PhaseChangeMode,

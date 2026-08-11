@@ -162,8 +162,8 @@ class ClosedBalanceSide:
     m_dot: float
     T_in: float
     T_out: float
-    cp_mean: float
-    C: float  # [W/K] = m_dot * cp_mean
+    cp_mean: float | None
+    C: float | None  # [W/K] = m_dot * cp_mean; None for an isothermal phase change
 
     def to_hx_side_input(self):
         """Bridge to ``core.models.simulation.HXSideInput`` (T_in/m_dot/provider/p only).
