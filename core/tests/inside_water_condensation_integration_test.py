@@ -10,13 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, TubeOrientation
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change import condensation_solver_helpers as solver_helpers
 from core.phase_change import integration as phase_change_integration
 from core.phase_change.capability import detect_phase_change_capability
-from core.phase_change.integration import PureWaterSteamCondensationNotSupportedError
 from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
 from core.phase_change.warning_codes import (
     CONDENSATE_FILM_HYDRAULICS_NOT_MODELLED,
@@ -40,6 +39,7 @@ def _hx() -> BareTubeHeatExchanger:
         length_total=2.8,
         length_effective=2.8,
         wall_k=50.0,
+        tube_orientation=TubeOrientation.VERTICAL_DOWNWARD,
     )
     return BareTubeHeatExchanger(
         TubeBundle(
@@ -417,19 +417,20 @@ def test_inside_disabled_returns_sensible_only_with_warning() -> None:
     assert any(w.code == PHASE_CHANGE_DISABLED_BUT_POSSIBLE for w in pc.warnings)
 
 
-def test_pure_steam_inside_is_controlled_v062_unsupported() -> None:
-    with pytest.raises(PureWaterSteamCondensationNotSupportedError, match="v0.6.2"):
-        _hx().simulate(
-            HXSideInput(
-                provider=IAPWS97WaterSteamProvider(),
-                m_dot=1.0,
-                T_in=400.0,
-                p=101_325.0,
-            ),
-            HXSideInput(
-                provider=GasMixturePropertyProvider(_dry_spec()),
-                m_dot=5.0,
-                T_in=290.0,
-                p=101_325.0,
-            ),
-        )
+def test_pure_steam_inside_uses_v062_typed_result() -> None:
+    result = _hx().simulate(
+        HXSideInput(
+            provider=IAPWS97WaterSteamProvider(),
+            m_dot=1.0,
+            T_in=400.0,
+            p=101_325.0,
+        ),
+        HXSideInput(
+            provider=GasMixturePropertyProvider(_dry_spec()),
+            m_dot=5.0,
+            T_in=290.0,
+            p=101_325.0,
+        ),
+    )
+    assert result.inside_phase_change.capable
+    assert result.inside_phase_change.method == "water_steam_multizone_0d"

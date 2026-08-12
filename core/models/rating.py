@@ -76,6 +76,7 @@ Algorithm
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING
 
 from core.heat_transfer.streams import SensibleHeatStream
@@ -90,7 +91,7 @@ from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_p
 from core.common.warnings import ModelWarning
 
 from core.models.heat_balance import ClosedBalance
-from core.phase_change.types import PhaseChangeResult
+from core.phase_change.types import PhaseChangeResult, WaterSteamPhaseChangeResult
 
 if TYPE_CHECKING:
     from core.models.bare_tube import BareTubeHeatExchanger, HXResult
@@ -142,11 +143,11 @@ class HXRatingResult:
 
     warnings: list[ModelWarning] | None = None
 
-    # Phase-change results (v0.6.1); see HXSimulationResult for the field
+    # Phase-change results; see HXSimulationResult for the field
     # semantics -- same meaning here. ``None`` only if this HXRatingResult
     # was constructed directly by ``run_rating`` (the sensible-only driver)
     # rather than through ``BareTubeHeatExchanger.rate``.
-    inside_phase_change: "PhaseChangeResult | None" = None
+    inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
 
     @property
@@ -223,18 +224,26 @@ class HXRatingResult:
     @property
     def tube_side_hydraulic(self):
         """Nested straight tube-bundle hydraulic result."""
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return None
         return self.final_result.tube_side_hydraulic
 
     @property
     def inside_properties_inlet(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult):
+            return self.inside_phase_change.state_in
         return self.final_result.inside_properties_inlet
 
     @property
     def inside_properties_midpoint(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult):
+            return self.inside_phase_change.state_midpoint
         return self.final_result.inside_properties_midpoint
 
     @property
     def inside_properties_outlet(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult):
+            return self.inside_phase_change.state_out
         return self.final_result.inside_properties_outlet
 
     @property
@@ -251,14 +260,20 @@ class HXRatingResult:
 
     @property
     def inside_dp_friction(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_friction
 
     @property
     def inside_dp_acceleration(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_acceleration
 
     @property
     def inside_dp_tube_bundle(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_tube_bundle
 
     @property
@@ -295,6 +310,8 @@ class HXRatingResult:
     @property
     def tube_side_pressure_drop(self):
         """Complete tube-side pressure-drop result (core + local + total)."""
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return None
         return self.final_result.tube_side_pressure_drop
 
     @property
@@ -304,6 +321,8 @@ class HXRatingResult:
 
     @property
     def inside_dp_local(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_local
 
     @property
@@ -314,22 +333,32 @@ class HXRatingResult:
 
     @property
     def inside_dp_straight_tube_friction(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_straight_tube_friction
 
     @property
     def inside_dp_straight_tube_acceleration(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_straight_tube_acceleration
 
     @property
     def inside_dp_straight_tubes(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_straight_tubes
 
     @property
     def inside_dp_tube_entrances(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_tube_entrances
 
     @property
     def inside_dp_tube_exits(self) -> float:
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return math.nan
         return self.final_result.inside_dp_tube_exits
 
     @property
@@ -350,14 +379,20 @@ class HXRatingResult:
 
     @property
     def pass_boundary_states(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return ()
         return self.final_result.pass_boundary_states
 
     @property
     def entrance_results(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return ()
         return self.final_result.entrance_results
 
     @property
     def exit_results(self):
+        if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
+            return ()
         return self.final_result.exit_results
 
 

@@ -3,7 +3,10 @@ from core.properties.fluids import ConstantPropertyProvider, PropertyProvider
 
 from core.properties.water import (
     IAPWS97WaterSteamProvider,
+    WaterSteamPhase,
     WaterSteamProperties,
+    WaterSteamSaturationProperties,
+    water_saturation_snapshot,
     water_steam_props_iapws97,
 )
 
@@ -73,7 +76,10 @@ __all__ = [
     "PropertyProvider",
     "ConstantPropertyProvider",
     "IAPWS97WaterSteamProvider",
+    "WaterSteamPhase",
     "WaterSteamProperties",
+    "WaterSteamSaturationProperties",
+    "water_saturation_snapshot",
     "water_steam_props_iapws97",
     "to_internal_fluid_props",
     "to_internal_pressure_drop_fluid_props",

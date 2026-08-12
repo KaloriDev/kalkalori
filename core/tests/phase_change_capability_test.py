@@ -94,6 +94,7 @@ def test_pure_water_vapor_stream_is_not_capable() -> None:
     spec = GasMixtureSpec(components={"H2O": 1.0}, basis="mole")
     cap = detect_phase_change_capability(GasMixturePropertyProvider(spec))
     assert cap.capable is False
+    assert cap.provider_kind == "pure_water_gas_mixture_unsupported"
 
 
 def test_non_gas_mixture_provider_is_not_capable() -> None:

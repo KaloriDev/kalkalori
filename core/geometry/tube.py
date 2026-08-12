@@ -20,7 +20,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import math
+
+
+class TubeOrientation(str, Enum):
+    """Physical tube orientations covered by orientation-aware models.
+
+    ``BareTube.tube_orientation=None`` means that orientation has not been
+    specified. Models which need it must reject that value when they are
+    actually selected; ordinary single-phase calculations ignore it.
+    """
+
+    HORIZONTAL = "horizontal"
+    VERTICAL_DOWNWARD = "vertical_downward"
+    DOWNWARD_INCLINED_15_PLUS = "downward_inclined_15_plus"
+
+    # Descriptive aliases retained for callers using the alternate wording.
+    VERTICAL_DOWNFLOW = "vertical_downward"
+    INCLINED_DOWNWARD = "downward_inclined_15_plus"
 
 
 @dataclass(frozen=True)
@@ -65,6 +83,9 @@ class BareTube(BaseTube):
         interpretation as ``roughness_inner``, but currently stored only
         for future use: no outside heat-transfer or tube-bank
         pressure-drop correlation applies it in this commit.
+    tube_orientation : TubeOrientation | None
+        Physical orientation of the tube. ``None`` means unspecified. It is
+        consumed only by correlations whose physics depends on orientation.
 
     Notes
     -----
@@ -90,6 +111,7 @@ class BareTube(BaseTube):
     wall_k: float
     roughness_inner: float | None = None
     roughness_outer: float | None = None
+    tube_orientation: TubeOrientation | None = None
 
     def __post_init__(self) -> None:
         if self.D_i <= 0.0 or self.D_o <= 0.0:
@@ -106,6 +128,10 @@ class BareTube(BaseTube):
             raise ValueError("wall_k must be positive.")
         _validate_roughness(self.roughness_inner, "roughness_inner")
         _validate_roughness(self.roughness_outer, "roughness_outer")
+        if self.tube_orientation is not None and not isinstance(
+            self.tube_orientation, TubeOrientation
+        ):
+            raise ValueError("tube_orientation must be a TubeOrientation value or None.")
 
     @property
     def flow_area(self) -> float:

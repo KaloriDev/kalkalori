@@ -5,6 +5,25 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.6.2] — Unreleased
+
+### Added
+
+- Added water-steam inlet states based on temperature, enthalpy or vapor quality.
+- Added in-tube heat transfer for saturated and wet-steam condensation.
+- Added automatic desuperheating, condensation and condensate-subcooling zones.
+- Integrated pure-steam condensation into simulation and rating.
+- Added superheated-steam cooling and condensate subcooling.
+- Added gravity-aware low-mass-flux steam condensation with Shah (2009) applicability diagnostics.
+
+### Changed
+
+- Refined the in-tube steam-condensation model architecture.
+- Restored water/steam property compatibility and clarified pure-water phase-change provider support.
+- Simplified steam-side integration and final-state diagnostics.
+
+---
+
 ## [0.6.1] — Inside wet-gas water condensation
 
 ### Added

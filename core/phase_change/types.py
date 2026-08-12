@@ -30,9 +30,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping
+from typing import Mapping, TYPE_CHECKING
 
 from core.common.warnings import ModelWarning
+
+if TYPE_CHECKING:
+    from core.properties.water import WaterSteamPhase, WaterSteamProperties
 
 
 class PhaseChangeMode(str, Enum):
@@ -221,6 +224,86 @@ class PhaseChangeResult:
     def total_area(self) -> float | None:
         """Total side area used by full-area sensible convection."""
         return self.inside_total_area if self.side == "inside" else self.outside_total_area
+
+    @property
+    def is_condensing(self) -> bool:
+        return self.active and self.direction is PhaseChangeDirection.CONDENSATION
+
+
+@dataclass(frozen=True)
+class WaterSteamPhaseChangeResult:
+    """Steam-specific side result without wet-gas composition placeholders."""
+
+    side: str
+    mode: PhaseChangeMode
+    direction: PhaseChangeDirection
+    component: str
+    capable: bool
+    possible: bool
+    active: bool
+    converged: bool
+    method: str
+
+    state_in: "WaterSteamProperties"
+    state_midpoint: "WaterSteamProperties"
+    state_out: "WaterSteamProperties"
+    phase_in: "WaterSteamPhase"
+    phase_out: "WaterSteamPhase"
+    T_in: float
+    T_out: float
+    Tsat: float
+    p: float
+    h_in: float
+    h_out: float
+    quality_in: float | None
+    quality_out: float | None
+
+    Q_desuperheat: float
+    Q_condensation: float
+    Q_subcooling: float
+    Q_total: float
+    A_desuperheat: float
+    A_condensation: float
+    A_subcooling: float
+    A_total: float
+    zone_fraction_desuperheat: float
+    zone_fraction_condensation: float
+    zone_fraction_subcooling: float
+    zone_alpha_desuperheat: float | None
+    zone_alpha_condensation: float | None
+    zone_alpha_subcooling: float | None
+    zone_U_desuperheat: float | None
+    zone_U_condensation: float | None
+    zone_U_subcooling: float | None
+    zone_UA_desuperheat: float
+    zone_UA_condensation: float
+    zone_UA_subcooling: float
+    UA_total: float
+
+    mass_flow_total: float
+    mass_flux: float
+    m_dot_condensate: float
+    two_phase_pressure_drop_supported: bool
+    two_phase_pressure_drop_status: str
+    iterations: int
+    root_iterations: int
+    property_evaluations: int
+    warnings: tuple[ModelWarning, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+    # Compatibility properties used by the neutral Simulation/Rating
+    # convenience accessors. They do not introduce a W/dew-point model.
+    W_in: None = None
+    W_out: None = None
+    near_onset: bool = False
+
+    @property
+    def Q_sensible(self) -> float:
+        return self.Q_desuperheat + self.Q_subcooling
+
+    @property
+    def Q_latent(self) -> float:
+        return self.Q_condensation
 
     @property
     def is_condensing(self) -> bool:

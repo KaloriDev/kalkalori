@@ -50,14 +50,18 @@ from core.models.rating import run_rating
 from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 
 from core.phase_change import warning_codes as WC
-from core.phase_change.capability import detect_phase_change_capability
+from core.phase_change.capability import (
+    detect_phase_change_capability,
+    guard_pure_water_single_phase_provider,
+    reject_unsupported_pure_water_phase_crossing,
+)
 from core.phase_change.integration import (
     ONSET_TEMPERATURE_METHOD,
     PhaseChangeSettings,
-    _build_capability_side_result,
-    _dew_point_at_ratio,
-    _evaluate_side_onset,
-    _raise_if_inside_pure_steam_condensation,
+    build_capability_side_result,
+    dew_point_at_ratio,
+    evaluate_side_onset,
+    raise_if_inside_pure_steam_condensation,
     check_single_active_side,
 )
 from core.phase_change.types import (
@@ -242,8 +246,32 @@ def apply_phase_change_to_rating(
     """
     settings = settings or PhaseChangeSettings()
 
+    guarded_inside_provider = (
+        inside.provider
+        if inside.T_in is None
+        else guard_pure_water_single_phase_provider(
+            inside.provider, T_in=inside.T_in, p=inside.p
+        )
+    )
+    guarded_outside_provider = (
+        outside.provider
+        if outside.T_in is None
+        else guard_pure_water_single_phase_provider(
+            outside.provider, T_in=outside.T_in, p=outside.p
+        )
+    )
+    guarded_inside = (
+        inside
+        if guarded_inside_provider is inside.provider
+        else replace(inside, provider=guarded_inside_provider)
+    )
+    guarded_outside = (
+        outside
+        if guarded_outside_provider is outside.provider
+        else replace(outside, provider=guarded_outside_provider)
+    )
     closed_balance = close_heat_balance(
-        inside, outside, Q=Q, effectiveness=effectiveness,
+        guarded_inside, guarded_outside, Q=Q, effectiveness=effectiveness,
         over_specified_tolerance=over_specified_tolerance,
     )
     dry_result = run_rating(
@@ -254,20 +282,40 @@ def apply_phase_change_to_rating(
         relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
     )
 
+    reject_unsupported_pure_water_phase_crossing(
+        inside.provider,
+        T_in=inside.T_in,
+        T_out=closed_balance.inside.T_out,
+        p=inside.p,
+    )
+    reject_unsupported_pure_water_phase_crossing(
+        outside.provider,
+        T_in=outside.T_in,
+        T_out=closed_balance.outside.T_out,
+        p=outside.p,
+    )
+    if guarded_inside is not inside or guarded_outside is not outside:
+        closed_balance = replace(
+            closed_balance,
+            inside=replace(closed_balance.inside, provider=inside.provider),
+            outside=replace(closed_balance.outside, provider=outside.provider),
+        )
+        dry_result = replace(dry_result, closed_balance=closed_balance)
+
     inside_capability = detect_phase_change_capability(inside.provider)
     outside_capability = detect_phase_change_capability(outside.provider)
 
-    _raise_if_inside_pure_steam_condensation(inside, dry_result)
+    raise_if_inside_pure_steam_condensation(inside, dry_result)
 
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
             dry_result,
-            inside_phase_change=_build_capability_side_result(
+            inside_phase_change=build_capability_side_result(
                 side="inside", mode=inside.phase_change_mode, capability=inside_capability,
                 possible=False, near_onset=False, dew_point=None, p=inside.p,
                 m_dot_gas=inside.m_dot,
             ),
-            outside_phase_change=_build_capability_side_result(
+            outside_phase_change=build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=False, near_onset=False, dew_point=None, p=outside.p,
                 m_dot_gas=outside.m_dot,
@@ -279,12 +327,12 @@ def apply_phase_change_to_rating(
 
     # Fix (v0.6.0 patch, spec section 6.1): onset uses wall_envelope.<side>_min
     # (the coldest estimated point), not a mean/representative wall
-    # temperature -- see core.phase_change.integration._evaluate_side_onset.
-    inside_onset, inside_dew_point, inside_wall_min, inside_wall_mean, inside_wall_max = _evaluate_side_onset(
+    # temperature -- see core.phase_change.integration.evaluate_side_onset.
+    inside_onset, inside_dew_point, inside_wall_min, inside_wall_mean, inside_wall_max = evaluate_side_onset(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability, p=inside.p,
         thermal_state=thermal_state, envelope=envelope, settings=settings,
     )
-    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = _evaluate_side_onset(
+    outside_onset, outside_dew_point, outside_wall_min, outside_wall_mean, outside_wall_max = evaluate_side_onset(
         side="outside", mode=outside.phase_change_mode, capability=outside_capability, p=outside.p,
         thermal_state=thermal_state, envelope=envelope, settings=settings,
     )
@@ -340,7 +388,7 @@ def apply_phase_change_to_rating(
             outside_wall_max=outside_wall_max,
         )
 
-    inside_result = _build_capability_side_result(
+    inside_result = build_capability_side_result(
         side="inside", mode=inside.phase_change_mode, capability=inside_capability,
         possible=inside_possible, near_onset=inside_near_onset,
         dew_point=inside_dew_point, p=inside.p,
@@ -350,7 +398,7 @@ def apply_phase_change_to_rating(
     )
 
     if not outside_auto_possible:
-        outside_result = _build_capability_side_result(
+        outside_result = build_capability_side_result(
             side="outside", mode=outside.phase_change_mode, capability=outside_capability,
             possible=outside_possible, near_onset=outside_near_onset,
             dew_point=outside_dew_point, p=outside.p,
@@ -492,7 +540,7 @@ def apply_phase_change_to_rating(
         wet_rating_result = run_wet_rating(W_out_iter)
 
         W_mean_iter = 0.5 * (W_in + W_out_iter)
-        dew_point_mean = _dew_point_at_ratio(
+        dew_point_mean = dew_point_at_ratio(
             outside_capability, W_mean_iter, p=outside.p
         )
         if dew_point_mean is None:
@@ -789,7 +837,7 @@ def apply_phase_change_to_rating(
         m_dot_gas_in=outside.m_dot,
         m_dot_gas_out=m_dot_gas_out,
         dew_point_in=outside_dew_point,
-        dew_point_out=_dew_point_at_ratio(outside_capability, W_out, p=outside.p),
+        dew_point_out=dew_point_at_ratio(outside_capability, W_out, p=outside.p),
         wall_temperature_mean=T_wall_outside_repr,
         wall_temperature_min=rating_wall_min,
         wall_temperature_max=rating_wall_max,
@@ -967,7 +1015,7 @@ def _apply_inside_condensation_to_rating(
         )
         wet_rating_result = run_wet_rating(W_out)
         W_mean = 0.5 * (W_in + W_out)
-        dew_point_mean = _dew_point_at_ratio(
+        dew_point_mean = dew_point_at_ratio(
             inside_capability,
             W_mean,
             p=inside.p,
@@ -1175,7 +1223,7 @@ def _apply_inside_condensation_to_rating(
             make_warning(code=code, message=message, source=SOURCE, severity="info")
         )
 
-    outside_result = _build_capability_side_result(
+    outside_result = build_capability_side_result(
         side="outside",
         mode=outside.phase_change_mode,
         capability=outside_capability,
@@ -1217,7 +1265,7 @@ def _apply_inside_condensation_to_rating(
         m_dot_gas_in=inside.m_dot,
         m_dot_gas_out=m_dot_gas_out,
         dew_point_in=inside_dew_point,
-        dew_point_out=_dew_point_at_ratio(inside_capability, W_out, p=inside.p),
+        dew_point_out=dew_point_at_ratio(inside_capability, W_out, p=inside.p),
         wall_temperature_mean=wall_mean,
         wall_temperature_min=wall_min,
         wall_temperature_max=wall_max,
