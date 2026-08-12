@@ -9,6 +9,7 @@ from core.phase_change.steam_condensation import SteamTubeOrientation
 from core.phase_change.steam_heater import (
     SteamEvaporationNotSupportedError,
     SteamHeaterZoneKind,
+    _equivalent_inside_alpha_outer_basis,
     rate_steam_heater,
     solve_steam_heater,
 )
@@ -87,6 +88,126 @@ def test_zone_area_energy_and_ua_balances_are_exact():
     assert result.Q_total == pytest.approx(result.mass_flow_steam * (inlet.h - outlet.h))
     assert sum(zone.U * zone.area for zone in result.zones) == pytest.approx(result.UA_total)
     assert result.UA_total != pytest.approx(result.U_equivalent * _hx().bundle.total_outer_area)
+
+
+@pytest.mark.parametrize(
+    ("inlet", "outlet"),
+    [
+        (water_steam_props_iapws97(p=P, x=1.0), water_steam_props_iapws97(p=P, x=0.4)),
+        (water_steam_props_iapws97(T=520.0, p=P), water_steam_props_iapws97(p=P, x=0.5)),
+        (water_steam_props_iapws97(p=P, x=1.0), water_steam_props_iapws97(T=350.0, p=P)),
+        (water_steam_props_iapws97(T=520.0, p=P), water_steam_props_iapws97(T=350.0, p=P)),
+    ],
+)
+def test_equivalent_inside_alpha_reconstructs_outer_basis_resistance(inlet, outlet):
+    hx = _hx()
+    result = _rate(inlet, outlet, hx=hx)
+    tube = hx.bundle.tube
+    reconstructed_u = 1.0 / (
+        tube.D_o / (tube.D_i * result.inside_alpha_equivalent)
+        + tube.D_o * math.log(tube.D_o / tube.D_i) / (2.0 * tube.wall_k)
+        + 1.0 / result.outside_alpha
+    )
+    assert reconstructed_u == pytest.approx(result.U_equivalent, rel=2.0e-12)
+    assert result.UA_total == pytest.approx(
+        result.U_equivalent * result.A_total, rel=2.0e-12
+    )
+
+
+@pytest.mark.parametrize(
+    ("inlet", "outlet", "zone_kind"),
+    [
+        (
+            water_steam_props_iapws97(p=P, x=1.0),
+            water_steam_props_iapws97(p=P, x=0.4),
+            SteamHeaterZoneKind.CONDENSATION,
+        ),
+        (
+            water_steam_props_iapws97(T=520.0, p=P),
+            water_steam_props_iapws97(T=480.0, p=P),
+            SteamHeaterZoneKind.SUPERHEAT,
+        ),
+    ],
+)
+def test_single_zone_equivalent_and_area_weighted_alpha_equal_zone_alpha(
+    inlet, outlet, zone_kind
+):
+    result = _rate(inlet, outlet)
+    assert tuple(zone.kind for zone in result.zones) == (zone_kind,)
+    zone_alpha = result.zones[0].alpha_inside
+    assert result.inside_alpha_equivalent == pytest.approx(zone_alpha, rel=2.0e-12)
+    assert result.inside_alpha_area_weighted == pytest.approx(zone_alpha, rel=2.0e-12)
+    assert result.inside_alfa_mean == result.inside_alpha_equivalent
+
+
+def test_three_zone_alphas_remain_physical_and_equivalent_is_distinct():
+    result = _rate(
+        water_steam_props_iapws97(T=520.0, p=P),
+        water_steam_props_iapws97(T=350.0, p=P),
+    )
+    assert tuple(zone.kind for zone in result.zones) == (
+        SteamHeaterZoneKind.SUPERHEAT,
+        SteamHeaterZoneKind.CONDENSATION,
+        SteamHeaterZoneKind.SUBCOOLING,
+    )
+    assert result.zone_alpha_desuperheat == pytest.approx(205.2660302122064)
+    assert result.zone_alpha_condensation == pytest.approx(8826.095321215491)
+    assert result.zone_alpha_subcooling == pytest.approx(307.89897058408707)
+    assert math.isfinite(result.inside_alpha_equivalent)
+    assert math.isfinite(result.inside_alpha_area_weighted)
+    assert result.inside_alpha_equivalent > 0.0
+    assert result.inside_alpha_area_weighted > 0.0
+    assert result.inside_alpha_equivalent != pytest.approx(
+        result.inside_alpha_area_weighted
+    )
+
+
+@pytest.mark.parametrize(
+    ("inlet", "outlet", "expected_kinds"),
+    [
+        (
+            water_steam_props_iapws97(T=520.0, p=P),
+            water_steam_props_iapws97(p=P, x=0.5),
+            (SteamHeaterZoneKind.SUPERHEAT, SteamHeaterZoneKind.CONDENSATION),
+        ),
+        (
+            water_steam_props_iapws97(p=P, x=1.0),
+            water_steam_props_iapws97(T=350.0, p=P),
+            (SteamHeaterZoneKind.CONDENSATION, SteamHeaterZoneKind.SUBCOOLING),
+        ),
+    ],
+)
+def test_two_zone_equivalent_alpha_is_positive_and_not_area_weighted(
+    inlet, outlet, expected_kinds
+):
+    result = _rate(inlet, outlet)
+    assert tuple(zone.kind for zone in result.zones) == expected_kinds
+    assert math.isfinite(result.inside_alpha_equivalent)
+    assert math.isfinite(result.inside_alpha_area_weighted)
+    assert result.inside_alpha_equivalent > 0.0
+    assert result.inside_alpha_area_weighted > 0.0
+    assert result.inside_alpha_equivalent != pytest.approx(
+        result.inside_alpha_area_weighted
+    )
+
+
+def test_impossible_equivalent_alpha_resistance_raises_without_fallback():
+    with pytest.raises(ValueError, match="no positive finite inside thermal resistance"):
+        _equivalent_inside_alpha_outer_basis(
+            U_equivalent=1.0e6,
+            alpha_outside=250.0,
+            D_i=0.020,
+            D_o=0.024,
+            wall_k=16.0,
+        )
+    with pytest.raises(ValueError, match="U_equivalent must be positive and finite"):
+        _equivalent_inside_alpha_outer_basis(
+            U_equivalent=0.0,
+            alpha_outside=250.0,
+            D_i=0.020,
+            D_o=0.024,
+            wall_k=16.0,
+        )
 
 
 @pytest.mark.parametrize(

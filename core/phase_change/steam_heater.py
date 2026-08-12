@@ -95,7 +95,8 @@ class SteamHeaterSolution:
     zone_alpha_desuperheat: float | None
     zone_alpha_condensation: float | None
     zone_alpha_subcooling: float | None
-    inside_alfa_mean: float
+    inside_alpha_equivalent: float
+    inside_alpha_area_weighted: float
     outside_alpha: float
     outside_props_mean: FluidTransportProperties
     U_equivalent: float
@@ -124,6 +125,11 @@ class SteamHeaterSolution:
     @property
     def quality_out(self) -> float | None:
         return self.state_out.quality
+
+    @property
+    def inside_alfa_mean(self) -> float:
+        """Historical spelling for the resistance-consistent equivalent HTC."""
+        return self.inside_alpha_equivalent
 
     @property
     def zone_fraction_desuperheat(self) -> float:
@@ -293,6 +299,7 @@ def solve_steam_heater(
         final_trial = trial(0.5 * (q_low + q_high))
 
     return _build_solution(
+        hx=hx,
         mode="simulation",
         inlet_state=inlet_state,
         saturation=saturation,
@@ -355,6 +362,7 @@ def rate_steam_heater(
     if not math.isfinite(trial.required_area):
         raise ValueError("Specified steam Rating violates a positive zone temperature difference.")
     return _build_solution(
+        hx=hx,
         mode="rating",
         inlet_state=inlet_state,
         saturation=saturation,
@@ -579,16 +587,116 @@ def _overall_u_outer_basis(
     D_o: float,
     wall_k: float,
 ) -> float:
-    resistance_per_outer_area = (
-        D_o / (D_i * alpha_inside)
-        + D_o * math.log(D_o / D_i) / (2.0 * wall_k)
-        + 1.0 / alpha_outside
+    resistance_per_outer_area = sum(
+        _outer_basis_resistance_components(
+            alpha_inside=alpha_inside,
+            alpha_outside=alpha_outside,
+            D_i=D_i,
+            D_o=D_o,
+            wall_k=wall_k,
+        )
     )
     return 1.0 / resistance_per_outer_area
 
 
+def _outer_basis_resistance_components(
+    *,
+    alpha_inside: float,
+    alpha_outside: float,
+    D_i: float,
+    D_o: float,
+    wall_k: float,
+) -> tuple[float, float, float]:
+    """Return inside, wall and outside resistances per outer area."""
+    if not math.isfinite(alpha_inside) or alpha_inside <= 0.0:
+        raise ValueError("alpha_inside must be positive and finite.")
+    wall_resistance, outside_resistance = _fixed_outer_basis_resistances(
+        alpha_outside=alpha_outside,
+        D_i=D_i,
+        D_o=D_o,
+        wall_k=wall_k,
+    )
+    inside_resistance = D_o / (D_i * alpha_inside)
+    if not math.isfinite(inside_resistance) or inside_resistance <= 0.0:
+        raise ValueError("Inside thermal resistance must be positive and finite.")
+    return inside_resistance, wall_resistance, outside_resistance
+
+
+def _fixed_outer_basis_resistances(
+    *,
+    alpha_outside: float,
+    D_i: float,
+    D_o: float,
+    wall_k: float,
+) -> tuple[float, float]:
+    """Return the wall and outside terms shared by forward and inverse U."""
+    for name, value in (
+        ("alpha_outside", alpha_outside),
+        ("D_i", D_i),
+        ("D_o", D_o),
+        ("wall_k", wall_k),
+    ):
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be positive and finite.")
+    if D_o <= D_i:
+        raise ValueError("D_o must be greater than D_i for a tube wall.")
+
+    components = (
+        D_o * math.log(D_o / D_i) / (2.0 * wall_k),
+        1.0 / alpha_outside,
+    )
+    if any(not math.isfinite(value) or value <= 0.0 for value in components):
+        raise ValueError("Outer-basis thermal resistances must be positive and finite.")
+    return components
+
+
+def _equivalent_inside_alpha_outer_basis(
+    *,
+    U_equivalent: float,
+    alpha_outside: float,
+    D_i: float,
+    D_o: float,
+    wall_k: float,
+) -> float:
+    """Invert the outer-basis resistance network for the inside HTC."""
+    if not math.isfinite(U_equivalent) or U_equivalent <= 0.0:
+        raise ValueError("U_equivalent must be positive and finite.")
+
+    wall_resistance, outside_resistance = _fixed_outer_basis_resistances(
+        alpha_outside=alpha_outside,
+        D_i=D_i,
+        D_o=D_o,
+        wall_k=wall_k,
+    )
+    inside_resistance = 1.0 / U_equivalent - wall_resistance - outside_resistance
+    if not math.isfinite(inside_resistance) or inside_resistance <= 0.0:
+        raise ValueError(
+            "U_equivalent leaves no positive finite inside thermal resistance."
+        )
+
+    alpha_inside = (D_o / D_i) / inside_resistance
+    if not math.isfinite(alpha_inside) or alpha_inside <= 0.0:
+        raise ValueError("Equivalent inside HTC must be positive and finite.")
+
+    reconstructed = _overall_u_outer_basis(
+        alpha_inside=alpha_inside,
+        alpha_outside=alpha_outside,
+        D_i=D_i,
+        D_o=D_o,
+        wall_k=wall_k,
+    )
+    if not math.isclose(
+        reconstructed, U_equivalent, rel_tol=2.0e-12, abs_tol=1.0e-12
+    ):
+        raise ValueError(
+            "Equivalent inside HTC does not reconstruct U_equivalent."
+        )
+    return alpha_inside
+
+
 def _build_solution(
     *,
+    hx,
     mode: str,
     inlet_state: WaterSteamProperties,
     saturation: WaterSteamSaturationProperties,
@@ -618,7 +726,17 @@ def _build_solution(
     if not math.isclose(UA_total, trial.UA_total, rel_tol=2.0e-12, abs_tol=1.0e-9):
         raise ValueError("Steam-heater zone-UA aggregation is internally inconsistent.")
 
-    inside_alfa_mean = sum(zone.alpha_inside * zone.area for zone in trial.zones) / A_total
+    inside_alpha_area_weighted = sum(
+        zone.alpha_inside * zone.area for zone in trial.zones
+    ) / A_total
+    U_equivalent = UA_total / A_total
+    inside_alpha_equivalent = _equivalent_inside_alpha_outer_basis(
+        U_equivalent=U_equivalent,
+        alpha_outside=trial.outside_alpha,
+        D_i=float(hx.bundle.tube.D_i),
+        D_o=float(hx.bundle.tube.D_o),
+        wall_k=float(hx.bundle.tube.wall_k),
+    )
     warnings = list(trial.warnings)
     warnings.append(
         make_warning(
@@ -663,10 +781,11 @@ def _build_solution(
         zone_alpha_desuperheat=value(SteamHeaterZoneKind.SUPERHEAT, "alpha_inside", None),
         zone_alpha_condensation=value(SteamHeaterZoneKind.CONDENSATION, "alpha_inside", None),
         zone_alpha_subcooling=value(SteamHeaterZoneKind.SUBCOOLING, "alpha_inside", None),
-        inside_alfa_mean=inside_alfa_mean,
+        inside_alpha_equivalent=inside_alpha_equivalent,
+        inside_alpha_area_weighted=inside_alpha_area_weighted,
         outside_alpha=trial.outside_alpha,
         outside_props_mean=trial.outside_props_mean,
-        U_equivalent=UA_total / A_total,
+        U_equivalent=U_equivalent,
         zones=trial.zones,
         converged=converged,
         iterations=iterations,

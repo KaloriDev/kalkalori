@@ -260,15 +260,90 @@ def test_steam_rating_rejects_inconsistent_over_specified_duties():
         _hx().rate(inside, outside, Q=1.0)
 
 
-def test_zone_condensation_alpha_is_physical_and_top_level_alpha_is_reporting_only():
-    result = _hx().simulate(_inside_sim(T_in=520.0), _outside_sim())
+def test_public_steam_result_exposes_equivalent_and_area_weighted_alpha():
+    result = _hx().simulate(_inside_sim(T_in=520.0, m_dot=0.25), _outside_sim())
     steam = result.inside_phase_change
     assert steam.zone_alpha_condensation > 0.0
-    assert result.inside_alfa_mean > 0.0
+    assert steam.inside_alpha_equivalent > 0.0
+    assert steam.inside_alpha_area_weighted > 0.0
+    assert steam.inside_alpha_equivalent != pytest.approx(
+        steam.inside_alpha_area_weighted
+    )
+    assert result.inside_alfa_mean == steam.inside_alpha_equivalent
+    assert result.thermal_state.alfa_i == steam.inside_alpha_equivalent
+    assert result.final_result.tube_side_thermal.alfa == steam.inside_alpha_equivalent
+    assert result.thermal_state.diagnostics.inside_alfa_base == steam.inside_alpha_equivalent
+    assert result.thermal_state.diagnostics.inside_alfa_corrected == steam.inside_alpha_equivalent
     assert result.UA == pytest.approx(steam.UA_total)
-    assert steam.zone_alpha_condensation != pytest.approx(result.inside_alfa_mean)
+    assert steam.zone_alpha_condensation != pytest.approx(steam.inside_alpha_equivalent)
     assert not hasattr(steam, "solution")
     assert not hasattr(steam, "runtime_s")
+
+
+def test_public_steam_rating_uses_equivalent_alpha_without_internal_leakage():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
+        T_in=520.0, T_out=350.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+    )
+    result = _hx().rate(inside, outside)
+    steam = result.inside_phase_change
+    assert result.alfa_i == steam.inside_alpha_equivalent
+    assert result.thermal_state.alfa_i == steam.inside_alpha_equivalent
+    assert result.final_result.tube_side_thermal.alfa == steam.inside_alpha_equivalent
+    assert steam.inside_alpha_area_weighted != pytest.approx(result.alfa_i)
+    assert steam.zone_alpha_condensation == pytest.approx(8826.095321215491)
+    assert not hasattr(steam, "solution")
+    assert not hasattr(steam, "runtime_s")
+
+
+def test_multizone_wall_diagnostics_use_equivalent_resistance_and_remain_0d():
+    hx = _hx()
+    result = hx.simulate(_inside_sim(T_in=520.0, m_dot=0.25), _outside_sim())
+    steam = result.inside_phase_change
+    tube = hx.bundle.tube
+    envelope = result.wall_temperature_envelope
+
+    values = (
+        envelope.inside_min,
+        envelope.inside_max,
+        envelope.outside_min,
+        envelope.outside_max,
+        envelope.inside_mean,
+        envelope.outside_mean,
+        result.thermal_state.inside_wall_temperature,
+        result.thermal_state.outside_wall_temperature,
+    )
+    assert all(math.isfinite(value) for value in values)
+    assert result.thermal_state.alfa_i == steam.inside_alpha_equivalent
+    assert result.thermal_state.diagnostics.inside_Nu_base is None
+    assert result.thermal_state.diagnostics.inside_Nu_corrected is None
+
+    wall_resistance = tube.D_o * math.log(tube.D_o / tube.D_i) / (2.0 * tube.wall_k)
+    for probe in envelope.probes:
+        heat_flux = result.U_mean * (
+            probe.inside_bulk_temperature - probe.outside_bulk_temperature
+        )
+        assert probe.alfa_i == steam.inside_alpha_equivalent
+        assert probe.inside_nusselt is None
+        assert probe.inside_bulk_temperature - probe.inside_wall_temperature == pytest.approx(
+            heat_flux * tube.D_o / (tube.D_i * steam.inside_alpha_equivalent)
+        )
+        assert probe.inside_wall_temperature - probe.outside_wall_temperature == pytest.approx(
+            heat_flux * wall_resistance
+        )
+        assert probe.outside_wall_temperature - probe.outside_bulk_temperature == pytest.approx(
+            heat_flux / result.outside_alfa_mean
+        )
+
+    warning = next(
+        item for item in envelope.warnings
+        if item.code == "wall_temperature_envelope_0d_estimate"
+    )
+    assert "0D" in warning.message
+    assert "not local extrema" in warning.message
 
 
 def test_disabled_mode_rejects_required_saturation_crossing():

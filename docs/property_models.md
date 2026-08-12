@@ -932,18 +932,45 @@ SUPERHEAT -> CONDENSATION -> SUBCOOLING
 
 Each zone reports its own duty, outer-reference area, inside HTC, `U` and
 `UA`. `zone_alpha_condensation` is the physical Shah (2009) condensation
-coefficient. The top-level `alfa_i`/`inside_alfa_mean` remains only the
-existing area-weighted compatibility diagnostic; it is not fed back into
-the zone calculation. The authoritative exchanger conductance is
-`UA_total = sum(U_zone * A_zone)`. A general redesign of the top-level
-multi-zone alpha belongs to a later thermal-results cleanup and is not part
-of the v0.6.2 condensation physics.
+coefficient and remains the value used to validate the condensation
+correlation. `inside_alpha_area_weighted` is the arithmetic area-weighted
+mean of the zone HTCs. It is a descriptive statistic only and is not used to
+reconstruct `U`, `UA`, or wall temperatures.
+
+`inside_alpha_equivalent` is the resistance-consistent whole-exchanger HTC.
+It is obtained by inverting the same outer-area resistance network used for
+every zone:
+
+```text
+inside_alpha_equivalent = (D_o / D_i) / (
+    1 / U_equivalent
+    - D_o * ln(D_o / D_i) / (2 * wall_k)
+    - 1 / alpha_outside
+)
+```
+
+Here `U_equivalent = UA_total / A_total`, while the authoritative conductance
+remains `UA_total = sum(U_zone * A_zone)`. The historical top-level
+`alfa_i`/`inside_alfa_mean` fields now expose `inside_alpha_equivalent` for
+multi-zone steam so that they reconstruct `U_equivalent`. Their semantics are
+unchanged for sensible-only calculations, wet-gas condensation, and
+non-water fluids. The zone allocation, zone alphas, zone `U` values, and zone
+`UA` values do not depend on either top-level alpha diagnostic.
+
+Steam wall-temperature diagnostics use `inside_alpha_equivalent` in their
+inside resistance split. The wall-temperature envelope remains a four-point
+0D inlet/outlet estimate, not a local segmented solution. If an inside
+Nusselt diagnostic can be formed from representative transport properties,
+it is the dimensionless equivalent HTC for reporting; it must not be read as
+a local Shah value or as the actual Nusselt number of a particular zone.
 
 The transport-only Shah equations live in
 `core.heat_transfer.condensation_inside_shah2009`; the IAPWS saturation
 adapter and eight-point, area-consistent harmonic quality integration live
 in `core.phase_change.steam_condensation`. The equivalent zone coefficient
-does not yet integrate the full local `1/U` resistance.
+used inside the condensation zone does not integrate a local `1/U` profile;
+that existing zone-level limitation is distinct from the whole-exchanger
+`inside_alpha_equivalent` described above.
 
 Tube orientation is geometry, supplied as `BareTube(tube_orientation=...)`
 with a `TubeOrientation` value. It is required only when the accepted result

@@ -171,6 +171,12 @@ class ThermalIterationDiagnostics:
     nusselt_zukauskas``); ``outside_Nu_corrected == outside_Nu_base *
     outside_wall_property_correction``. There is no finite-length correction
     on the outside (crossflow) side in the current model.
+
+    The multi-zone pure-steam adapter uses the inside alfa fields for its
+    resistance-consistent equivalent HTC. If its inside Nu fields are not
+    ``None``, they are equivalent reporting diagnostics formed with the
+    representative conductivity, not a local Shah or single-zone Nusselt
+    number.
     """
 
     inside_Nu_base: float | None
@@ -188,7 +194,11 @@ class ThermalIterationDiagnostics:
 
 @dataclass(frozen=True)
 class IterativeThermalState:
-    """Converged (or last-iterate) mean-property / wall-temperature state."""
+    """Converged (or last-iterate) mean-property / wall-temperature state.
+
+    For multi-zone pure steam, ``alfa_i`` is the resistance-consistent
+    equivalent HTC used by the 0D wall-temperature approximation.
+    """
 
     inside_bulk_temperature: float    # [K]
     outside_bulk_temperature: float   # [K]
@@ -224,7 +234,11 @@ class IterativeThermalState:
 
 @dataclass(frozen=True)
 class WallTemperatureProbe:
-    """Independent 0D wall-temperature calculation at one bulk-state pair."""
+    """Independent 0D wall-temperature calculation at one bulk-state pair.
+
+    A multi-zone steam probe carries the whole-exchanger equivalent ``alfa_i``;
+    it is not a local coefficient for any one phase zone.
+    """
 
     inside_bulk_temperature: float
     outside_bulk_temperature: float

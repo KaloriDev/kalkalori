@@ -327,6 +327,8 @@ class HXSimulationResult:
     outside_Re_mean: float
     inside_Pr_mean: float
     outside_Pr_mean: float
+    # For multi-zone steam this is the resistance-consistent equivalent HTC;
+    # for all other models its established semantics are unchanged.
     inside_alfa_mean: float    # == thermal_state.alfa_i when thermal_state is not None
     outside_alfa_mean: float   # == thermal_state.alfa_o when thermal_state is not None
 

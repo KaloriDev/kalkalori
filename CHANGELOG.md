@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [0.6.2] — Unreleased
+## [0.6.2] — Steam condensation
 
 ### Added
 
@@ -18,6 +18,7 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ### Changed
 
+- Corrected equivalent steam-side HTC and wall diagnostics for multi-zone results.
 - Refined the in-tube steam-condensation model architecture.
 - Restored water/steam property compatibility and clarified pure-water phase-change provider support.
 - Simplified steam-side integration and final-state diagnostics.

@@ -355,7 +355,7 @@ def _simulation_from_solution(
         outside_Re_mean=outside_evaluation.reynolds,
         inside_Pr_mean=final_result.tube_side_thermal.Pr,
         outside_Pr_mean=outside_evaluation.prandtl,
-        inside_alfa_mean=solution.inside_alfa_mean,
+        inside_alfa_mean=solution.inside_alpha_equivalent,
         outside_alfa_mean=solution.outside_alpha,
         U_mean=solution.U_equivalent,
         UA=solution.UA_total,
@@ -401,7 +401,7 @@ def _rating_from_solution(
         UA_actual=UA_actual,
         U_mean=solution.U_equivalent,
         EMTD=solution.Q_total / solution.UA_total,
-        alfa_i=solution.inside_alfa_mean,
+        alfa_i=solution.inside_alpha_equivalent,
         alfa_o=solution.outside_alpha,
         Q_required=solution.Q_total,
         Q_achievable=Q_achievable,
@@ -506,7 +506,7 @@ def _steam_diagnostics(
             v=inside_velocity,
             Re=inside_reynolds,
             Pr=inside_prandtl,
-            alfa=solution.inside_alfa_mean,
+            alfa=solution.inside_alpha_equivalent,
         ),
         tube_side_hydraulic=tube_hydraulic,
         outside_side_thermal=HXOutSideThermalResults(
@@ -533,6 +533,12 @@ def _steam_wall_diagnostics(
     outside_evaluation: OutsideSideEvaluation,
     UA: float,
 ):
+    """Build a 0D endpoint wall envelope using the equivalent inside HTC.
+
+    A reported inside Nusselt number, when representative transport exists,
+    is only the dimensionless form of that equivalent HTC. It is not a local
+    Shah value or the Nusselt number of any individual steam zone.
+    """
     tube = hx.bundle.tube
     D_i = float(tube.D_i)
     D_o = float(tube.D_o)
@@ -541,10 +547,12 @@ def _steam_wall_diagnostics(
 
     def probe(T_i: float, T_o: float) -> WallTemperatureProbe:
         heat_flux = solution.U_equivalent * (T_i - T_o)
-        T_wall_i = T_i - heat_flux * D_o / (D_i * solution.inside_alfa_mean)
+        T_wall_i = T_i - heat_flux * D_o / (
+            D_i * solution.inside_alpha_equivalent
+        )
         T_wall_o = T_o + heat_flux / solution.outside_alpha
         inside_nusselt = (
-            solution.inside_alfa_mean * D_i / midpoint.transport.k
+            solution.inside_alpha_equivalent * D_i / midpoint.transport.k
             if midpoint.transport is not None
             else None
         )
@@ -553,7 +561,7 @@ def _steam_wall_diagnostics(
             outside_bulk_temperature=T_o,
             inside_wall_temperature=T_wall_i,
             outside_wall_temperature=T_wall_o,
-            alfa_i=solution.inside_alfa_mean,
+            alfa_i=solution.inside_alpha_equivalent,
             alfa_o=solution.outside_alpha,
             converged=True,
             iterations=0,
@@ -598,8 +606,8 @@ def _steam_wall_diagnostics(
         inside_length_correction=None if solution.Q_condensation > 1.0e-8 else 1.0,
         inside_wall_temperature_correction=None if solution.Q_condensation > 1.0e-8 else 1.0,
         inside_combined_correction=None if solution.Q_condensation > 1.0e-8 else 1.0,
-        inside_alfa_base=solution.inside_alfa_mean,
-        inside_alfa_corrected=solution.inside_alfa_mean,
+        inside_alfa_base=solution.inside_alpha_equivalent,
+        inside_alfa_corrected=solution.inside_alpha_equivalent,
         outside_Nu_base=outside_evaluation.nusselt_base,
         outside_Nu_corrected=outside_evaluation.nusselt_corrected,
         outside_wall_property_correction=outside_evaluation.wall_property_correction,
@@ -613,7 +621,7 @@ def _steam_wall_diagnostics(
         inside_wall_props=None,
         outside_bulk_props=outside_evaluation.properties_mean,
         outside_wall_props=None,
-        alfa_i=solution.inside_alfa_mean,
+        alfa_i=solution.inside_alpha_equivalent,
         alfa_o=solution.outside_alpha,
         U=solution.U_equivalent,
         UA=UA,
@@ -722,6 +730,8 @@ def _steam_result(
             else solution.warnings
         ),
         assumptions=solution.assumptions,
+        inside_alpha_equivalent=solution.inside_alpha_equivalent,
+        inside_alpha_area_weighted=solution.inside_alpha_area_weighted,
     )
 
 

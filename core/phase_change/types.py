@@ -232,7 +232,13 @@ class PhaseChangeResult:
 
 @dataclass(frozen=True)
 class WaterSteamPhaseChangeResult:
-    """Steam-specific side result without wet-gas composition placeholders."""
+    """Steam-specific side result without wet-gas composition placeholders.
+
+    Zone HTCs remain local to their thermal zones. For a multi-zone result,
+    ``inside_alpha_equivalent`` is the resistance-consistent whole-exchanger
+    HTC that reconstructs ``UA_total / A_total``; the distinct
+    ``inside_alpha_area_weighted`` value is descriptive reporting only.
+    """
 
     side: str
     mode: PhaseChangeMode
@@ -296,6 +302,11 @@ class WaterSteamPhaseChangeResult:
     W_in: None = None
     W_out: None = None
     near_onset: bool = False
+
+    # Additive v0.6.2 diagnostics are appended to preserve the positional
+    # meaning of every pre-existing constructor argument.
+    inside_alpha_equivalent: float | None = None
+    inside_alpha_area_weighted: float | None = None
 
     @property
     def Q_sensible(self) -> float:

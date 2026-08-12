@@ -122,6 +122,8 @@ class HXRatingResult:
     U_mean: float              # [W/(m2*K)] referenced to A_o (== thermal_state.U)
     EMTD: float                # [K] effective mean temperature difference, Q_required/UA_required
 
+    # Multi-zone steam reports the resistance-consistent equivalent HTC here;
+    # all other models retain their established corrected-HTC semantics.
     alfa_i: float              # [W/(m2*K)] wall/length-corrected (== thermal_state.alfa_i)
     alfa_o: float              # [W/(m2*K)] wall-corrected (== thermal_state.alfa_o)
 
