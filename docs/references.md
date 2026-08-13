@@ -212,6 +212,38 @@ part of this model.
 
 ---
 
+## Pure-Water Flow Boiling Inside Tubes (v0.6.3)
+
+- Shah, M. M. (1982).
+  "Chart Correlation for Saturated Boiling Heat Transfer: Equations and
+  Further Study", *ASHRAE Transactions*, 88(1), paper 2673, 165-196.
+  No DOI was assigned in the publication.
+
+The implementation uses equations 1-14: the Dittus-Boelter liquid-only
+coefficient, boiling number, convection number, liquid Froude number,
+orientation-dependent `N`, and the published nucleate, bubble-suppression,
+and convective selections. Heat flux is explicitly referenced to tube inside
+wetted area. The primary source reports verification against about 3000 data
+points for 12 fluids, reduced pressure through 0.89, tube diameters through
+41 mm, and both horizontal and vertical tubes.
+
+Gungor, K. E.; Winterton, R. H. S. (1986), "A General Correlation for Flow
+Boiling in Tubes and Annuli", *International Journal of Heat and Mass
+Transfer*, 29(3), 351-358, DOI `10.1016/0017-9310(86)90205-X`, was also
+considered. Its larger database is attractive, but Shah (1982) was selected
+because the complete primary equations and orientation rules could be
+verified directly and implemented without reconstructing constants from a
+secondary source.
+
+Shah (1982) is a saturated, pre-dryout, subcritical-heat-flux correlation. It
+does not calculate CHF, dryout quality, or post-dryout heat transfer. The
+published paper does not state one universal mass-flux or heat-flux interval
+for all fluids; the implementation therefore reports equation-level
+applicability diagnostics (including the underlying turbulent
+Dittus-Boelter Reynolds range) without inventing or clipping a global range.
+
+---
+
 ## Gas-Mixture Transport Approximations
 
 - Wilke, C. R.  

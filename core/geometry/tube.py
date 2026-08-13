@@ -33,11 +33,13 @@ class TubeOrientation(str, Enum):
     """
 
     HORIZONTAL = "horizontal"
+    VERTICAL_UPWARD = "vertical_upward"
     VERTICAL_DOWNWARD = "vertical_downward"
     DOWNWARD_INCLINED_15_PLUS = "downward_inclined_15_plus"
 
     # Descriptive aliases retained for callers using the alternate wording.
     VERTICAL_DOWNFLOW = "vertical_downward"
+    VERTICAL_UPFLOW = "vertical_upward"
     INCLINED_DOWNWARD = "downward_inclined_15_plus"
 
 
