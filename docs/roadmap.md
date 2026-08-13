@@ -54,8 +54,7 @@ Support phase-change phenomena within a lumped-parameter framework.
 
 **Notes:**
 This is a major functional extension, but **not** a new modelling paradigm.
-The patch list below is a plan, not a commitment: later patch numbering and
-scope may be adjusted based on validation results as each step lands.
+The line is closed at `v0.6.3`.
 
 #### v0.6.0 — Outside wet-gas water condensation — IMPLEMENTED
 
@@ -101,23 +100,51 @@ by a gas. Droplets, mist, wall films and other explicit dispersed-liquid
 inventories require a separate interphase-transfer and liquid-inventory
 model; they are not part of v0.6.3.
 
-#### v0.6.4 — Condensate management — PLANNED
+### Deferred and unassigned work
 
-- Condensate film retention and drainage.
-- Carryover, re-entrainment and re-evaporation.
+These topics remain on the roadmap but are not assigned to a release number
+or implementation order.
 
-#### v0.6.5 — Freezing / ice — PLANNED
+#### Condensate management
 
-- Freezing and solid water deposits.
+- film retention and drainage
+- carryover and droplet re-entrainment
+- re-evaporation
+- wet-surface and drainage diagnostics
 
-#### v0.6.6 — Multiple condensables / acid-dew providers — PLANNED
+These effects are strongly geometry-dependent (bundle layout, fins and drainage
+path) and should be reassessed after finned-tube geometry is implemented.
+The current 0D model continues to explicitly assume full condensate drainage
+where that assumption is documented.
 
-- Multiple condensable species.
-- Replaceable acid-dew-point and phase-equilibrium providers.
+#### Freezing / frost / ice
 
-#### v0.6.7 — Phase-change hydraulics — PLANNED
+- freezing and solid-water deposits remain deferred
+- implementation can be before or after the 1.x line
+- current explicit `unsupported` diagnostics remain the intended behavior
 
-- Condensate-film and applicable two-phase pressure-drop models.
+#### Acid dew point and multiple condensables
+
+- keep acid-dew and multiple-condensables scope visible in the roadmap
+- diagnostic acid-dew-point evaluation can be performed outside KalKalori
+  core (for example in a separate tool or orchestrator)
+- KalKalori may later accept an externally computed limiting temperature and
+  compare it against wall temperature
+- full acid condensation, liquid-phase chemistry and corrosion are outside
+  current planned core scope
+
+#### Phase-change hydraulics
+
+- two-phase pressure-drop modelling and further hydraulic-accuracy upgrades
+  remain future work
+- no release number or order is assigned; implementation can be before or
+  after `v1.0.0`
+- long-term ownership of dedicated hydraulic models belongs to KalFluxi
+- KalKalori should provide thermodynamic states needed by hydraulics, including
+  phase, vapor quality, mass flux, pressure and enthalpy
+- coupled thermal-hydraulic iteration should be managed by an orchestrator
+- absent two-phase pressure-drop support remains explicitly `unsupported`, not
+  replaced by an approximate single-phase result
 
 **Out of scope for the whole v0.6.x line:** corrosion and material
 selection remain outside the solver's scope.
@@ -178,22 +205,6 @@ This release marks the **maturity of the 0D modelling approach**.
 - documented assumptions and limitations
 - validated correlations
 - suitable for academic, engineering, and commercial use
-
----
-
-### v1.1.x — Tube side Hydraulic Accuracy
-
-**Goal:**  
-Provide reliable pressure drop predictions.
-
-**Focus areas:**
-- verification and refinement of:
-  - tube-side friction losses
-  - inlet / outlet losses
-  - return (pass) losses
-
-**Outcome:**  
-Δp values suitable for real design decisions.
 
 ---
 
