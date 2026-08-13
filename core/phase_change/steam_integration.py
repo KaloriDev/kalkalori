@@ -151,6 +151,67 @@ def water_evaporation_reaches_saturation(hx, inside, outside, *, euler_provider:
     return boundary.A_total < hx.bundle.total_outer_area
 
 
+def is_inside_water_evaporation_rating_case(
+    inside,
+    outside,
+    *,
+    Q: float | None,
+    effectiveness: float | None,
+) -> bool:
+    """Route a water Rating when any consistent heating target reaches x=0."""
+    state = getattr(inside, "water_steam_state", None)
+    if (
+        not is_pure_water_provider(inside.provider)
+        or state is None
+        or state.phase is WaterSteamPhase.SUPERCRITICAL_FLUID
+    ):
+        return False
+
+    heating_duties: list[float] = []
+    outlet_state = getattr(inside, "water_steam_outlet_state", None)
+    if outlet_state is not None and inside.m_dot is not None:
+        outlet_duty = inside.m_dot * (outlet_state.h - state.h)
+        if outlet_duty > 0.0:
+            heating_duties.append(outlet_duty)
+    outside_is_hot = outside.T_in is not None and outside.T_in > state.T
+    if outlet_state is not None and outside_is_hot and not heating_duties:
+        # Route a thermodynamically inconsistent cooling target to the water
+        # driver so it is rejected as an evaporation/heating request instead
+        # of being interpreted through a generic sensible cp closure.
+        return True
+    if Q is not None and Q > 0.0 and outside_is_hot:
+        heating_duties.append(Q)
+    if (
+        outside_is_hot
+        and outside.m_dot is not None
+        and outside.T_out is not None
+        and outside.T_out < outside.T_in
+    ):
+        outside_props = outside.provider.at(
+            T=0.5 * (outside.T_in + outside.T_out), p=outside.p
+        )
+        transport = getattr(outside_props, "transport", outside_props)
+        heating_duties.append(
+            outside.m_dot * transport.cp * (outside.T_in - outside.T_out)
+        )
+    if effectiveness is not None and outside_is_hot:
+        return True
+    if not heating_duties:
+        return bool(
+            outside_is_hot
+            and state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID
+        )
+    if state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
+        return True
+    if inside.m_dot is None:
+        return True
+    saturated_liquid = water_steam_props_iapws97(p=state.p, x=0.0)
+    return any(
+        state.h + duty / inside.m_dot >= saturated_liquid.h - 1.0e-3
+        for duty in heating_duties
+    )
+
+
 def reject_unsupported_outside_pure_steam(outside) -> None:
     if not is_pure_water_provider(outside.provider):
         return
@@ -180,6 +241,31 @@ def reject_outside_pure_water_evaporation_crossing(outside, *, T_out: float) -> 
         raise PureSteamOutsideNotSupportedError(
             "The outside pure-water temperature program reaches saturation; "
             "pure-water evaporation is supported only inside tubes."
+        )
+
+
+def reject_outside_pure_water_evaporation_rating(outside, inside, *, Q) -> None:
+    """Reject Rating targets that evaporate pure water on the outside side."""
+    state = getattr(outside, "water_steam_state", None)
+    if state is None or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
+        return
+    target = getattr(outside, "water_steam_outlet_state", None)
+    target_h = None if target is None else target.h
+    if (
+        target_h is None
+        and Q is not None
+        and outside.m_dot is not None
+        and inside.T_in is not None
+        and inside.T_in > outside.T_in
+    ):
+        target_h = state.h + Q / outside.m_dot
+    if target_h is None:
+        return
+    saturated_liquid = water_steam_props_iapws97(p=state.p, x=0.0)
+    if target_h >= saturated_liquid.h - 1.0e-3:
+        raise PureSteamOutsideNotSupportedError(
+            "The Rating target reaches pure-water saturation on the outside "
+            "side; pure-water evaporation is supported only inside tubes."
         )
 
 
@@ -498,6 +584,123 @@ def apply_water_steam_rating(
         closed_balance=closed_balance,
         simulation=simulation,
         Q_achievable=Q_achievable,
+        active=steam_result.active,
+        inside_is_hot=True,
+        two_phase_warning=_two_phase_dp_warning(),
+    )
+
+
+def apply_water_evaporation_rating(
+    hx,
+    inside,
+    outside,
+    *,
+    Q: float | None,
+    effectiveness: float | None,
+    flow_arrangement: str | None,
+    K_inlet: float,
+    K_outlet: float,
+    K_turn: float,
+    euler_provider: str,
+    include_simulation: bool,
+    over_specified_tolerance: float,
+    max_iterations: int,
+    wall_temperature_tolerance_K: float,
+    relative_alfa_tolerance: float,
+    relaxation_factor: float,
+    settings: PhaseChangeSettings,
+):
+    """Run public Rating for an IAPWS tube stream heated from outside."""
+    if not math.isfinite(over_specified_tolerance) or over_specified_tolerance < 0.0:
+        raise ValueError("over_specified_tolerance must be non-negative and finite.")
+    if effectiveness is not None:
+        raise ValueError(
+            "Water-evaporation Rating requires an explicit duty, outlet state, "
+            "or opposing temperature program; an effectiveness-only target "
+            "is not supported for a phase-changing stream."
+        )
+    if inside.m_dot is None or outside.m_dot is None:
+        raise ValueError("Water-evaporation Rating requires mass flow on both sides.")
+    Q_required = _resolve_water_evaporation_rating_duty(
+        inside, outside, Q, tolerance=over_specified_tolerance
+    )
+    solution = rate_water_evaporator(
+        hx,
+        inlet_state=inside.water_steam_state,
+        mass_flow_water=inside.m_dot,
+        outside_provider=outside.provider,
+        mass_flow_outside=outside.m_dot,
+        T_in_outside=outside.T_in,
+        p_outside=outside.p,
+        orientation=hx.bundle.tube.tube_orientation,
+        Q_total=Q_required,
+        euler_provider=euler_provider,
+    )
+    water_result = _water_evaporation_result(
+        solution,
+        mode=inside.phase_change_mode,
+        possible=solution.Q_evaporation > 0.0,
+    )
+    if inside.phase_change_mode is PhaseChangeMode.DISABLED and water_result.active:
+        raise PhaseChangeDisabledButRequiredError(
+            "The specified Rating duty crosses the water saturation dome while "
+            "phase_change_mode=DISABLED."
+        )
+
+    outside_capability = detect_phase_change_capability(outside.provider)
+    if (
+        outside_capability.provider_kind == "gas_mixture"
+        and water_result.active
+        and outside.phase_change_mode is PhaseChangeMode.AUTO
+    ):
+        raise MultiplePhaseChangeSidesError(
+            "Rating cannot combine inside pure-water evaporation with an "
+            "AUTO wet-gas phase-changing outside side. Disable one side explicitly."
+        )
+
+    closed_balance = _closed_balance_for_water_evaporation_rating(
+        inside=inside, outside=outside, solution=solution
+    )
+    outside_evaluation = solution.outside_evaluation
+    simulation = None
+    Q_achievable = None
+    if include_simulation:
+        simulation_inside = _simulation_side_from_rating(inside)
+        simulation_outside = HXSideInput(
+            provider=outside.provider,
+            m_dot=outside.m_dot,
+            T_in=outside.T_in,
+            p=outside.p,
+            phase_change_mode=outside.phase_change_mode,
+        )
+        simulation = hx.simulate(
+            simulation_inside,
+            simulation_outside,
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet,
+            K_outlet=K_outlet,
+            K_turn=K_turn,
+            euler_provider=euler_provider,
+        )
+        Q_achievable = simulation.q
+
+    outside_result = capability_only_result(
+        "outside", outside.phase_change_mode, outside_capability
+    )
+    return _rating_from_solution(
+        hx,
+        inside,
+        outside,
+        solution,
+        outside_evaluation=outside_evaluation,
+        steam_result=water_result,
+        outside_result=outside_result,
+        closed_balance=closed_balance,
+        simulation=simulation,
+        Q_achievable=Q_achievable,
+        active=water_result.active,
+        inside_is_hot=False,
+        two_phase_warning=_water_evaporation_two_phase_dp_warning(),
     )
 
 
@@ -566,7 +769,8 @@ def _simulation_from_solution(
 
 def _rating_from_solution(
     hx, inside, outside, solution, *, outside_evaluation, steam_result, outside_result,
-    closed_balance, simulation, Q_achievable,
+    closed_balance, simulation, Q_achievable, active, inside_is_hot,
+    two_phase_warning,
 ):
     A_actual = hx.bundle.total_outer_area
     A_required = solution.A_total
@@ -579,9 +783,9 @@ def _rating_from_solution(
         solution,
         outside_evaluation=outside_evaluation,
         UA=UA_actual,
-        active=steam_result.active,
-        inside_is_hot=True,
-        two_phase_warning=_two_phase_dp_warning(),
+        active=active,
+        inside_is_hot=inside_is_hot,
+        two_phase_warning=two_phase_warning,
     )
     return HXRatingResult(
         overdesign_factor=A_actual / A_required - 1.0,
@@ -1081,6 +1285,90 @@ def _closed_balance_for_steam_rating(*, inside, outside, solution):
         effectiveness=solution.Q_total / Q_max,
         warnings=None,
     )
+
+
+def _closed_balance_for_water_evaporation_rating(*, inside, outside, solution):
+    delta_T_water = solution.state_out.T - solution.state_in.T
+    C_water = (
+        solution.Q_total / delta_T_water
+        if delta_T_water > 1.0e-9
+        else None
+    )
+    cp_water = None if C_water is None else C_water / inside.m_dot
+    outside_transport = solution.outside_props_mean
+    C_outside = outside.m_dot * outside_transport.cp
+    inside_closed = ClosedBalanceSide(
+        provider=inside.provider,
+        p=inside.p,
+        m_dot=inside.m_dot,
+        T_in=inside.T_in,
+        T_out=solution.state_out.T,
+        cp_mean=cp_water,
+        C=C_water,
+    )
+    outside_closed = ClosedBalanceSide(
+        provider=outside.provider,
+        p=outside.p,
+        m_dot=outside.m_dot,
+        T_in=outside.T_in,
+        T_out=solution.T_out_outside,
+        cp_mean=outside_transport.cp,
+        C=C_outside,
+    )
+    C_min = C_outside if C_water is None else min(C_water, C_outside)
+    Q_max = C_min * (outside.T_in - inside.T_in)
+    return ClosedBalance(
+        inside=inside_closed,
+        outside=outside_closed,
+        hot_is_inside=False,
+        Q=solution.Q_total,
+        Q_max=Q_max,
+        effectiveness=solution.Q_total / Q_max,
+        warnings=None,
+    )
+
+
+def _resolve_water_evaporation_rating_duty(inside, outside, Q, *, tolerance):
+    candidates = []
+    if Q is not None:
+        if not math.isfinite(Q) or Q <= 0.0:
+            raise ValueError("Water-evaporation Rating Q must be positive and finite.")
+        candidates.append(("Q", Q))
+    outlet_state = inside.water_steam_outlet_state
+    if outlet_state is not None:
+        candidates.append((
+            "inside outlet state",
+            inside.m_dot * (outlet_state.h - inside.water_steam_state.h),
+        ))
+    if outside.T_out is not None:
+        props = outside.provider.at(
+            T=0.5 * (outside.T_in + outside.T_out), p=outside.p
+        )
+        transport = getattr(props, "transport", props)
+        candidates.append((
+            "outside temperature program",
+            outside.m_dot * transport.cp * (outside.T_in - outside.T_out),
+        ))
+    if not candidates:
+        raise ValueError(
+            "Water-evaporation Rating requires explicit Q, a water/steam "
+            "outlet state, or a fully specified opposing-side temperature program."
+        )
+    for label, value in candidates:
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                f"Water-evaporation Rating duty from {label} must increase "
+                "tube-side water enthalpy and be positive and finite."
+            )
+    reference_label, reference = candidates[0]
+    for label, value in candidates[1:]:
+        scale = max(abs(reference), abs(value), 1.0)
+        if abs(reference - value) > tolerance * scale:
+            raise ValueError(
+                "Over-specified Water-evaporation Rating duties are inconsistent: "
+                f"{reference_label}={reference:.9g} W versus {label}={value:.9g} W."
+            )
+    return reference
 
 
 def _resolve_rating_duty(inside, outside, Q, *, tolerance):

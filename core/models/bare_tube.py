@@ -1287,8 +1287,11 @@ class BareTubeHeatExchanger:
             relaxation_factor=phase_change_relaxation_factor,
         )
         from core.phase_change.steam_integration import (
+            apply_water_evaporation_rating,
             apply_water_steam_rating,
+            is_inside_water_evaporation_rating_case,
             is_inside_water_steam_case,
+            reject_outside_pure_water_evaporation_rating,
             reject_unsupported_outside_pure_steam,
             translate_saturation_crossing_error,
         )
@@ -1301,6 +1304,29 @@ class BareTubeHeatExchanger:
             outside.provider, T_in=outside.T_in, p=outside.p, side="outside"
         )
         reject_unsupported_outside_pure_steam(outside)
+        reject_outside_pure_water_evaporation_rating(
+            outside, inside, Q=Q
+        )
+        if is_inside_water_evaporation_rating_case(
+            inside,
+            outside,
+            Q=Q,
+            effectiveness=effectiveness,
+        ):
+            return apply_water_evaporation_rating(
+                self, inside, outside,
+                Q=Q, effectiveness=effectiveness,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+                euler_provider=euler_provider,
+                include_simulation=include_simulation,
+                over_specified_tolerance=over_specified_tolerance,
+                max_iterations=max_iterations,
+                wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                relaxation_factor=relaxation_factor,
+                settings=settings,
+            )
         if is_inside_water_steam_case(inside):
             return apply_water_steam_rating(
                 self, inside, outside,
