@@ -127,6 +127,34 @@ class FinnedTubeUnsupportedLayoutError(ValueError):
     tube-bank layout it does not cover (never silently extrapolated)."""
 
 
+_BARE_TUBE_DEFAULT_EULER_PROVIDER = "zukauskas"
+DEFAULT_FINNED_EULER_PROVIDER = "robinson_briggs"
+
+
+def resolve_finned_euler_provider(euler_provider):
+    """Auto-select the finned-tube pressure-drop provider when the caller
+    left ``euler_provider`` at the shared bare-tube default (the string
+    ``"zukauskas"``); pass any other string or a provider *object*
+    through unchanged.
+
+    ``BareTubeHeatExchanger.solve``/``.simulate``/``.rate`` and
+    ``core.heat_transfer.thermal_iteration`` all share one
+    ``euler_provider`` parameter across both geometry families (see
+    ``core.geometry.TubeSurfaceType``). Automatic provider selection by
+    geometry type (section 8 of the design brief) means a caller who
+    never thought about ``euler_provider`` at all -- i.e. is still
+    holding that shared default -- gets the finned-appropriate provider
+    for a finned tube. A caller who *explicitly* requests a bare-tube
+    provider (by name or by passing a provider instance) still gets the
+    existing controlled ``ValueError`` from that provider's own
+    ``is_finned`` gate (see core.pressure_drop.outside_pressure_drop) --
+    it is never silently substituted.
+    """
+    if isinstance(euler_provider, str) and euler_provider.strip().lower() == _BARE_TUBE_DEFAULT_EULER_PROVIDER:
+        return DEFAULT_FINNED_EULER_PROVIDER
+    return euler_provider
+
+
 def nusselt_briggs_young(
     Re: float,
     Pr: float,
@@ -252,6 +280,7 @@ class FinnedOutsideFlowResult:
     V_max: float
     Re: float
     Pr: float
+    Nu: float
     alfa_o_physical: float
     dp_o: float
     dp_available: bool
@@ -373,6 +402,7 @@ def finned_outside_flow_from_mass_flow(
         V_max=V_max,
         Re=Re,
         Pr=Pr,
+        Nu=Nu,
         alfa_o_physical=alfa_o_physical,
         dp_o=dp_o,
         dp_available=dp_available,

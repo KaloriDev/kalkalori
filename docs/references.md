@@ -312,6 +312,107 @@ Used for:
 
 ---
 
+## Circular Finned Tubes in Crossflow (v0.7.x)
+
+- Briggs, D.E.; Young, E.H. (1963).
+  "Convection Heat Transfer and Pressure Drop of Air Flowing across
+  Triangular Pitch Banks of Finned Tubes", *Chemical Engineering
+  Progress Symposium Series*, Vol. 59, No. 41, pp. 1-10.
+  Used for the dry outside heat-transfer coefficient
+  (`core.heat_transfer.outside_flow_finned.nusselt_briggs_young`):
+  `Nu = 0.134*Re^0.681*Pr^(1/3)*(s/l)^0.2*(s/b)^0.1134`, with `Re`
+  based on the fin-blockage-aware maximum-gap velocity and the tube
+  root diameter. The exact coefficient/exponent set and reference-
+  diameter convention were independently corroborated (not
+  reconstructed from a single fragmentary snippet) against Camaraza-
+  Medina et al. (2018), Eq. 15 below, and against the equation as
+  documented (not copied as code) in the MIT-licensed open-source `ht`
+  library (Caleb Bell), `ht.air_cooler.h_Briggs_Young`.
+
+- Robinson, K.K.; Briggs, D.E. (1966).
+  "Pressure Drop of Air Flowing Across Triangular Pitch Banks of
+  Finned Tubes", *Chemical Engineering Progress Symposium Series*,
+  Vol. 62, No. 64, pp. 177-184.
+  Reserved as the dry outside pressure-drop source
+  (`core.pressure_drop.outside_pressure_drop.RobinsonBriggsEulerProvider`).
+  The provider's geometry gate (finned, staggered/triangular-pitch
+  only) is implemented, but the exact closed-form Euler/friction-factor
+  equation is a **documented blocker, not implemented**: it could not
+  be independently confirmed from accessible sources in this pass. See
+  "Unresolved limitations" in `docs/finned_tube_model.md`.
+
+- Gardner, K.A. (1945).
+  "Efficiency of Extended Surfaces", *Transactions of the ASME*,
+  Vol. 67, pp. 621-631.
+  Origin of the annular-fin Bessel-function efficiency solution used
+  (with the standard corrected-radius approximation for a convective
+  tip) by `core.heat_transfer.fin_efficiency.fin_efficiency_constant_thickness`.
+
+- Kern, D.Q.; Kraus, A.D. (1972). *Extended Surface Heat Transfer*,
+  McGraw-Hill.
+- Kraus, A.D.; Aziz, A.; Welty, J. (2001). *Extended Surface Heat
+  Transfer*, 1st edition, Wiley-Interscience.
+  Standard modern restatements of the Gardner (1945) annular-fin
+  solution used to cross-check the exact closed-form coefficients.
+
+- Abramowitz, M.; Stegun, I.A. (1964). *Handbook of Mathematical
+  Functions*, National Bureau of Standards, Applied Mathematics Series
+  55, sections 9.8.1-9.8.8. (Public domain, U.S. government
+  publication.) Polynomial/rational approximations for the modified
+  Bessel functions I0/I1/K0/K1
+  (`core.heat_transfer.modified_bessel`), used instead of adding scipy
+  as a production dependency for this one purpose. Verified in the
+  test suite against known reference values and the exact Wronskian
+  identity `I0(x)K1(x) + I1(x)K0(x) = 1/x`.
+
+- Camaraza-Medina, Y.; Rubio-Gonzales, A.M.; Cruz-Fonticiella, O.M.;
+  Garcia-Morales, O.F.; Vizcon-Toledo, R.; Quiza-Sardinas, R. (2018).
+  "Simplified analysis of heat transfer through a finned tube bundle
+  in air cooled condenser -- second assessment", *Mathematical
+  Modelling of Engineering Problems*, 5(4), 365-372.
+  DOI: `10.18280/mmep.050413`.
+  Independent secondary restatement used to corroborate the Briggs &
+  Young (1963) Nusselt correlation coefficients (its Eq. 15) and the
+  root-diameter Reynolds-number convention.
+
+- Genic, S.B.; Jacimovic, B.M.; Latinovic, B.R. (2006).
+  "Research on Air Pressure Drop in Helically-Finned Tube Heat
+  Exchangers", *Applied Thermal Engineering*, 26, 478-485.
+  DOI: `10.1016/j.applthermaleng.2005.06.020`.
+  Reviewed as a possible comparative/future model; not implemented.
+  Its friction-factor definition is explicitly **not** mixed with
+  Robinson-Briggs (1966) or used as a substitute for it.
+
+- Nir, A. (1991).
+  "Heat Transfer and Friction Factor Correlations for Crossflow over
+  Staggered Finned Tube Banks", *Heat Transfer Engineering*, 12(1),
+  43-58. DOI: `10.1080/01457639108939746`.
+  Reviewed as an independent comparison point; not implemented, and
+  never blended with Briggs-Young/Robinson-Briggs.
+
+- ESDU 86022 is noted only as an external validation reference in
+  `docs/finned_tube_model.md`. No ESDU tables, code, or data were
+  copied into this GPL core (see `POLICY_CODE_ACCEPTANCE.md`); the
+  existing `EsduEulerProvider` (`core.pressure_drop.outside_pressure_drop`)
+  remains an unimplemented reserved stub, unrelated to this feature's
+  own `RobinsonBriggsEulerProvider` stub.
+
+Used for:
+- circular (annular) finned-tube geometry (`core.geometry.finned_tube`,
+  `core.geometry.finned_flow_geometry`),
+- annular-fin efficiency (`core.heat_transfer.fin_efficiency`),
+- the finned-tube resistance network
+  (`core.heat_transfer.finned_tube_resistance`),
+- the dry outside Nusselt correlation
+  (`core.heat_transfer.outside_flow_finned`).
+
+Explicitly **not** used for: segmented/serrated fins, wavy fins,
+continuous plate fins spanning multiple tubes, elliptical/flattened
+tubes, wet/condensing finned surfaces, frost, or condensate retention
+-- all out of scope for this feature (see `docs/finned_tube_model.md`).
+
+---
+
 ## Notes on Applicability
 
 The references listed here are not a substitute for validation.

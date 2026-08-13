@@ -149,6 +149,12 @@ from core.heat_transfer.thermal_iteration import (
     solve_iterative_thermal_state,
 )
 
+from core.geometry.finned_tube import CircularFinnedTube
+from core.heat_transfer.outside_flow_finned import (
+    finned_outside_flow_from_mass_flow,
+    resolve_finned_euler_provider,
+)
+
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
 from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
 from core.pressure_drop.flow_path import (
@@ -773,28 +779,66 @@ def run_simulation(
             result.tube_side_hydraulic,
             tube_bundle=bundle_hydraulic,
         )
-        outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
-            m_dot=outside.m_dot,
-            face_area=hx.bundle.frontal_flow_area,
-            tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
-            tube_pitch_transverse=hx.bundle.pitch_transverse,
-            tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-            layout=hx.bundle.layout,
-            n_rows=hx.bundle.n_rows,
-            n_tubes_per_row=hx.bundle.n_tubes_per_row,
-            provider=outside.provider,
-            temperature_in=outside.T_in,
-            temperature_out=T_out_outside_calc,
-            pressure=outside.p,
-            euler_provider=euler_provider,
-        )
-        outside_hydraulic = replace(
-            result.outside_side_hydraulic,
-            dp_total=outside_bank_hydraulic.dp_total,
-            Re=outside_bank_hydraulic.midpoint.reynolds,
-            v=outside_bank_hydraulic.midpoint.face_velocity,
-            tube_bank=outside_bank_hydraulic,
-        )
+        if isinstance(hx.bundle.tube, CircularFinnedTube):
+            # No 3-state (inlet/midpoint/outlet) hydraulic snapshot is
+            # built for finned tubes in this experimental pass (see
+            # docs/finned_tube_model.md); refresh Re/v/dp with a
+            # single-state Briggs-Young/Robinson-Briggs evaluation at the
+            # converged outlet temperature instead of silently reusing
+            # the bare-tube Zukauskas-family hydraulics (which ignores
+            # fin blockage in V_max and is not fitted for finned
+            # geometry). tube_bank stays None, matching hx.solve()'s
+            # finned branch.
+            T_mean_outside_refresh = mean_temperature(outside.T_in, T_out_outside_calc)
+            props_out_refresh = to_outside_fluid_props(
+                outside.provider.at(T=T_mean_outside_refresh, p=outside.p)
+            )
+            finned_refresh = finned_outside_flow_from_mass_flow(
+                m_dot=outside.m_dot,
+                frontal_area=hx.bundle.frontal_flow_area,
+                tube=hx.bundle.tube,
+                tube_pitch_transverse=hx.bundle.pitch_transverse,
+                tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
+                layout=hx.bundle.layout,
+                n_rows=hx.bundle.n_rows,
+                n_tubes_per_row=hx.bundle.n_tubes_per_row,
+                props=props_out_refresh,
+                euler_provider=resolve_finned_euler_provider(euler_provider),
+                calculate_pressure_drop=True,
+            )
+            outside_bank_hydraulic = None
+            outside_hydraulic = replace(
+                result.outside_side_hydraulic,
+                dp_total=finned_refresh.dp_o,
+                Re=finned_refresh.Re,
+                v=finned_refresh.v,
+                tube_bank=None,
+            )
+            finned_refresh_warnings: tuple = finned_refresh.warnings
+        else:
+            outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+                m_dot=outside.m_dot,
+                face_area=hx.bundle.frontal_flow_area,
+                tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
+                tube_pitch_transverse=hx.bundle.pitch_transverse,
+                tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
+                layout=hx.bundle.layout,
+                n_rows=hx.bundle.n_rows,
+                n_tubes_per_row=hx.bundle.n_tubes_per_row,
+                provider=outside.provider,
+                temperature_in=outside.T_in,
+                temperature_out=T_out_outside_calc,
+                pressure=outside.p,
+                euler_provider=euler_provider,
+            )
+            outside_hydraulic = replace(
+                result.outside_side_hydraulic,
+                dp_total=outside_bank_hydraulic.dp_total,
+                Re=outside_bank_hydraulic.midpoint.reynolds,
+                v=outside_bank_hydraulic.midpoint.face_velocity,
+                tube_bank=outside_bank_hydraulic,
+            )
+            finned_refresh_warnings = ()
         # Refresh the pressure-drop flow-path aggregation to match the
         # refreshed hydraulic snapshots. The path result decomposes each
         # legacy signed core pressure difference into irreversible loss and
@@ -820,10 +864,15 @@ def run_simulation(
             if warning.source not in {
                 "tube_bundle_hydraulics",
                 "outside_bank_hydraulics",
+                "outside_ht_finned",
+                "outside_dp_finned",
             }
         ]
         result_warnings.extend(bundle_hydraulic.warnings)
-        result_warnings.extend(outside_bank_hydraulic.warnings)
+        if outside_bank_hydraulic is not None:
+            result_warnings.extend(outside_bank_hydraulic.warnings)
+        else:
+            result_warnings.extend(finned_refresh_warnings)
         result = replace(
             result,
             tube_side_hydraulic=tube_hydraulic,

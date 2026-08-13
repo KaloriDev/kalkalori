@@ -144,3 +144,26 @@ def has_critical_warnings(warnings: list[ModelWarning] | tuple[ModelWarning, ...
     Return True if any warning has severity == 'critical'.
     """
     return any(w.severity == "critical" for w in warnings)
+
+
+def deduplicate_warnings(
+    warnings: list[ModelWarning] | tuple[ModelWarning, ...],
+) -> tuple[ModelWarning, ...]:
+    """Collapse repeated identical (source, code) warnings, preserving
+    first-occurrence order.
+
+    Several orchestration layers (e.g. an outer wall-temperature
+    iteration, or repeated 0D endpoint probes) re-evaluate the same
+    local applicability diagnostics multiple times; without
+    deduplication an unresolved condition (e.g. an unspecified
+    finned-tube contact resistance) would appear once per re-evaluation
+    in the final reported result.
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[ModelWarning] = []
+    for warning in warnings:
+        identity = (warning.source, warning.code)
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(warning)
+    return tuple(unique)

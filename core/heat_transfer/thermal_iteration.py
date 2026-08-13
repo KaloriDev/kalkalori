@@ -138,7 +138,7 @@ from core.heat_transfer.outside_flow import (
 from core.heat_transfer.ntu import effectiveness_ntu, heat_duty_from_effectiveness
 from core.heat_transfer.streams import SensibleHeatStream
 
-from core.common.warnings import ModelWarning, make_warning
+from core.common.warnings import ModelWarning, deduplicate_warnings, make_warning
 
 if TYPE_CHECKING:
     from core.models.bare_tube import BareTubeHeatExchanger
@@ -309,6 +309,23 @@ def _evaluate_local_wall_state(
     euler_provider: str,
 ) -> _LocalWallEvaluation:
     """Evaluate correlations and the resistance split at one fixed bulk pair."""
+    from core.geometry.finned_tube import CircularFinnedTube
+
+    if isinstance(hx.bundle.tube, CircularFinnedTube):
+        return _evaluate_local_wall_state_finned(
+            hx,
+            m_dot_inside=m_dot_inside,
+            m_dot_outside=m_dot_outside,
+            inside_provider=inside_provider,
+            outside_provider=outside_provider,
+            inside_bulk_temperature=inside_bulk_temperature,
+            outside_bulk_temperature=outside_bulk_temperature,
+            p_inside=p_inside,
+            p_outside=p_outside,
+            inside_wall_temperature=inside_wall_temperature,
+            euler_provider=euler_provider,
+        )
+
     from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 
     bundle = hx.bundle
@@ -393,6 +410,113 @@ def _evaluate_local_wall_state(
         internal_diagnostics=internal,
         outside_nusselt_base=Nu_o_base,
         outside_wall_property_correction=Nu_o / Nu_o_base if Nu_o_base != 0.0 else 1.0,
+        warnings=tuple(warnings),
+    )
+
+
+def _evaluate_local_wall_state_finned(
+    hx: "BareTubeHeatExchanger",
+    *,
+    m_dot_inside: float,
+    m_dot_outside: float,
+    inside_provider: PropertyProvider,
+    outside_provider: PropertyProvider,
+    inside_bulk_temperature: float,
+    outside_bulk_temperature: float,
+    p_inside: float,
+    p_outside: float,
+    inside_wall_temperature: float | None,
+    euler_provider: str,
+) -> _LocalWallEvaluation:
+    """Circular-finned-tube counterpart of ``_evaluate_local_wall_state``.
+
+    Tube-side (internal) convection is identical to the bare-tube path
+    (the core tube's internal geometry/hydraulics are unchanged by fins).
+    Outside convection uses Briggs & Young (1963)
+    (``core.heat_transfer.outside_flow_finned``); the physical HTC is
+    then combined with fin efficiency and the root/contact conduction
+    path via ``core.heat_transfer.finned_tube_resistance``, and reported
+    back as a single equivalent ``alfa_o`` on the gross outside-area
+    basis so the surrounding resistance/UA/wall-temperature formulas
+    below (identical to the bare-tube path) are correct without any
+    further finned-specific change. There is no documented outside
+    wall-Prandtl correction for Briggs & Young (1963), so (unlike the
+    Zukauskas path) no outside wall-property correction is applied here.
+    """
+    from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
+    from core.heat_transfer.outside_flow_finned import (
+        finned_outside_flow_from_mass_flow,
+        resolve_finned_euler_provider,
+    )
+    from core.heat_transfer.finned_tube_resistance import build_finned_tube_resistance_network
+
+    bundle = hx.bundle
+    tube = bundle.tube
+    A_i = bundle.total_inner_area
+    A_o = bundle.total_outer_area
+
+    bulk_i = inside_provider.at(T=inside_bulk_temperature, p=p_inside)
+    bulk_o = outside_provider.at(T=outside_bulk_temperature, p=p_outside)
+    warnings: list[ModelWarning] = []
+
+    internal = heat_transfer_coefficient_internal_diagnostics(
+        m_dot=m_dot_inside,
+        tube_inner_diameter=bundle.internal_hydraulic_diameter,
+        flow_area=bundle.internal_flow_area_per_pass,
+        props=to_internal_fluid_props(bulk_i),
+        T_bulk=inside_bulk_temperature,
+        T_wall=inside_wall_temperature,
+        L_heated=float(getattr(tube, "length_effective")),
+    )
+    warnings.extend(internal.warnings)
+
+    finned_result = finned_outside_flow_from_mass_flow(
+        m_dot=m_dot_outside,
+        frontal_area=bundle.frontal_flow_area,
+        tube=tube,
+        tube_pitch_transverse=bundle.pitch_transverse,
+        tube_pitch_longitudinal=bundle.pitch_longitudinal,
+        layout=bundle.layout,
+        n_rows=bundle.n_rows,
+        n_tubes_per_row=bundle.n_tubes_per_row,
+        props=to_outside_fluid_props(bulk_o),
+        euler_provider=resolve_finned_euler_provider(euler_provider),
+        calculate_pressure_drop=False,
+    )
+    warnings.extend(finned_result.warnings)
+
+    alfa_i = internal.alfa_corrected
+    network, network_warnings = build_finned_tube_resistance_network(
+        tube,
+        n_tubes=bundle.n_tubes_total,
+        alfa_i=alfa_i,
+        alfa_o_physical=finned_result.alfa_o_physical,
+    )
+    warnings.extend(network_warnings)
+
+    alfa_o = network.alfa_o_gross_basis
+    R_i = 1.0 / (alfa_i * A_i)
+    R_o = 1.0 / (alfa_o * A_o)
+    R_total = R_i + hx.tube_wall_resistance() + R_o
+    if not math.isfinite(R_total) or R_total <= 0.0:
+        raise ValueError("thermal_iteration: invalid total thermal resistance.")
+    heat_rate = (inside_bulk_temperature - outside_bulk_temperature) / R_total
+
+    return _LocalWallEvaluation(
+        inside_bulk_props=bulk_i,
+        inside_wall_props=None,
+        outside_bulk_props=bulk_o,
+        outside_wall_props=None,
+        alfa_i=alfa_i,
+        alfa_o=alfa_o,
+        inside_nusselt=internal.Nu_corrected,
+        outside_nusselt=finned_result.Nu,
+        inside_wall_temperature=inside_bulk_temperature - heat_rate * R_i,
+        outside_wall_temperature=outside_bulk_temperature + heat_rate * R_o,
+        heat_rate=heat_rate,
+        internal_diagnostics=internal,
+        outside_nusselt_base=finned_result.Nu,
+        outside_wall_property_correction=1.0,
         warnings=tuple(warnings),
     )
 
@@ -886,5 +1010,5 @@ def solve_iterative_thermal_state(
         diagnostics=diagnostics,
         inside_provider_name=type(inside_provider).__name__,
         outside_provider_name=type(outside_provider).__name__,
-        warnings=tuple(all_warnings),
+        warnings=deduplicate_warnings(all_warnings),
     )

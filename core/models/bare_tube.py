@@ -24,6 +24,7 @@ import math
 from dataclasses import dataclass, replace
 
 from core.geometry.bundle import TubeBundle
+from core.geometry.finned_tube import CircularFinnedTube
 
 from core.heat_transfer.internal_flow import (
     FluidProps as InternalFlowFluidProps,
@@ -43,6 +44,11 @@ from core.heat_transfer.outside_flow import (
     calculate_outside_tube_bank_hydraulics,
     outside_flow_from_mass_flow,
 )
+from core.heat_transfer.outside_flow_finned import (
+    finned_outside_flow_from_mass_flow,
+    resolve_finned_euler_provider,
+)
+from core.heat_transfer.finned_tube_resistance import build_finned_tube_resistance_network
 
 from core.pressure_drop.outside_pressure_drop import (
     EulerProvider,
@@ -548,6 +554,25 @@ class HXResult:
         return self.outside_side_pressure_drop.dp_local
 
 
+class FinnedTubeWetOutsideSurfaceNotSupportedError(RuntimeError):
+    """Raised when a phase-change-capable outside-side provider is used
+    with a ``CircularFinnedTube`` geometry.
+
+    Wet/condensing finned surfaces, frost/ice, and condensate retention
+    on fins are explicitly out of scope for the v0.7.x circular
+    finned-tube feature (see docs/finned_tube_model.md). This is a
+    controlled rejection, checked before any wet-surface solve is
+    attempted -- the existing bare-tube wet-gas/pure-water condensation
+    machinery is never silently run (and never silently skipped in
+    favor of a dry-only result) for a finned outside surface. Inside
+    (tube-side) phase change -- pure-water evaporation, pure-steam
+    condensation, wet-gas condensation inside the tube -- is unaffected,
+    since fins in this feature are outside-only.
+    """
+
+    warning_code = "finned_tube_wet_outside_surface_not_supported"
+
+
 class BareTubeHeatExchanger:
     """
     Bare (smooth) tube heat exchanger model (MVP).
@@ -581,6 +606,28 @@ class BareTubeHeatExchanger:
         # conductivity is stored on the tube geometry itself
         self.bundle = bundle
 
+    def _reject_finned_tube_wet_outside_surface(self, outside_provider) -> None:
+        """Controlled rejection of wet/condensing outside providers on a
+        ``CircularFinnedTube`` (see
+        ``FinnedTubeWetOutsideSurfaceNotSupportedError``). No-op for a
+        plain (bare) tube.
+        """
+        if not isinstance(self.bundle.tube, CircularFinnedTube):
+            return
+        from core.phase_change.capability import detect_phase_change_capability
+
+        capability = detect_phase_change_capability(outside_provider)
+        if capability.capable:
+            raise FinnedTubeWetOutsideSurfaceNotSupportedError(
+                "Wet/condensing finned surfaces are out of scope for "
+                "CircularFinnedTube in this experimental pass (v0.7.x): the "
+                f"outside provider ({type(outside_provider).__name__}) is "
+                f"phase-change capable (component={capability.component!r}). "
+                "Use a non-condensing outside provider, or a BareTube "
+                "geometry if outside condensation is required. See "
+                "docs/finned_tube_model.md."
+            )
+
     def tube_wall_resistance(self) -> float:
         """Public accessor for the cylindrical tube-wall conduction resistance [K/W].
 
@@ -592,15 +639,36 @@ class BareTubeHeatExchanger:
 
     def _tube_wall_resistance(self) -> float:
         """
-        Cylindrical wall conduction resistance (total) [K/W].
+        Conduction resistance (total) between the inside and outside
+        convection films [K/W].
 
-        R_wall = ln(Do/Di) / (2*pi*k*L_eff*N_tubes)
+        For a plain (bare) tube this is the cylindrical wall term alone:
+
+            R_wall = ln(Do/Di) / (2*pi*k*L_eff*N_tubes)
 
         Ref: standard conduction through cylindrical wall (heat transfer textbooks).
+
+        For a ``CircularFinnedTube`` this additionally includes the
+        root/foot-layer conduction resistance (zero when D_root == D_o)
+        and the area-basis contact resistance (see
+        ``core.heat_transfer.finned_tube_resistance.
+        conduction_and_contact_resistance`` -- the single source of truth
+        reused here and by the finned resistance network, so the two
+        never drift apart).
         """
+        tube = self.bundle.tube
+
+        if isinstance(tube, CircularFinnedTube):
+            from core.heat_transfer.finned_tube_resistance import (
+                conduction_and_contact_resistance,
+            )
+
+            return conduction_and_contact_resistance(
+                tube, n_tubes=self.bundle.n_tubes_total
+            ).R_total
+
         # conductivity should be defined on the tube object; if absent we
         # assume a negligible wall resistance.
-        tube = self.bundle.tube
         k = getattr(tube, "wall_k", None)
         if k is None:
             return 0.0
@@ -736,7 +804,39 @@ class BareTubeHeatExchanger:
         # --------------------------------------------------------------
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
 
-        if have_outside:
+        if have_outside and isinstance(self.bundle.tube, CircularFinnedTube):
+            # Circular finned tube: dedicated Briggs & Young (1963) HTC and
+            # (documented-blocker) Robinson-Briggs (1966) pressure-drop path.
+            # No 3-state (inlet/midpoint/outlet) hydraulic snapshot is built
+            # here in this experimental pass (see docs/finned_tube_model.md);
+            # outside_bank_hydraulic stays None, exactly like the existing
+            # "outside side not specified" fallback shape below.
+            finned_result = finned_outside_flow_from_mass_flow(
+                m_dot=m_dot_outside,
+                frontal_area=A_frontal,
+                tube=self.bundle.tube,
+                tube_pitch_transverse=self.bundle.pitch_transverse,
+                tube_pitch_longitudinal=self.bundle.pitch_longitudinal,
+                layout=self.bundle.layout,
+                n_rows=self.bundle.n_rows,
+                n_tubes_per_row=self.bundle.n_tubes_per_row,
+                props=outside_props,
+                euler_provider=resolve_finned_euler_provider(euler_provider),
+                calculate_pressure_drop=True,
+            )
+            v_o, Re_o, Pr_o = finned_result.v, finned_result.Re, finned_result.Pr
+            finned_network, finned_network_warnings = build_finned_tube_resistance_network(
+                self.bundle.tube,
+                n_tubes=self.bundle.n_tubes_total,
+                alfa_i=alfa_i,
+                alfa_o_physical=finned_result.alfa_o_physical,
+            )
+            alfa_o_calc = finned_network.alfa_o_gross_basis
+            dp_o = finned_result.dp_o
+            outside_warnings = list(finned_result.warnings) + finned_network_warnings
+            _outside_euler_result = finned_result.euler_result
+            outside_bank_hydraulic = None
+        elif have_outside:
             # Keep the existing outside heat-transfer calculation and its
             # face-velocity/Re/Pr contract, but bypass its historical
             # one-state pressure-drop calculation.  Outside pressure is
@@ -881,10 +981,11 @@ class BareTubeHeatExchanger:
             existing_outside_warning_ids = {
                 (warning.source, warning.code) for warning in warnings_list
             }
-            for warning in outside_bank_hydraulic.warnings:
-                if (warning.source, warning.code) not in existing_outside_warning_ids:
-                    warnings_list.append(warning)
-                    existing_outside_warning_ids.add((warning.source, warning.code))
+            if outside_bank_hydraulic is not None:
+                for warning in outside_bank_hydraulic.warnings:
+                    if (warning.source, warning.code) not in existing_outside_warning_ids:
+                        warnings_list.append(warning)
+                        existing_outside_warning_ids.add((warning.source, warning.code))
 
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
         if Re_i < 2300.0:
@@ -1074,6 +1175,8 @@ class BareTubeHeatExchanger:
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
+        self._reject_finned_tube_wet_outside_surface(outside.provider)
+
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
         settings = PhaseChangeSettings(
@@ -1276,6 +1379,8 @@ class BareTubeHeatExchanger:
         its zone physics with Simulation. ``phase_change_mode`` is per
         ``BalanceSideSpec``.
         """
+        self._reject_finned_tube_wet_outside_surface(outside.provider)
+
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 

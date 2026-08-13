@@ -89,6 +89,32 @@ not included.
 
 ---
 
+## Experimental: Circular Finned Tubes (v0.7.x branch, not released)
+
+**Not part of the current v0.6.3 release.** Developed and validated on the
+experimental branch `experiment/v0.7.x-finned-tubes-claude`; not merged
+into `main`. See [`docs/finned_tube_model.md`](docs/finned_tube_model.md)
+for the full write-up, definitions, and unresolved limitations.
+
+- `core.geometry.CircularFinnedTube`: composes an existing `BareTube` as
+  `core_tube`; welded (constant-thickness, `D_root == D_o`) or extruded
+  (root-to-tip tapered, `D_root > D_o`) circular fins, modeled as a
+  periodic array of full annular fins
+- Annular-fin efficiency (Bessel closed form / numerical tapered solver)
+  and an explicit inside/wall/root/contact/outside resistance network
+- Dry, single-phase outside heat transfer via Briggs & Young (1963),
+  staggered (triangular pitch) layouts, for `BareTubeHeatExchanger.solve/
+  simulate/rate`
+- Outside pressure drop (Robinson & Briggs, 1966) is a **documented,
+  not-yet-implemented blocker** -- the provider architecture and geometry
+  gate exist, but the exact closed-form equation could not be
+  independently verified from accessible sources; it raises
+  `NotImplementedError` rather than a guessed formula
+- Wet/condensing finned surfaces are out of scope and rejected with a
+  controlled error (`FinnedTubeWetOutsideSurfaceNotSupportedError`)
+
+---
+
 ## Modelling Philosophy
 
 KalKalori prioritizes **trustworthy results over model complexity**.

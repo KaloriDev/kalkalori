@@ -119,6 +119,65 @@ class FinnedTubeResistanceNetwork:
         return 1.0 / (self.R_total * self.A_inside)
 
 
+@dataclass(frozen=True)
+class ConductionAndContactResistance:
+    """The alfa-independent (pure conduction/contact) part of the finned-tube
+    resistance network -- reused by both
+    ``build_finned_tube_resistance_network`` and
+    ``BareTubeHeatExchanger.tube_wall_resistance`` so the two never drift
+    apart."""
+
+    R_wall_conduction: float
+    R_root_conduction: float
+    R_contact: float
+    contact_resistance_used: float
+    contact_resistance_unknown: bool
+
+    @property
+    def R_total(self) -> float:
+        return self.R_wall_conduction + self.R_root_conduction + self.R_contact
+
+
+def conduction_and_contact_resistance(
+    tube: CircularFinnedTube, *, n_tubes: int
+) -> ConductionAndContactResistance:
+    """Core-tube wall conduction + root/foot-layer conduction + contact
+    resistance for ``n_tubes`` identical finned tubes. Independent of
+    alfa_i/alfa_o (pure geometry + material properties).
+    """
+    if n_tubes <= 0:
+        raise ValueError("n_tubes must be positive.")
+
+    R_wall_conduction = math.log(tube.D_o / tube.D_i) / (
+        2.0 * math.pi * tube.wall_k * tube.length_effective * n_tubes
+    )
+
+    if tube.D_root > tube.D_o:
+        R_root_conduction = math.log(tube.D_root / tube.D_o) / (
+            2.0 * math.pi * tube.fin_k * tube.length_effective * n_tubes
+        )
+    else:
+        R_root_conduction = 0.0
+
+    contact_resistance_unknown = tube.fin_contact_resistance is None
+    contact_resistance_used = (
+        0.0 if contact_resistance_unknown else float(tube.fin_contact_resistance)
+    )
+    if contact_resistance_used == 0.0:
+        R_contact = 0.0
+    else:
+        A_contact = n_tubes * math.pi * tube.D_o * tube.length_effective
+        R_contact = contact_resistance_used / A_contact
+
+    return ConductionAndContactResistance(
+        R_wall_conduction=R_wall_conduction,
+        R_root_conduction=R_root_conduction,
+        R_contact=R_contact,
+        contact_resistance_used=contact_resistance_used,
+        contact_resistance_unknown=contact_resistance_unknown,
+    )
+
+
 def build_finned_tube_resistance_network(
     tube: CircularFinnedTube,
     *,
@@ -132,8 +191,6 @@ def build_finned_tube_resistance_network(
     coefficient (e.g. from Briggs & Young), referenced to the true
     finned-surface area -- not yet weighted by fin efficiency.
     """
-    if n_tubes <= 0:
-        raise ValueError("n_tubes must be positive.")
     if alfa_i <= 0.0 or not math.isfinite(alfa_i):
         raise ValueError("alfa_i must be finite and positive.")
     if alfa_o_physical <= 0.0 or not math.isfinite(alfa_o_physical):
@@ -150,23 +207,17 @@ def build_finned_tube_resistance_network(
     A_primary = n_tubes * tube.A_primary
     A_fin_used = n_tubes * tube.A_fin_used
     A_outside_used = n_tubes * tube.A_outside_gross
-    A_contact = n_tubes * math.pi * tube.D_o * tube.length_effective
+
+    conduction = conduction_and_contact_resistance(tube, n_tubes=n_tubes)
+    R_wall_conduction = conduction.R_wall_conduction
+    R_root_conduction = conduction.R_root_conduction
+    R_contact = conduction.R_contact
+    contact_resistance_used = conduction.contact_resistance_used
+    contact_resistance_unknown = conduction.contact_resistance_unknown
 
     R_inside_convection = 1.0 / (alfa_i * A_inside)
-    R_wall_conduction = math.log(tube.D_o / tube.D_i) / (
-        2.0 * math.pi * tube.wall_k * tube.length_effective * n_tubes
-    )
 
-    if tube.D_root > tube.D_o:
-        R_root_conduction = math.log(tube.D_root / tube.D_o) / (
-            2.0 * math.pi * tube.fin_k * tube.length_effective * n_tubes
-        )
-    else:
-        R_root_conduction = 0.0
-
-    contact_resistance_unknown = tube.fin_contact_resistance is None
     if contact_resistance_unknown:
-        contact_resistance_used = 0.0
         warnings.append(
             make_warning(
                 code="finned_tube_contact_resistance_unknown",
@@ -181,10 +232,6 @@ def build_finned_tube_resistance_network(
                 severity="warning",
             )
         )
-    else:
-        contact_resistance_used = float(tube.fin_contact_resistance)
-
-    R_contact = 0.0 if contact_resistance_used == 0.0 else contact_resistance_used / A_contact
 
     R_primary_convection = 1.0 / (alfa_o_physical * A_primary)
     R_fin_convection = 1.0 / (alfa_o_physical * eta_fin * A_fin_used)

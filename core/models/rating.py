@@ -88,7 +88,7 @@ from core.heat_transfer.thermal_iteration import (
     solve_iterative_thermal_state,
 )
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
-from core.common.warnings import ModelWarning
+from core.common.warnings import ModelWarning, deduplicate_warnings
 
 from core.models.heat_balance import ClosedBalance
 from core.phase_change.types import PhaseChangeResult, WaterSteamPhaseChangeResult
@@ -535,11 +535,13 @@ def run_rating(
     overdesign_factor = A_o / A_req - 1.0
     ua_margin = UA_actual / UA_req - 1.0
 
-    warnings_list: list[ModelWarning] = (
-        list(closed_balance.warnings or [])
-        + list(solve_result.warnings or [])
-        + list(thermal_state.warnings)
-        + list(wall_temperature_envelope.warnings)
+    warnings_list: list[ModelWarning] = list(
+        deduplicate_warnings(
+            list(closed_balance.warnings or [])
+            + list(solve_result.warnings or [])
+            + list(thermal_state.warnings)
+            + list(wall_temperature_envelope.warnings)
+        )
     )
 
     simulation_result = None
