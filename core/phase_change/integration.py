@@ -74,6 +74,9 @@ from core.phase_change.regime import (
     validate_onset_settings,
 )
 from core.phase_change.types import PhaseChangeCapability, PhaseChangeDirection, PhaseChangeMode, PhaseChangeResult
+from core.phase_change.finned_tube_guard import (
+    reject_circular_finned_tube_wet_surface,
+)
 from core.phase_change.water_equilibrium import is_frost_regime, water_dew_point, water_partial_pressure
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
@@ -317,6 +320,13 @@ def apply_phase_change(
     )
     outside_auto_possible = (
         outside_onset is not None and outside_onset.active and outside.phase_change_mode is PhaseChangeMode.AUTO
+    )
+
+    reject_circular_finned_tube_wet_surface(
+        hx,
+        inside_active=inside_auto_possible,
+        outside_active=outside_auto_possible,
+        context="wet-gas condensation",
     )
 
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=iterate)

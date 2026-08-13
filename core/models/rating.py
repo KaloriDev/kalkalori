@@ -79,6 +79,7 @@ from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
 
+from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.streams import SensibleHeatStream
 from core.heat_transfer.ntu import ntu_from_effectiveness
 from core.heat_transfer.thermal_iteration import (
@@ -87,8 +88,14 @@ from core.heat_transfer.thermal_iteration import (
     estimate_wall_temperature_envelope,
     solve_iterative_thermal_state,
 )
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    FinnedTubeDiagnostics,
+    merge_finned_tube_diagnostics,
+)
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
-from core.common.warnings import ModelWarning
+from core.common.warnings import ModelWarning, deduplicate_warnings
 
 from core.models.heat_balance import ClosedBalance
 from core.phase_change.types import PhaseChangeResult, WaterSteamPhaseChangeResult
@@ -151,6 +158,21 @@ class HXRatingResult:
     # rather than through ``BareTubeHeatExchanger.rate``.
     inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
+
+    @property
+    def finned_tube_diagnostics(self) -> FinnedTubeDiagnostics | None:
+        return merge_finned_tube_diagnostics(
+            self.thermal_state.finned_tube_diagnostics,
+            self.final_result.finned_tube_diagnostics,
+        )
+
+    @property
+    def finned_tube(self) -> FinnedTubeDiagnostics | None:
+        return self.finned_tube_diagnostics
+
+    @property
+    def tube_surface_type(self) -> TubeSurfaceType:
+        return self.final_result.tube_surface_type
 
     @property
     def phase_change_active(self) -> bool:
@@ -410,16 +432,19 @@ def run_rating(
     K_outlet: float = 1.0,
     K_turn: float = 1.5,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     include_simulation: bool = False,
     max_iterations: int = 25,
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
     relaxation_factor: float = 0.5,
 ) -> HXRatingResult:
-    """Rate a bare-tube exchanger against a closed heat balance.
+    """Rate a plain- or circular-finned-tube exchanger against a balance.
 
-    Backing implementation of ``BareTubeHeatExchanger.rate``. See the module
-    docstring for the algorithm and the ``U``/``UA_actual`` source note.
+    This is the backing implementation of ``BareTubeHeatExchanger.rate``;
+    that historical class name is retained for API compatibility. See the
+    module docstring for the algorithm and the ``U``/``UA_actual`` source note.
 
     ``max_iterations``/``wall_temperature_tolerance_K``/
     ``relative_alfa_tolerance``/``relaxation_factor`` are forwarded to
@@ -470,6 +495,8 @@ def run_rating(
         K_turn=K_turn,
         flow_arrangement=flow_arrangement,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
     A_o = solve_result.A_o
@@ -489,6 +516,7 @@ def run_rating(
         p_outside=outside.p,
         flow_arrangement=flow_arrangement,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
         max_iterations=max_iterations,
         wall_temperature_tolerance_K=wall_temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance,
@@ -507,6 +535,7 @@ def run_rating(
         p_inside=inside.p,
         p_outside=outside.p,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
         max_iterations=max_iterations,
         wall_temperature_tolerance_K=wall_temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance,
@@ -541,6 +570,7 @@ def run_rating(
         + list(thermal_state.warnings)
         + list(wall_temperature_envelope.warnings)
     )
+    warnings_list = deduplicate_warnings(warnings_list)
 
     simulation_result = None
     Q_achievable = None
@@ -556,6 +586,8 @@ def run_rating(
             K_outlet=K_outlet,
             K_turn=K_turn,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
         )
         Q_achievable = simulation_result.q
 

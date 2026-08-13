@@ -52,6 +52,10 @@ from core.phase_change.types import (
 from core.phase_change.capability import (
     PureWaterPhaseChangeProviderNotSupportedError,
 )
+from core.phase_change.finned_tube_guard import (
+    CircularFinnedTubeWetSurfaceNotSupportedError,
+    reject_circular_finned_tube_wet_surface,
+)
 from core.phase_change.steam_condensation import (
     SteamCondensationLocalResult,
     SteamCondensationZoneResult,
@@ -90,6 +94,8 @@ __all__ = [
     "PhaseChangeResult",
     "WaterSteamPhaseChangeResult",
     "PureWaterPhaseChangeProviderNotSupportedError",
+    "CircularFinnedTubeWetSurfaceNotSupportedError",
+    "reject_circular_finned_tube_wet_surface",
     "SteamCondensationLocalResult",
     "SteamCondensationZoneResult",
     "SteamTubeOrientation",

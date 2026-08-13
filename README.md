@@ -56,6 +56,13 @@ and serialization**, enabling both open collaboration and commercial adoption.
   (`PhaseChangeMode.DISABLED`); see
   [`docs/property_models.md`](docs/property_models.md#15-v061--wet-gas-water-condensation)
 - Bare tube heat exchangers
+- Experimental dry circular-finned-tube exchangers on the dedicated
+  `experiment/v0.7.x-finned-tubes-codex` branch. The public geometry composes
+  `CircularFinnedTube(core_tube=BareTube(...), ...)`, with dedicated
+  Briggs--Young outside heat transfer, Robinson--Briggs pressure loss,
+  annular-fin efficiency, contact/root resistance, Simulation and Rating.
+  This is not a released `v0.7.0` capability; see
+  [`docs/finned_tube_model.md`](docs/finned_tube_model.md).
 - Tube-side forced convection
 - Outside forced convection (mass-flow driven)
 - Multi-pass tube bundles
@@ -83,7 +90,8 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - thermal performance
   - hydraulic performance
 
-Outside pressure change is limited to the bare-tube bank. Duct, plenum,
+Outside pressure change is limited to the calculated plain or experimental
+circular-finned tube bank. Duct, plenum,
 casing-transition, screen, louver, damper, fan, and external-piping losses are
 not included.
 
@@ -157,7 +165,8 @@ In short:
 KalKalori is intended to be used as a Python library.
 
 Typical usage:
-1. Define geometry (`BareTube`, `TubeBundle`)
+1. Define geometry (`BareTube` or experimental `CircularFinnedTube`, then
+   `TubeBundle`)
 2. Define energy streams
 3. Solve using a heat exchanger model
 4. Inspect results from `HXResult`

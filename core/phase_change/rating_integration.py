@@ -45,6 +45,10 @@ from dataclasses import replace
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+)
 from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide, close_heat_balance
 from core.models.rating import run_rating
 from core.pressure_drop.flow_path import build_outside_pressure_drop_result
@@ -69,6 +73,9 @@ from core.phase_change.types import (
     PhaseChangeDirection,
     PhaseChangeMode,
     PhaseChangeResult,
+)
+from core.phase_change.finned_tube_guard import (
+    reject_circular_finned_tube_wet_surface,
 )
 from core.properties.water import water_latent_heat_of_vaporization, water_saturation_liquid_enthalpy
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
@@ -229,6 +236,8 @@ def apply_phase_change_to_rating(
     K_outlet: float = 1.0,
     K_turn: float = 1.5,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     include_simulation: bool = False,
     over_specified_tolerance: float = 1e-3,
     max_iterations: int = 25,
@@ -278,6 +287,8 @@ def apply_phase_change_to_rating(
         hx, closed_balance,
         flow_arrangement=flow_arrangement, K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
         euler_provider=euler_provider, include_simulation=include_simulation,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
         max_iterations=max_iterations, wall_temperature_tolerance_K=wall_temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
     )
@@ -347,6 +358,13 @@ def apply_phase_change_to_rating(
     )
     outside_auto_possible = (
         outside_onset is not None and outside_onset.active and outside.phase_change_mode is PhaseChangeMode.AUTO
+    )
+
+    reject_circular_finned_tube_wet_surface(
+        hx,
+        inside_active=inside_auto_possible,
+        outside_active=outside_auto_possible,
+        context="wet-gas condensation rating",
     )
 
     # Rating has no iterate=False escape hatch, so the guard in

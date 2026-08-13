@@ -149,6 +149,57 @@ Used for:
 - Reynolds and Prandtl number interpretation,
 - outside-side pressure-drop modelling through Euler-number methods.
 
+### Experimental circular-finned-tube branch
+
+- Briggs, D. E.; Young, E. H. (1963).
+  "Convection Heat Transfer and Pressure Drop of Air Flowing Across
+  Triangular Pitch Banks of Finned Tubes", *Chemical Engineering Progress
+  Symposium Series*, 59(41), 1-10.
+
+- Robinson, K. K.; Briggs, D. E. (1966).
+  "Pressure Drop of Air Flowing Across Triangular Pitch Banks of Finned
+  Tubes", *Chemical Engineering Progress Symposium Series*, 62(64), 177-184.
+
+- Gardner, K. A. (1945).
+  "Efficiency of Extended Surfaces", *Transactions of the ASME*, 67,
+  621-631.
+
+- Schmidt, T. E. (1949).
+  "Heat Transfer Calculation for Extended Surfaces", *Refrigerating
+  Engineering*, 57, 351-357.
+
+- VDI Heat Atlas, chapter M1, "Heat Transfer to Finned Tubes".
+
+- Kraus, A. D.; Aziz, A.; Welty, J. (2001).
+  *Extended Surface Heat Transfer*. Wiley.
+
+- Genić, S. B. et al. (2006).
+  "Research on Air Pressure Drop in Helically-Finned Tube Heat Exchangers",
+  *Applied Thermal Engineering*, 26, 478-485.
+  DOI: `10.1016/j.applthermaleng.2005.07.017`.
+
+- Nir, A. (1991).
+  "Heat Transfer and Friction Factor Correlations for Crossflow over
+  Staggered Finned Tube Banks", *Heat Transfer Engineering*, 12(1), 43-58.
+  DOI: `10.1080/01457639108939746`.
+
+The Genić DOI above corrects the commonly repeated but incorrect
+`10.1016/j.applthermaleng.2005.06.020`. It is used only as a comparative
+validation reference. ESDU 86022 may likewise be used externally for
+validation; no closed ESDU tables, data or code are included in the GPL core.
+Schmidt, VDI, Genić and Nir were reviewed as extended-surface or comparative
+references; their correlations are not blended into the two implemented
+Briggs--Young/Robinson--Briggs empirical models.
+
+Used for the experimental implementation described in
+[`finned_tube_model.md`](finned_tube_model.md):
+
+- physical outside film HTC separate from fin efficiency;
+- root-diameter and minimum-free-flow Reynolds definitions;
+- source-defined Robinson--Briggs per-row friction coefficient and its
+  conversion to Pa;
+- annular-fin conduction and applicability diagnostics.
+
 ---
 
 ## Psychrometrics and Moist Air

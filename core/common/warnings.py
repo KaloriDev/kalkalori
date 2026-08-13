@@ -144,3 +144,18 @@ def has_critical_warnings(warnings: list[ModelWarning] | tuple[ModelWarning, ...
     Return True if any warning has severity == 'critical'.
     """
     return any(w.severity == "critical" for w in warnings)
+
+
+def deduplicate_warnings(
+    warnings: list[ModelWarning] | tuple[ModelWarning, ...],
+) -> list[ModelWarning]:
+    """Preserve order while keeping one warning per ``(source, code)``."""
+
+    unique: list[ModelWarning] = []
+    seen: set[tuple[str, str]] = set()
+    for warning in warnings:
+        key = (warning.source, warning.code)
+        if key not in seen:
+            unique.append(warning)
+            seen.add(key)
+    return unique

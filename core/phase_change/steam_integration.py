@@ -10,6 +10,11 @@ import math
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.outside_side import OutsideSideEvaluation, evaluate_outside_side
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+)
+from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.thermal_iteration import (
     IterativeThermalState,
     ThermalIterationDiagnostics,
@@ -125,12 +130,66 @@ def is_inside_water_evaporation_case(inside, outside) -> bool:
     )
 
 
-def water_evaporation_reaches_saturation(hx, inside, outside, *, euler_provider: str) -> bool:
+def water_evaporation_reaches_saturation(
+    hx,
+    inside,
+    outside,
+    *,
+    euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
+    surface_margin: float = 0.0,
+    iterate: bool = True,
+    flow_arrangement: str | None = None,
+    max_iter: int = 30,
+    temperature_tolerance_K: float = 0.05,
+    relative_duty_tolerance: float = 1.0e-4,
+    relaxation_factor: float = 0.5,
+    relative_alfa_tolerance: float = 1.0e-3,
+) -> bool:
     """Test whether full geometry can reach x=0 without invoking boiling HTC."""
     state = getattr(inside, "water_steam_state", None)
     if state is None or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
         return True
     saturated_liquid = water_steam_props_iapws97(p=state.p, x=0.0)
+    if (
+        getattr(hx.bundle.tube, "surface_type", None)
+        is TubeSurfaceType.CIRCULAR_FINNED
+    ):
+        # The legacy water-evaporator preheat probe evaluates its outside
+        # coefficient through the bare-tube helper. Do not enter that path for
+        # fins. A dry surface-aware Simulation gives the full-geometry sensible
+        # duty; compare the corresponding outlet enthalpy with saturated liquid.
+        from core.models.simulation import run_simulation
+
+        try:
+            dry = run_simulation(
+                hx,
+                inside,
+                outside,
+                euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+            )
+        except ValueError as exc:
+            # The generic dry iteration can land numerically on the IAPWS
+            # saturation line before it has produced a duty. For this probe
+            # that is exactly the positive answer; let the public caller emit
+            # the dedicated finned wet-surface error instead of leaking the
+            # backend's ambiguous T+p exception.
+            if "T+p lies on the water saturation line" in str(exc):
+                return True
+            raise
+        trial_outlet_enthalpy = state.h + dry.q / inside.m_dot
+        return trial_outlet_enthalpy >= saturated_liquid.h - 1.0e-3
     try:
         boundary = rate_water_evaporator(
             hx,

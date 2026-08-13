@@ -30,6 +30,7 @@ from .rating import (
     HXRatingResult,
     run_rating,
 )
+from core.heat_transfer.outside_dispatch import FinnedTubeDiagnostics
 
 __all__ = [
     "BareTubeHeatExchanger",
@@ -46,4 +47,5 @@ __all__ = [
     "close_heat_balance",
     "HXRatingResult",
     "run_rating",
+    "FinnedTubeDiagnostics",
 ]

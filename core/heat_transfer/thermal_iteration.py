@@ -131,10 +131,18 @@ from core.properties.averaging import mean_temperature
 
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
 from core.heat_transfer.outside_flow import (
-    outside_flow_from_mass_flow,
-    nusselt_zukauskas,
     prandtl_number as outside_prandtl_number,
 )
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_HT_PROVIDER,
+    FinnedTubeDiagnostics,
+    OutsideThermalDispatchResult,
+    ThermalResistanceNetwork,
+    build_finned_tube_diagnostics,
+    calculate_resistance_network,
+    evaluate_outside_thermal,
+)
+from core.geometry.tube import CircularFinnedTube
 from core.heat_transfer.ntu import effectiveness_ntu, heat_duty_from_effectiveness
 from core.heat_transfer.streams import SensibleHeatStream
 
@@ -231,6 +239,8 @@ class IterativeThermalState:
 
     warnings: tuple[ModelWarning, ...] = ()
 
+    finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
+
 
 @dataclass(frozen=True)
 class WallTemperatureProbe:
@@ -290,6 +300,9 @@ class _LocalWallEvaluation:
     internal_diagnostics: object
     outside_nusselt_base: float
     outside_wall_property_correction: float
+    outside_dispatch: OutsideThermalDispatchResult
+    resistance_network: ThermalResistanceNetwork
+    finned_tube_diagnostics: FinnedTubeDiagnostics | None
     warnings: tuple[ModelWarning, ...]
 
 
@@ -307,16 +320,14 @@ def _evaluate_local_wall_state(
     inside_wall_temperature: float | None,
     outside_wall_temperature: float | None,
     euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
 ) -> _LocalWallEvaluation:
     """Evaluate correlations and the resistance split at one fixed bulk pair."""
     from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 
     bundle = hx.bundle
     tube = bundle.tube
-    A_i = bundle.total_inner_area
-    A_o = bundle.total_outer_area
     D_h = bundle.internal_hydraulic_diameter
-    D_o = float(getattr(tube, "D_o"))
 
     bulk_i = inside_provider.at(T=inside_bulk_temperature, p=p_inside)
     bulk_o = outside_provider.at(T=outside_bulk_temperature, p=p_outside)
@@ -353,30 +364,38 @@ def _evaluate_local_wall_state(
     if wall_o is not None:
         Pr_s = outside_prandtl_number(wall_o.cp, wall_o.mu, wall_o.k)
 
-    _, Re_o, Pr_o, alfa_o, _, outside_warnings, _ = outside_flow_from_mass_flow(
+    outside_dispatch = evaluate_outside_thermal(
+        bundle=bundle,
         m_dot=m_dot_outside,
-        frontal_area=bundle.frontal_flow_area,
-        tube_outer_diameter=D_o,
-        tube_pitch_transverse=bundle.pitch_transverse,
-        tube_pitch_longitudinal=bundle.pitch_longitudinal,
-        layout=bundle.layout,
-        n_rows=bundle.n_rows,
-        n_tubes_per_row=bundle.n_tubes_per_row,
         props=to_outside_fluid_props(bulk_o),
         Pr_s=Pr_s,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
     )
-    warnings.extend(outside_warnings)
-    Nu_o_base = nusselt_zukauskas(Re_o, Pr_o, bundle.n_rows, Pr_s=None)
-    Nu_o = nusselt_zukauskas(Re_o, Pr_o, bundle.n_rows, Pr_s=Pr_s) if Pr_s is not None else Nu_o_base
+    warnings.extend(outside_dispatch.warnings)
+    alfa_o = outside_dispatch.alpha
+    Nu_o_base = outside_dispatch.nusselt_number_base
+    Nu_o = outside_dispatch.nusselt_number
 
     alfa_i = internal.alfa_corrected
-    R_i = 1.0 / (alfa_i * A_i)
-    R_o = 1.0 / (alfa_o * A_o)
-    R_total = R_i + hx.tube_wall_resistance() + R_o
-    if not math.isfinite(R_total) or R_total <= 0.0:
-        raise ValueError("thermal_iteration: invalid total thermal resistance.")
-    heat_rate = (inside_bulk_temperature - outside_bulk_temperature) / R_total
+    network = calculate_resistance_network(
+        bundle=bundle,
+        alpha_inside=alfa_i,
+        alpha_outside=alfa_o,
+        resistance_core_wall=hx.tube_wall_resistance(),
+    )
+    heat_rate = (
+        inside_bulk_temperature - outside_bulk_temperature
+    ) / network.resistance_total
+    geometry_warnings = (
+        tube.geometry_warnings if isinstance(tube, CircularFinnedTube) else ()
+    )
+    warnings.extend(geometry_warnings)
+    finned_diagnostics = build_finned_tube_diagnostics(
+        network=network,
+        thermal=outside_dispatch,
+        geometry_warnings=geometry_warnings,
+    )
 
     return _LocalWallEvaluation(
         inside_bulk_props=bulk_i,
@@ -387,12 +406,19 @@ def _evaluate_local_wall_state(
         alfa_o=alfa_o,
         inside_nusselt=internal.Nu_corrected,
         outside_nusselt=Nu_o,
-        inside_wall_temperature=inside_bulk_temperature - heat_rate * R_i,
-        outside_wall_temperature=outside_bulk_temperature + heat_rate * R_o,
+        inside_wall_temperature=(
+            inside_bulk_temperature - heat_rate * network.resistance_inside
+        ),
+        outside_wall_temperature=(
+            outside_bulk_temperature + heat_rate * network.resistance_outside
+        ),
         heat_rate=heat_rate,
         internal_diagnostics=internal,
         outside_nusselt_base=Nu_o_base,
-        outside_wall_property_correction=Nu_o / Nu_o_base if Nu_o_base != 0.0 else 1.0,
+        outside_wall_property_correction=outside_dispatch.wall_property_correction,
+        outside_dispatch=outside_dispatch,
+        resistance_network=network,
+        finned_tube_diagnostics=finned_diagnostics,
         warnings=tuple(warnings),
     )
 
@@ -409,6 +435,7 @@ def _solve_wall_temperature_probe(
     p_inside: float,
     p_outside: float,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
     max_iterations: int = 25,
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
@@ -431,6 +458,7 @@ def _solve_wall_temperature_probe(
             p_inside=p_inside, p_outside=p_outside,
             inside_wall_temperature=wall_i, outside_wall_temperature=wall_o,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
         )
         all_warnings.extend(evaluation.warnings)
         target_i = evaluation.inside_wall_temperature
@@ -465,6 +493,7 @@ def _solve_wall_temperature_probe(
         p_inside=p_inside, p_outside=p_outside,
         inside_wall_temperature=wall_i, outside_wall_temperature=wall_o,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
     )
     all_warnings.extend(final.warnings)
     wall_i, wall_o = final.inside_wall_temperature, final.outside_wall_temperature
@@ -525,6 +554,7 @@ def estimate_wall_temperature_envelope(
     p_inside: float,
     p_outside: float,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
     max_iterations: int = 25,
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
@@ -546,7 +576,9 @@ def estimate_wall_temperature_envelope(
                 inside_provider=inside_provider, outside_provider=outside_provider,
                 inside_bulk_temperature=T_i, outside_bulk_temperature=T_o,
                 p_inside=p_inside, p_outside=p_outside,
-                euler_provider=euler_provider, max_iterations=max_iterations,
+                euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                max_iterations=max_iterations,
                 wall_temperature_tolerance_K=wall_temperature_tolerance_K,
                 relative_alfa_tolerance=relative_alfa_tolerance,
                 relaxation_factor=relaxation_factor,
@@ -619,6 +651,7 @@ def solve_iterative_thermal_state(
     p_outside: float,
     flow_arrangement: str | None = None,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
     max_iterations: int = 25,
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
@@ -653,9 +686,7 @@ def solve_iterative_thermal_state(
         flow_arrangement = hx.bundle.flow_arrangement
 
     bundle = hx.bundle
-    A_i = bundle.total_inner_area
     A_o = bundle.total_outer_area
-    R_w = hx.tube_wall_resistance()
     hot_is_inside = T_in_inside >= T_in_outside
 
     def _evaluate(
@@ -677,14 +708,13 @@ def solve_iterative_thermal_state(
             inside_wall_temperature=T_wall_inside_prev,
             outside_wall_temperature=T_wall_outside_prev,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
         )
         props_bulk_inside = local.inside_bulk_props
         props_bulk_outside = local.outside_bulk_props
         C_inside = m_dot_inside * props_bulk_inside.cp
         C_outside = m_dot_outside * props_bulk_outside.cp
-        UA = 1.0 / (
-            1.0 / (local.alfa_i * A_i) + R_w + 1.0 / (local.alfa_o * A_o)
-        )
+        UA = local.resistance_network.UA
 
         if hot_is_inside:
             hot_stream = SensibleHeatStream(C=C_inside, T_in=T_in_inside)
@@ -726,6 +756,8 @@ def solve_iterative_thermal_state(
             "outside_Nu_base": local.outside_nusselt_base,
             "outside_Nu_corrected": local.outside_nusselt,
             "outside_wall_property_correction": local.outside_wall_property_correction,
+            "resistance_network": local.resistance_network,
+            "finned_tube_diagnostics": local.finned_tube_diagnostics,
             "warnings": list(local.warnings),
         }
 
@@ -836,9 +868,8 @@ def solve_iterative_thermal_state(
     # by construction (see R_tot above) but is re-verified here as a
     # standing diagnostic against future refactors silently decoupling the
     # two calculations.
-    R_i_final = 1.0 / (final["alfa_i"] * A_i)
-    R_o_final = 1.0 / (final["alfa_o"] * A_o)
-    UA_reconstructed = 1.0 / (R_i_final + R_w + R_o_final)
+    final_network = final["resistance_network"]
+    UA_reconstructed = 1.0 / final_network.resistance_total
     if not math.isclose(UA_reconstructed, final["UA"], rel_tol=1e-9, abs_tol=1e-9):
         all_warnings.append(
             make_warning(
@@ -887,4 +918,5 @@ def solve_iterative_thermal_state(
         inside_provider_name=type(inside_provider).__name__,
         outside_provider_name=type(outside_provider).__name__,
         warnings=tuple(all_warnings),
+        finned_tube_diagnostics=final["finned_tube_diagnostics"],
     )
