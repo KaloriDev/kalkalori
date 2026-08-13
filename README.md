@@ -35,7 +35,14 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.6.2)
+## Current Capabilities (v0.6.3)
+
+- Pure-water heating and evaporation inside bare tubes, including liquid
+  preheating, partial or complete evaporation, and optional vapor
+  superheating through Simulation and Rating. The IAPWS-backed model uses
+  Shah (1982) saturated flow boiling with a self-consistent inside-area heat
+  flux; see
+  [`docs/property_models.md`](docs/property_models.md#17-v063--pure-water-heating-and-evaporation-inside-tubes)
 
 - Pure water/steam cooling inside bare tubes, including superheated steam,
   saturated or wet-steam inlets, partial/complete condensation, and optional

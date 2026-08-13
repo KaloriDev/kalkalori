@@ -1,19 +1,19 @@
 # Property Model Selection Guide
 
-This document explains how to select property models in KalKalori `v0.6.2`.
+This document explains how to select property models in KalKalori `v0.6.3`.
 
 The goal is to avoid hidden assumptions. KalKalori does not automatically decide whether a fluid should be treated as classical moist air, dry gas, wet gas, condensing gas, steam, or water. The user must select the appropriate property path.
 
 ---
 
-## 1. Available Property Paths in v0.6.2
+## 1. Available Property Paths in v0.6.3
 
-| Property path              | Main API                                       | Intended use                                                           | Condensation support              |
+| Property path              | Main API                                       | Intended use                                                           | Phase-change support              |
 | -------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------- |
 | Dry air | `dry_air_props()`, `DryAirPropertyProvider` | Standard dry air properties for sensible gas-side calculations | No |
 | Psychrometric moist air    | `MoistAirState`, PsychroLib adapter            | Classical moist air, RH, dew point, saturation, HVAC-like calculations | Onset / limit helpers only        |
 | Moist-air transport helper | `moist_air_transport_props_from_state()`       | Transport properties of moist air in normal engineering range          | No full wet HX solver             |
-| Water/steam                | `water_steam_props_iapws97()`, `IAPWS97WaterSteamProvider` | Water, saturated water, wet or superheated steam | Inside cooling, condensation and subcooling |
+| Water/steam                | `water_steam_props_iapws97()`, `IAPWS97WaterSteamProvider` | Water, saturated water, wet or superheated steam | Inside cooling/condensation and heating/evaporation |
 | CoolProp pure fluid        | `CoolPropFluidProvider`                        | Pure fluids and pseudo-pure fluids                                     | Single-phase Water only; no pure-water phase change |
 | Explicit gas mixture       | `GasMixtureSpec`, `GasMixturePropertyProvider` | Dry gases, flue gas, hot humid gas with H2O as gas-phase component     | Wet-gas H2O condensation; pure-H2O phase change unsupported |
 | Constant properties        | `ConstantPropertyProvider`                     | Debugging, reference calculations, fixed-property cases                | No                                |
@@ -777,10 +777,11 @@ latent heat and condensate removal must be included,
 the wet gas flows inside or outside bare tubes.
 ```
 
-Pure-steam condensation inside tubes uses the separate v0.6.2 water/steam
-model described in section 16. Acid dew points, multiple condensables and
-explicit liquid-inventory evaporation require later models; do not represent
-them by silently changing the H2O-only wet-gas model.
+Pure-water phase change inside tubes uses the separate v0.6.2/v0.6.3
+water/steam models described in sections 16 and 17. Acid dew points,
+multiple condensables and liquid-inventory evaporation carried by a gas
+require later models; do not represent them by silently changing the
+H2O-only wet-gas model.
 
 ---
 
@@ -846,6 +847,15 @@ forced approximation, not a "this case has no condensation" statement; the
 true duty and outlet temperature may differ from the dry result.
 
 ### 15.4 Scope (v0.6.1)
+
+`GasMixturePropertyProvider` represents the gas phase, not a pre-existing
+liquid-water inventory transported with that gas.  Public Simulation and
+Rating calls therefore compare the specified inlet water ratio with the
+equilibrium vapor capacity before evaluating gas-mixture properties.  An
+exactly saturated inlet (within `1e-10 kg/kg` absolute plus `1e-8` relative
+tolerance) is accepted; a composition above that capacity is rejected with
+`LIQUID_WATER_IN_GAS_INLET_NOT_SUPPORTED`.  Droplet, mist, wall-film and
+other carried-liquid evaporation are not included in v0.6.3.
 
 - Only H2O condenses from a wet gas with a non-condensable dry carrier;
   either the **inside** or **outside** stream may be active.
@@ -994,9 +1004,10 @@ but raises the controlled
 `PHASE_CHANGE_DISABLED_BUT_REQUIRED` error if the required solution crosses
 the saturation dome.
 
-Current limits:
+Cooling-model limits:
 
-- cooling/condensation only; reverse boiling or evaporation is unsupported;
+- this v0.6.2 path covers cooling/condensation; the heating direction uses
+  the v0.6.3 model in section 17;
 - pure-steam phase change is supported only inside tubes and is outside the
   planned scope on the outside side;
 - one active phase-changing side per exchanger call;
@@ -1010,3 +1021,108 @@ Current limits:
 See `core/tests/steam_condensation_examples.ipynb` for public Simulation
 examples covering saturated, wet, superheated, subcooled and low-mass-flux
 cases.
+
+---
+
+## 17. v0.6.3 — Pure-Water Heating and Evaporation Inside Tubes
+
+The public `BareTubeHeatExchanger.simulate()` and `.rate()` APIs support
+pure water heated inside bare tubes through the ordered constant-pressure
+p-h zones:
+
+```text
+PREHEAT -> EVAPORATION -> SUPERHEAT
+```
+
+Any non-empty subset is allowed: subcooled water may remain liquid, reach a
+partial quality, evaporate completely to `x=1`, or continue into superheated
+vapor. A wet inlet with `0 <= x < 1` may leave at a higher quality or as
+superheated vapor. Total pure-water mass flow is conserved and
+`Q_total = m_dot * (h_out - h_in)`; excess heat after `x=1` is never clipped.
+
+The state and provider rules are shared with section 16. Inlet states use
+exactly one of `T_in+p`, `h_in+p`, or `quality_in+p`; Rating targets use one
+of `T_out+p`, `h_out+p`, or `quality_out+p`, or receive duty from explicit
+`Q` or the opposing temperature program. `T+p` exactly on the saturation
+line remains ambiguous and is rejected. `p+x` and saturation helpers remain
+invalid at and above the critical pressure, while supported supercritical
+`T+p` and `p+h` states stay single-phase. Pure-water phase change is
+supported only with `IAPWS97WaterSteamProvider`; CoolProp Water and pure-H2O
+gas-mixture providers are not silently replaced.
+
+Simulation routes to the evaporator only when the full geometry can reach
+saturated liquid. A preheat-only liquid case retains the established
+sensible result and tube hydraulics. For the IAPWS path, `capable=True`
+describes the medium; `possible=True` means the full geometry can reach
+evaporation; `active=True` means the accepted (including surface-margin
+derated) result contains an EVAPORATION zone. Thus a strongly derated result
+may be capable and possible but not active. `PhaseChangeMode.DISABLED`
+allows a final single-phase result, but raises
+`PHASE_CHANGE_DISABLED_BUT_REQUIRED` rather than extrapolating liquid `cp`
+through a required boiling zone.
+
+The transport boundary is
+`core.heat_transfer.evaporation_inside_shah1982`. It implements Shah's
+(1982) saturated, pre-dryout flow-boiling correlation for horizontal and
+vertical-upward tubes. Pressure, critical pressure, inner diameter, mass
+flux, quality, inside-wetted-area heat flux, endpoint densities, liquid
+transport data and latent heat are explicit SI inputs. Orientation remains
+a tube-geometry property and is required only for an active evaporation
+zone. Downward and inclined-downward boiling are rejected because those
+variants are not supplied by the selected primary equations.
+
+`core.phase_change.water_evaporation` obtains one IAPWS saturation snapshot
+and uses eight-point Gauss-Legendre nodes strictly inside each quality
+interval, so the singular `x=0` and `x=1` endpoints are never sent to the
+local correlation. The zone HTC is the duty/quality-weighted harmonic value:
+
+```text
+alpha_zone = 1 / mean(1 / alpha_local)
+```
+
+This follows `dA = dQ / (alpha * deltaT)` and is not an arithmetic HTC.
+Because Shah (1982) depends on boiling number, the multi-zone solver obtains
+the inside-area heat flux from a bounded fixed point against the wall and
+outside resistances. It reports iterations, residual and convergence; no
+arbitrary heat-flux correction factor is used.
+
+Each zone reports duty, inside/outside HTC, outer-area `U`, outer area and
+`UA`. The authoritative totals are:
+
+```text
+UA_total = sum(U_zone * A_zone)
+U_equivalent = UA_total / A_total
+```
+
+`zone_alpha_evaporation` is the physical boiling-zone value used to validate
+Shah (1982). Top-level `inside_alpha_equivalent` is instead obtained by
+inverting the complete outer-area resistance network so it reconstructs
+`U_equivalent`; `inside_alpha_area_weighted` is descriptive only. Every
+trial duty updates the opposing outlet/mean temperature, current properties,
+flow coefficient and hydraulics through the neutral outside-side evaluator.
+Repeated IAPWS and outside states are cached.
+
+Rating uses the same p-h partition, correlation, quality integration,
+heat-flux solve and zone-U calculation as Simulation. It reports required
+area/UA, actual scaled UA, overdesign and UA margin without recalculating
+physics through an arithmetic alpha. Effectiveness-only Rating is rejected
+for an active phase-changing stream because no unique sensible capacity rate
+defines its duty.
+
+Current limits:
+
+- pure-water evaporation is supported only inside tubes;
+- at most one side may have active phase change;
+- Shah (1982) does not predict CHF, dryout quality or post-dryout heat
+  transfer; warnings expose those applicability limits without clipping;
+- two-phase tube pressure drop is unsupported: active boiling returns no
+  complete tube-side hydraulic result and generic inside-dp fields are NaN;
+- the model is 0D; zone fractions are thermal area allocations, not resolved
+  axial phase-front locations;
+- gas-mixture providers describe gas phase only. A supersaturated inlet is
+  rejected by `LIQUID_WATER_IN_GAS_INLET_NOT_SUPPORTED`; droplet/mist,
+  wall-film, condensate re-evaporation, drainage, carryover and re-entrainment
+  are not modelled.
+
+See `core/tests/water_steam_evaporation_examples.ipynb` for executed public
+Simulation, Rating and duty-controlled examples.

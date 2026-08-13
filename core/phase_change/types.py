@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Core neutral types for phase-change handling (v0.6.1).
+"""Core neutral types for phase-change handling.
 
 Three distinct concepts (see module docstrings in this package for where
 each is produced):
@@ -19,11 +19,8 @@ each is produced):
    because the exchanger is thermodynamically in the dry regime)?
 
 Naming is deliberately neutral (not "outside water condensation ..."): the
-same types remain stable as later patches add evaporation, multiple
-condensable species, etc. (see ``docs/roadmap.md``). Only wet-gas H2O
-``CONDENSATION`` (inside or outside) is solved in v0.6.1; ``EVAPORATION``
-exists only to keep the enum's API shape stable for later patches and must
-not be produced by a v0.6.1 code path.
+same types cover wet-gas condensation and v0.6.3 pure-water evaporation and
+remain extensible to multiple condensable species (see ``docs/roadmap.md``).
 """
 
 from __future__ import annotations
@@ -69,10 +66,8 @@ class PhaseChangeMode(str, Enum):
 class PhaseChangeDirection(str, Enum):
     """Which direction of phase change (if any) is active for a side.
 
-    Only ``NONE`` and ``CONDENSATION`` are solved in v0.6.1.
-    ``EVAPORATION`` is a reserved value for a later patch (droplet/mist
-    evaporation, re-evaporation of condensate) and must never be returned
-    by v0.6.1 code.
+    ``EVAPORATION`` is produced only for active in-tube pure-water boiling.
+    It does not imply droplet/mist evaporation or condensate re-evaporation.
     """
 
     NONE = "none"
@@ -232,7 +227,7 @@ class PhaseChangeResult:
 
 @dataclass(frozen=True)
 class WaterSteamPhaseChangeResult:
-    """Steam-specific side result without wet-gas composition placeholders.
+    """Pure-water/steam result without wet-gas composition placeholders.
 
     Zone HTCs remain local to their thermal zones. For a multi-zone result,
     ``inside_alpha_equivalent`` is the resistance-consistent whole-exchanger
@@ -308,14 +303,51 @@ class WaterSteamPhaseChangeResult:
     inside_alpha_equivalent: float | None = None
     inside_alpha_area_weighted: float | None = None
 
+    # Additive v0.6.3 water-heating / evaporation diagnostics.  The
+    # condensation fields above deliberately remain unchanged so existing
+    # positional construction and consumers keep their v0.6.2 meaning.
+    Q_preheat: float = 0.0
+    Q_evaporation: float = 0.0
+    Q_superheat: float = 0.0
+    A_preheat: float = 0.0
+    A_evaporation: float = 0.0
+    A_superheat: float = 0.0
+    zone_fraction_preheat: float = 0.0
+    zone_fraction_evaporation: float = 0.0
+    zone_fraction_superheat: float = 0.0
+    zone_alpha_preheat: float | None = None
+    zone_alpha_evaporation: float | None = None
+    zone_alpha_superheat: float | None = None
+    zone_U_preheat: float | None = None
+    zone_U_evaporation: float | None = None
+    zone_U_superheat: float | None = None
+    zone_UA_preheat: float = 0.0
+    zone_UA_evaporation: float = 0.0
+    zone_UA_superheat: float = 0.0
+    m_dot_evaporated: float = 0.0
+    heat_flux_inner_evaporation: float | None = None
+    heat_flux_outer_evaporation: float | None = None
+    heat_flux_converged: bool = True
+    heat_flux_iterations: int = 0
+    heat_flux_residual: float = 0.0
+    cache_hits: int = 0
+
     @property
     def Q_sensible(self) -> float:
+        if self.direction is PhaseChangeDirection.EVAPORATION:
+            return self.Q_preheat + self.Q_superheat
         return self.Q_desuperheat + self.Q_subcooling
 
     @property
     def Q_latent(self) -> float:
+        if self.direction is PhaseChangeDirection.EVAPORATION:
+            return self.Q_evaporation
         return self.Q_condensation
 
     @property
     def is_condensing(self) -> bool:
         return self.active and self.direction is PhaseChangeDirection.CONDENSATION
+
+    @property
+    def is_evaporating(self) -> bool:
+        return self.active and self.direction is PhaseChangeDirection.EVAPORATION

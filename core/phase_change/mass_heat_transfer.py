@@ -25,9 +25,9 @@ dry-carrier-gas mass-flux basis is:
     m_dot_condensation = mass_transfer_coefficient * (W_bulk - W_sat_surface) * A_wet   [kg H2O/s]
 
 only when ``W_bulk > W_sat_surface`` (surface below the local dew point);
-otherwise no condensation occurs (v0.6.0 does not model re-evaporation of
-the gas-phase vapor -- see ``docs/roadmap.md``, v0.6.2 for droplet/mist
-evaporation).
+otherwise no condensation occurs. This wet-gas model does not represent a
+liquid inventory and cannot model droplet, mist, film or condensate
+re-evaporation; those require a separate interphase-transfer model.
 
 Ref:
 - Chilton, T.H. & Colburn, A.P. (1934), "Mass Transfer (Absorption)

@@ -1056,7 +1056,7 @@ class BareTubeHeatExchanger:
         See ``core.models.simulation.run_simulation`` for the full algorithm,
         arguments and result fields.
 
-        Phase change (v0.6.1)
+        Phase change (v0.6.3)
         ----------------------
         After the sensible-only dry baseline above, this method calls
         ``core.phase_change.integration.apply_phase_change``, which detects
@@ -1067,7 +1067,10 @@ class BareTubeHeatExchanger:
         condensation inside or outside. Only one side can be active.
         See that module and ``core.phase_change.types.PhaseChangeMode`` for
         the full AUTO/DISABLED semantics, and ``docs/property_models.md``
-        for the physical model. The ``phase_change_*`` keyword arguments
+        Pure IAPWS water may additionally evaporate only inside tubes through
+        PREHEAT/EVAPORATION/SUPERHEAT zones. See
+        ``core.phase_change.steam_integration`` and
+        ``core.phase_change.water_evaporator``. The ``phase_change_*`` keyword arguments
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
@@ -1087,17 +1090,50 @@ class BareTubeHeatExchanger:
             relaxation_factor=phase_change_relaxation_factor,
         )
         from core.phase_change.steam_integration import (
+            apply_water_evaporation_simulation,
             apply_water_steam_simulation,
+            is_inside_water_evaporation_case,
             is_inside_water_steam_case,
+            reject_outside_pure_water_evaporation_crossing,
             reject_unsupported_outside_pure_steam,
             translate_saturation_crossing_error,
+            water_evaporation_reaches_saturation,
         )
         from core.phase_change.capability import (
             guard_pure_water_single_phase_provider,
+            reject_liquid_water_in_gas_inlet,
             reject_unsupported_pure_water_phase_crossing,
         )
 
+        reject_liquid_water_in_gas_inlet(
+            inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
+        )
+        reject_liquid_water_in_gas_inlet(
+            outside.provider, T_in=outside.T_in, p=outside.p, side="outside"
+        )
         reject_unsupported_outside_pure_steam(outside)
+        if (
+            is_inside_water_evaporation_case(inside, outside)
+            and water_evaporation_reaches_saturation(
+                self, inside, outside, euler_provider=euler_provider
+            )
+        ):
+            return apply_water_evaporation_simulation(
+                self, inside, outside,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet,
+                K_outlet=K_outlet,
+                K_turn=K_turn,
+                euler_provider=euler_provider,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                settings=settings,
+            )
         if is_inside_water_steam_case(inside):
             return apply_water_steam_simulation(
                 self, inside, outside,
@@ -1152,7 +1188,10 @@ class BareTubeHeatExchanger:
                 relative_alfa_tolerance=relative_alfa_tolerance,
             )
         except ValueError as exc:
-            translate_saturation_crossing_error(inside, exc)
+            translate_saturation_crossing_error(inside, exc, outside)
+        reject_outside_pure_water_evaporation_crossing(
+            outside, T_out=dry_result.T_out_outside
+        )
         reject_unsupported_pure_water_phase_crossing(
             inside.provider,
             T_in=inside.T_in,
@@ -1225,14 +1264,17 @@ class BareTubeHeatExchanger:
         For Simulation (computing achievable outlet temperatures from known
         inlets), see ``.simulate(...)``.
 
-        Phase change (v0.6.1)
+        Phase change (v0.6.3)
         ----------------------
         See
         ``core.phase_change.rating_integration.apply_phase_change_to_rating``
         for inside/outside wet-gas H2O condensation Rating and its scope.
         The active wet side requires a specified mass flow and temperature
         program; duty must come from explicit ``Q`` or the fully specified
-        non-condensing side. ``phase_change_mode`` is per ``BalanceSideSpec``.
+        non-condensing side. Pure-water tube-side evaporation also accepts
+        IAPWS outlet quality, enthalpy or unambiguous temperature and shares
+        its zone physics with Simulation. ``phase_change_mode`` is per
+        ``BalanceSideSpec``.
         """
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
@@ -1251,13 +1293,46 @@ class BareTubeHeatExchanger:
             relaxation_factor=phase_change_relaxation_factor,
         )
         from core.phase_change.steam_integration import (
+            apply_water_evaporation_rating,
             apply_water_steam_rating,
+            is_inside_water_evaporation_rating_case,
             is_inside_water_steam_case,
+            reject_outside_pure_water_evaporation_rating,
             reject_unsupported_outside_pure_steam,
             translate_saturation_crossing_error,
         )
+        from core.phase_change.capability import reject_liquid_water_in_gas_inlet
 
+        reject_liquid_water_in_gas_inlet(
+            inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
+        )
+        reject_liquid_water_in_gas_inlet(
+            outside.provider, T_in=outside.T_in, p=outside.p, side="outside"
+        )
         reject_unsupported_outside_pure_steam(outside)
+        reject_outside_pure_water_evaporation_rating(
+            outside, inside, Q=Q
+        )
+        if is_inside_water_evaporation_rating_case(
+            inside,
+            outside,
+            Q=Q,
+            effectiveness=effectiveness,
+        ):
+            return apply_water_evaporation_rating(
+                self, inside, outside,
+                Q=Q, effectiveness=effectiveness,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+                euler_provider=euler_provider,
+                include_simulation=include_simulation,
+                over_specified_tolerance=over_specified_tolerance,
+                max_iterations=max_iterations,
+                wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                relaxation_factor=relaxation_factor,
+                settings=settings,
+            )
         if is_inside_water_steam_case(inside):
             return apply_water_steam_rating(
                 self, inside, outside,

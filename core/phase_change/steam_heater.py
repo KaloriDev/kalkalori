@@ -25,6 +25,12 @@ from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeOrientation
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
 from core.heat_transfer.outside_flow import outside_flow_from_mass_flow
+from core.heat_transfer.tube_resistance import (
+    equivalent_inside_alpha_outer_basis as _equivalent_inside_alpha_outer_basis,
+    fixed_outer_basis_resistances as _fixed_outer_basis_resistances,
+    outer_basis_resistance_components as _outer_basis_resistance_components,
+    overall_u_outer_basis as _overall_u_outer_basis,
+)
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 from core.properties.common import FluidTransportProperties
 from core.properties.water import (
@@ -577,121 +583,6 @@ def _outside_outlet_temperature(
             return updated
         T_out = updated
     return T_out
-
-
-def _overall_u_outer_basis(
-    *,
-    alpha_inside: float,
-    alpha_outside: float,
-    D_i: float,
-    D_o: float,
-    wall_k: float,
-) -> float:
-    resistance_per_outer_area = sum(
-        _outer_basis_resistance_components(
-            alpha_inside=alpha_inside,
-            alpha_outside=alpha_outside,
-            D_i=D_i,
-            D_o=D_o,
-            wall_k=wall_k,
-        )
-    )
-    return 1.0 / resistance_per_outer_area
-
-
-def _outer_basis_resistance_components(
-    *,
-    alpha_inside: float,
-    alpha_outside: float,
-    D_i: float,
-    D_o: float,
-    wall_k: float,
-) -> tuple[float, float, float]:
-    """Return inside, wall and outside resistances per outer area."""
-    if not math.isfinite(alpha_inside) or alpha_inside <= 0.0:
-        raise ValueError("alpha_inside must be positive and finite.")
-    wall_resistance, outside_resistance = _fixed_outer_basis_resistances(
-        alpha_outside=alpha_outside,
-        D_i=D_i,
-        D_o=D_o,
-        wall_k=wall_k,
-    )
-    inside_resistance = D_o / (D_i * alpha_inside)
-    if not math.isfinite(inside_resistance) or inside_resistance <= 0.0:
-        raise ValueError("Inside thermal resistance must be positive and finite.")
-    return inside_resistance, wall_resistance, outside_resistance
-
-
-def _fixed_outer_basis_resistances(
-    *,
-    alpha_outside: float,
-    D_i: float,
-    D_o: float,
-    wall_k: float,
-) -> tuple[float, float]:
-    """Return the wall and outside terms shared by forward and inverse U."""
-    for name, value in (
-        ("alpha_outside", alpha_outside),
-        ("D_i", D_i),
-        ("D_o", D_o),
-        ("wall_k", wall_k),
-    ):
-        if not math.isfinite(value) or value <= 0.0:
-            raise ValueError(f"{name} must be positive and finite.")
-    if D_o <= D_i:
-        raise ValueError("D_o must be greater than D_i for a tube wall.")
-
-    components = (
-        D_o * math.log(D_o / D_i) / (2.0 * wall_k),
-        1.0 / alpha_outside,
-    )
-    if any(not math.isfinite(value) or value <= 0.0 for value in components):
-        raise ValueError("Outer-basis thermal resistances must be positive and finite.")
-    return components
-
-
-def _equivalent_inside_alpha_outer_basis(
-    *,
-    U_equivalent: float,
-    alpha_outside: float,
-    D_i: float,
-    D_o: float,
-    wall_k: float,
-) -> float:
-    """Invert the outer-basis resistance network for the inside HTC."""
-    if not math.isfinite(U_equivalent) or U_equivalent <= 0.0:
-        raise ValueError("U_equivalent must be positive and finite.")
-
-    wall_resistance, outside_resistance = _fixed_outer_basis_resistances(
-        alpha_outside=alpha_outside,
-        D_i=D_i,
-        D_o=D_o,
-        wall_k=wall_k,
-    )
-    inside_resistance = 1.0 / U_equivalent - wall_resistance - outside_resistance
-    if not math.isfinite(inside_resistance) or inside_resistance <= 0.0:
-        raise ValueError(
-            "U_equivalent leaves no positive finite inside thermal resistance."
-        )
-
-    alpha_inside = (D_o / D_i) / inside_resistance
-    if not math.isfinite(alpha_inside) or alpha_inside <= 0.0:
-        raise ValueError("Equivalent inside HTC must be positive and finite.")
-
-    reconstructed = _overall_u_outer_basis(
-        alpha_inside=alpha_inside,
-        alpha_outside=alpha_outside,
-        D_i=D_i,
-        D_o=D_o,
-        wall_k=wall_k,
-    )
-    if not math.isclose(
-        reconstructed, U_equivalent, rel_tol=2.0e-12, abs_tol=1.0e-12
-    ):
-        raise ValueError(
-            "Equivalent inside HTC does not reconstruct U_equivalent."
-        )
-    return alpha_inside
 
 
 def _build_solution(

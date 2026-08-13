@@ -106,6 +106,10 @@ def shah2009_condensation_alpha_local(
         raise ValueError("liquid_density must be greater than vapor_density.")
     if not isinstance(orientation, TubeOrientation):
         raise ValueError("orientation must be an explicit TubeOrientation value.")
+    if orientation is TubeOrientation.VERTICAL_UPWARD:
+        raise ValueError(
+            "Shah 2009 condensation does not support upward tube flow."
+        )
     if not math.isfinite(quality) or not 0.0 < quality < 1.0:
         raise ValueError("Local condensation quality must satisfy 0 < x < 1.")
 
