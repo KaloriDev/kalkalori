@@ -241,6 +241,9 @@ published paper does not state one universal mass-flux or heat-flux interval
 for all fluids; the implementation therefore reports equation-level
 applicability diagnostics (including the underlying turbulent
 Dittus-Boelter Reynolds range) without inventing or clipping a global range.
+KalKalori integrates the local coefficient harmonically over quality and
+solves the correlation's inside-area heat flux as a bounded fixed point in
+each v0.6.3 evaporation zone.
 
 ---
 

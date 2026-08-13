@@ -1056,7 +1056,7 @@ class BareTubeHeatExchanger:
         See ``core.models.simulation.run_simulation`` for the full algorithm,
         arguments and result fields.
 
-        Phase change (v0.6.1)
+        Phase change (v0.6.3)
         ----------------------
         After the sensible-only dry baseline above, this method calls
         ``core.phase_change.integration.apply_phase_change``, which detects
@@ -1067,7 +1067,10 @@ class BareTubeHeatExchanger:
         condensation inside or outside. Only one side can be active.
         See that module and ``core.phase_change.types.PhaseChangeMode`` for
         the full AUTO/DISABLED semantics, and ``docs/property_models.md``
-        for the physical model. The ``phase_change_*`` keyword arguments
+        Pure IAPWS water may additionally evaporate only inside tubes through
+        PREHEAT/EVAPORATION/SUPERHEAT zones. See
+        ``core.phase_change.steam_integration`` and
+        ``core.phase_change.water_evaporator``. The ``phase_change_*`` keyword arguments
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
@@ -1261,14 +1264,17 @@ class BareTubeHeatExchanger:
         For Simulation (computing achievable outlet temperatures from known
         inlets), see ``.simulate(...)``.
 
-        Phase change (v0.6.1)
+        Phase change (v0.6.3)
         ----------------------
         See
         ``core.phase_change.rating_integration.apply_phase_change_to_rating``
         for inside/outside wet-gas H2O condensation Rating and its scope.
         The active wet side requires a specified mass flow and temperature
         program; duty must come from explicit ``Q`` or the fully specified
-        non-condensing side. ``phase_change_mode`` is per ``BalanceSideSpec``.
+        non-condensing side. Pure-water tube-side evaporation also accepts
+        IAPWS outlet quality, enthalpy or unambiguous temperature and shares
+        its zone physics with Simulation. ``phase_change_mode`` is per
+        ``BalanceSideSpec``.
         """
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings

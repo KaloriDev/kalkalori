@@ -5,6 +5,19 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.6.3] — In-tube water evaporation
+
+### Added
+
+- Added pure-water inlet/outlet evaporation states with liquid preheating,
+  partial or complete in-tube evaporation, and optional vapor superheating.
+- Integrated shared Shah (1982) flow-boiling zone physics into Simulation
+  and Rating.
+- Added a controlled guard for wet-gas inlets whose composition implies
+  unsupported carried liquid water.
+
+---
+
 ## [0.6.2] — Steam condensation
 
 ### Added

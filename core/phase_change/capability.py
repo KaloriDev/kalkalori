@@ -21,8 +21,9 @@ already normalizes all three bases uniformly). There is no separate
 side built via
 ``core.properties.gas_mixture.gas_mixture_from_dry_composition_and_water_ratio``
 *is* a ``GasMixturePropertyProvider``, so it is already covered by this one
-path. v0.6.2 additionally recognizes the dedicated IAPWS provider as the
-distinct supported pure-water/steam capability path. CoolProp Water and
+path. v0.6.3 recognizes the dedicated IAPWS provider as the distinct
+supported pure-water/steam condensation and evaporation capability path.
+CoolProp Water and
 pure-H2O ``GasMixturePropertyProvider`` remain authoritative for supported
 single-phase calculations, but are explicitly marked phase-change-
 unsupported; constant-property providers and dry gas-mixture specs with no
@@ -99,7 +100,7 @@ def detect_phase_change_capability(provider: object) -> PhaseChangeCapability:
 
     Returns:
         PhaseChangeCapability describing whether/how this provider can
-            undergo wet-gas phase change in the v0.6.1 model.
+            undergo wet-gas or supported pure-water phase change.
     """
     from core.properties.coolprop_backend import CoolPropFluidProvider
     from core.properties.water import IAPWS97WaterSteamProvider
@@ -194,8 +195,8 @@ def is_pure_water_provider(provider: object) -> bool:
     """Return whether ``provider`` unambiguously represents pure H2O.
 
     Pure water/steam deliberately does not become a wet-gas capability: the
-    dry-carrier ``W`` basis is undefined and its condensation model belongs
-    to v0.6.2.
+    dry-carrier ``W`` basis is undefined; its dedicated IAPWS tube model
+    handles condensation and evaporation.
     """
     return pure_water_provider_kind(provider) is not None
 
@@ -326,7 +327,7 @@ def _detect_gas_mixture_capability(
     if total_dry <= 0.0:
         # A pure water-vapor stream has no non-condensable carrier gas; the
         # W = kg vapor / kg dry carrier basis used throughout this package
-        # is undefined; the dedicated v0.6.2 water/steam adapter handles it.
+        # is undefined; the dedicated water/steam adapter handles it.
         return PhaseChangeCapability(
             capable=False,
             component=CONDENSABLE_COMPONENT_LABEL,

@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Core neutral types for phase-change handling (v0.6.1).
+"""Core neutral types for phase-change handling.
 
 Three distinct concepts (see module docstrings in this package for where
 each is produced):
@@ -19,11 +19,8 @@ each is produced):
    because the exchanger is thermodynamically in the dry regime)?
 
 Naming is deliberately neutral (not "outside water condensation ..."): the
-same types remain stable as later patches add evaporation, multiple
-condensable species, etc. (see ``docs/roadmap.md``). Only wet-gas H2O
-``CONDENSATION`` (inside or outside) is solved in v0.6.1; ``EVAPORATION``
-exists only to keep the enum's API shape stable for later patches and must
-not be produced by a v0.6.1 code path.
+same types cover wet-gas condensation and v0.6.3 pure-water evaporation and
+remain extensible to multiple condensable species (see ``docs/roadmap.md``).
 """
 
 from __future__ import annotations
@@ -69,10 +66,8 @@ class PhaseChangeMode(str, Enum):
 class PhaseChangeDirection(str, Enum):
     """Which direction of phase change (if any) is active for a side.
 
-    Only ``NONE`` and ``CONDENSATION`` are solved in v0.6.1.
-    ``EVAPORATION`` is a reserved value for a later patch (droplet/mist
-    evaporation, re-evaporation of condensate) and must never be returned
-    by v0.6.1 code.
+    ``EVAPORATION`` is produced only for active in-tube pure-water boiling.
+    It does not imply droplet/mist evaporation or condensate re-evaporation.
     """
 
     NONE = "none"
@@ -232,7 +227,7 @@ class PhaseChangeResult:
 
 @dataclass(frozen=True)
 class WaterSteamPhaseChangeResult:
-    """Steam-specific side result without wet-gas composition placeholders.
+    """Pure-water/steam result without wet-gas composition placeholders.
 
     Zone HTCs remain local to their thermal zones. For a multi-zone result,
     ``inside_alpha_equivalent`` is the resistance-consistent whole-exchanger

@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Stable warning codes for ``core.phase_change`` (v0.6.1).
+"""Stable warning codes for ``core.phase_change``.
 
 These are plain string codes, consistent with the rest of KalKalori
 (``core.common.warnings.ModelWarning.code`` is a free-form string; there is

@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.6.2`
+**Current version:** `v0.6.3`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -85,10 +85,21 @@ scope may be adjusted based on validation results as each step lands.
 - Shared Simulation/Rating zone physics with final pressure/enthalpy endpoint states.
 - Pure-steam condensation outside tubes is outside planned scope.
 
-#### v0.6.3 — Explicit-inventory evaporation — PLANNED
+#### v0.6.3 — Pure-water heating and evaporation inside tubes — IMPLEMENTED / ready for validation
 
-- Partial evaporation from an explicitly specified liquid or droplet
-  inventory in a gas stream.
+- Subcooled-liquid preheating to saturated liquid.
+- Partial and complete pure-water evaporation inside bare tubes.
+- Wet pure-water/steam inlets with increasing vapor quality.
+- Optional superheating after complete evaporation.
+- Shah (1982) saturated flow boiling with self-consistent heat flux.
+- Shared Simulation/Rating p-h zone physics and final IAPWS endpoint states.
+- One active phase-changing side and explicit unsupported two-phase pressure
+  drop status.
+
+**Deferred without an assigned release:** evaporation of liquid water carried
+by a gas. Droplets, mist, wall films and other explicit dispersed-liquid
+inventories require a separate interphase-transfer and liquid-inventory
+model; they are not part of v0.6.3.
 
 #### v0.6.4 — Condensate management — PLANNED
 
