@@ -70,6 +70,16 @@ from .thermal_iteration import (
     solve_iterative_thermal_state,
 )
 
+from .fin_efficiency import (
+    DEFAULT_FIN_RADIAL_CELLS,
+    FinEfficiencyResult,
+    annular_fin_efficiency,
+    calculate_fin_efficiency,
+    fin_efficiency,
+    overall_surface_efficiency,
+    effective_outside_area,
+)
+
 from core.common.warnings import (
     ApplicabilityRange,
     ModelWarning,
@@ -137,6 +147,15 @@ __all__ = [
     "WallTemperatureEnvelope",
     "estimate_wall_temperature_envelope",
     "solve_iterative_thermal_state",
+
+    # Circular annular-fin efficiency
+    "DEFAULT_FIN_RADIAL_CELLS",
+    "FinEfficiencyResult",
+    "annular_fin_efficiency",
+    "calculate_fin_efficiency",
+    "fin_efficiency",
+    "overall_surface_efficiency",
+    "effective_outside_area",
 
     # Warnings and applicability checks
     "ApplicabilityRange",

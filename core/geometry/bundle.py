@@ -21,8 +21,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 
-from core.geometry.tube import BaseTube
+from core.geometry.tube import BaseTube, CircularFinnedTube
 
 
 class TubePathType(str, Enum):
@@ -95,8 +96,15 @@ class TubeBundle:
     def __post_init__(self) -> None:
         if self.n_rows <= 0 or self.n_tubes_per_row <= 0:
             raise ValueError("n_rows and n_tubes_per_row must be positive integers.")
-        if self.pitch_transverse <= 0.0 or self.pitch_longitudinal <= 0.0:
-            raise ValueError("pitch_transverse and pitch_longitudinal must be positive.")
+        if (
+            not math.isfinite(self.pitch_transverse)
+            or not math.isfinite(self.pitch_longitudinal)
+            or self.pitch_transverse <= 0.0
+            or self.pitch_longitudinal <= 0.0
+        ):
+            raise ValueError(
+                "pitch_transverse and pitch_longitudinal must be positive and finite."
+            )
         if self.n_passes_tube <= 0:
             raise ValueError("n_passes_tube must be a positive integer.")
         if self.layout.lower() not in ("inline", "staggered"):
@@ -116,6 +124,9 @@ class TubeBundle:
                 "(a single-pass bundle has no U-bend). Bend arc length and "
                 "bend pressure loss are not yet included in any tube path type."
             )
+
+        if isinstance(self.tube, CircularFinnedTube):
+            self._validate_circular_fin_clearance()
 
     # -----------------------
     # Tube counts
@@ -146,6 +157,46 @@ class TubeBundle:
     @property
     def total_outer_area(self) -> float:
         return self.n_tubes_total * self.tube.area_outer
+
+    @property
+    def total_primary_outside_area(self) -> float:
+        """Exposed primary outside area for all tubes [m2]."""
+        area = getattr(self.tube, "area_primary_outside", self.tube.area_outer)
+        return self.n_tubes_total * float(area)
+
+    @property
+    def total_fin_area(self) -> float:
+        """Fin-attributed gross solver area for all tubes [m2]."""
+        return self.n_tubes_total * float(getattr(self.tube, "area_fin", 0.0))
+
+    @property
+    def total_fin_geometric_area(self) -> float:
+        return self.n_tubes_total * float(
+            getattr(self.tube, "area_fin_geometric", 0.0)
+        )
+
+    @property
+    def total_outer_geometric_area(self) -> float:
+        area = getattr(self.tube, "area_outside_geometric", self.tube.area_outer)
+        return self.n_tubes_total * float(area)
+
+    @property
+    def root_conduction_resistance(self) -> float:
+        """Equivalent root-layer resistance of all tubes in parallel [K/W]."""
+        if not isinstance(self.tube, CircularFinnedTube):
+            return 0.0
+        return self.tube.root_conduction_resistance_for_tubes(self.n_tubes_total)
+
+    @property
+    def fin_contact_thermal_resistance(self) -> float:
+        """Equivalent declared fin/root contact resistance [K/W]."""
+        if not isinstance(self.tube, CircularFinnedTube):
+            return 0.0
+        return self.tube.contact_thermal_resistance_for_tubes(self.n_tubes_total)
+
+    @property
+    def contact_thermal_resistance(self) -> float:
+        return self.fin_contact_thermal_resistance
 
     # -----------------------
     # Internal flow geometry (per pass)
@@ -192,3 +243,127 @@ class TubeBundle:
         height = self.n_tubes_per_row * self.pitch_transverse
         width = float(getattr(tube, "length_effective"))
         return height * width
+
+    @property
+    def projected_blocking_area_per_length(self) -> float:
+        """Per-tube flow-normal periodic blockage [m2/m]."""
+        return float(
+            getattr(
+                self.tube,
+                "projected_blocking_area_per_length",
+                getattr(self.tube, "D_o"),
+            )
+        )
+
+    @property
+    def projected_blocking_area_per_row(self) -> float:
+        """Flow-normal blockage at a row's controlling plane [m2]."""
+        return (
+            self.n_tubes_per_row
+            * self.projected_blocking_area_per_length
+            * float(getattr(self.tube, "length_effective"))
+        )
+
+    @property
+    def diagonal_pitch(self) -> float:
+        return math.sqrt(
+            self.pitch_longitudinal * self.pitch_longitudinal
+            + (0.5 * self.pitch_transverse) ** 2
+        )
+
+    @property
+    def transverse_free_flow_gap(self) -> float:
+        return self.pitch_transverse - self.projected_blocking_area_per_length
+
+    @property
+    def diagonal_free_flow_gap(self) -> float:
+        return 2.0 * (
+            self.diagonal_pitch - self.projected_blocking_area_per_length
+        )
+
+    @property
+    def minimum_free_flow_gap(self) -> float:
+        if self.layout.lower() == "inline":
+            gap = self.transverse_free_flow_gap
+        else:
+            gap = min(
+                self.transverse_free_flow_gap,
+                self.diagonal_free_flow_gap,
+            )
+        if not math.isfinite(gap) or gap <= 0.0:
+            raise ValueError(
+                "Tube-bank geometry leaves no positive minimum free-flow gap."
+            )
+        return gap
+
+    @property
+    def minimum_free_flow_area(self) -> float:
+        """Minimum periodic open cross-section, face-area compatible [m2]."""
+        area = (
+            self.n_tubes_per_row
+            * float(getattr(self.tube, "length_effective"))
+            * self.minimum_free_flow_gap
+        )
+        if not math.isfinite(area) or area <= 0.0:
+            raise ValueError("minimum_free_flow_area must be positive and finite.")
+        return area
+
+    @property
+    def reference_flow_area(self) -> float:
+        """Reference-area alias used by finned-tube correlation requests."""
+        return self.minimum_free_flow_area
+
+    @property
+    def maximum_to_face_velocity_ratio(self) -> float:
+        return self.frontal_flow_area / self.minimum_free_flow_area
+
+    def face_velocity(self, m_dot: float, rho: float) -> float:
+        """Outside approach velocity for mass flow ``m_dot`` [m/s]."""
+        _validate_flow_state(m_dot=m_dot, rho=rho)
+        return m_dot / (rho * self.frontal_flow_area)
+
+    def reference_velocity(self, m_dot: float, rho: float) -> float:
+        """Velocity on ``minimum_free_flow_area`` [m/s]."""
+        _validate_flow_state(m_dot=m_dot, rho=rho)
+        return m_dot / (rho * self.minimum_free_flow_area)
+
+    def maximum_gap_velocity(self, m_dot: float, rho: float) -> float:
+        return self.reference_velocity(m_dot=m_dot, rho=rho)
+
+    def _validate_circular_fin_clearance(self) -> None:
+        """Reject physical fin overlap independently of averaged blockage."""
+        D_fin = self.tube.D_fin
+        if self.pitch_transverse <= D_fin:
+            raise ValueError(
+                "pitch_transverse must be greater than D_fin to avoid "
+                "overlap of neighboring finned tubes in the same row."
+            )
+
+        if self.layout.lower() == "inline":
+            if self.pitch_longitudinal <= D_fin:
+                raise ValueError(
+                    "pitch_longitudinal must be greater than D_fin for an "
+                    "inline circular-finned tube bank."
+                )
+        else:
+            if self.diagonal_pitch <= D_fin:
+                raise ValueError(
+                    "Diagonal tube-center spacing must be greater than D_fin for "
+                    "a staggered circular-finned tube bank."
+                )
+            # Rows separated by two longitudinal pitches are aligned again in
+            # a staggered bank. Check that second-neighbour spacing as well as
+            # the nearest diagonal spacing above.
+            if self.n_rows >= 3 and 2.0 * self.pitch_longitudinal <= D_fin:
+                raise ValueError(
+                    "Twice pitch_longitudinal must be greater than D_fin to "
+                    "avoid overlap of aligned rows in a staggered circular-"
+                    "finned tube bank."
+                )
+
+
+def _validate_flow_state(*, m_dot: float, rho: float) -> None:
+    if not math.isfinite(m_dot) or m_dot <= 0.0:
+        raise ValueError("m_dot must be positive and finite.")
+    if not math.isfinite(rho) or rho <= 0.0:
+        raise ValueError("rho must be positive and finite.")
