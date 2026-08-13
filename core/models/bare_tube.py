@@ -1094,9 +1094,16 @@ class BareTubeHeatExchanger:
         )
         from core.phase_change.capability import (
             guard_pure_water_single_phase_provider,
+            reject_liquid_water_in_gas_inlet,
             reject_unsupported_pure_water_phase_crossing,
         )
 
+        reject_liquid_water_in_gas_inlet(
+            inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
+        )
+        reject_liquid_water_in_gas_inlet(
+            outside.provider, T_in=outside.T_in, p=outside.p, side="outside"
+        )
         reject_unsupported_outside_pure_steam(outside)
         if is_inside_water_steam_case(inside):
             return apply_water_steam_simulation(
@@ -1256,7 +1263,14 @@ class BareTubeHeatExchanger:
             reject_unsupported_outside_pure_steam,
             translate_saturation_crossing_error,
         )
+        from core.phase_change.capability import reject_liquid_water_in_gas_inlet
 
+        reject_liquid_water_in_gas_inlet(
+            inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
+        )
+        reject_liquid_water_in_gas_inlet(
+            outside.provider, T_in=outside.T_in, p=outside.p, side="outside"
+        )
         reject_unsupported_outside_pure_steam(outside)
         if is_inside_water_steam_case(inside):
             return apply_water_steam_rating(

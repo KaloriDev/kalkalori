@@ -391,7 +391,7 @@ def test_rating_rejects_second_auto_phase_changing_wet_gas_side():
         )
     )
     outside = BalanceSideSpec(
-        provider=wet, p=101325.0, m_dot=10.0, T_in=300.0,
+        provider=wet, p=101325.0, m_dot=10.0, T_in=340.0,
     )
     with pytest.raises(MultiplePhaseChangeSidesError):
         _hx().rate(inside, outside)

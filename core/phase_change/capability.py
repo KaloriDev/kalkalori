@@ -48,11 +48,23 @@ from core.phase_change.types import PhaseChangeCapability
 CONDENSABLE_COMPONENT_CANONICAL = "Water"
 CONDENSABLE_COMPONENT_LABEL = "H2O"
 
+# W is expressed as kg H2O / kg dry carrier gas.  The absolute term covers
+# values close to a dry limit; the relative term covers round-off in
+# composition-basis conversion at ordinary humidity ratios.
+WET_GAS_INLET_SATURATION_ABSOLUTE_TOLERANCE = 1.0e-10
+WET_GAS_INLET_SATURATION_RELATIVE_TOLERANCE = 1.0e-8
+
 
 class PureWaterPhaseChangeProviderNotSupportedError(RuntimeError):
     """Raised when pure-H2O phase change needs an unsupported provider path."""
 
     warning_code = WC.PURE_WATER_PHASE_CHANGE_PROVIDER_NOT_SUPPORTED
+
+
+class LiquidWaterInGasInletNotSupportedError(RuntimeError):
+    """Raised when a gas composition implies pre-existing liquid water."""
+
+    warning_code = WC.LIQUID_WATER_IN_GAS_INLET_NOT_SUPPORTED
 
 
 @dataclass(frozen=True)
@@ -107,6 +119,75 @@ def detect_phase_change_capability(provider: object) -> PhaseChangeCapability:
     if isinstance(provider, GasMixturePropertyProvider):
         return _detect_gas_mixture_capability(provider)
     return PhaseChangeCapability(capable=False)
+
+
+def reject_liquid_water_in_gas_inlet(
+    provider: object,
+    *,
+    T_in: float | None,
+    p: float,
+    side: str,
+) -> None:
+    """Reject an equilibrium gas/liquid inlet before gas-only properties.
+
+    ``GasMixturePropertyProvider`` describes the gas phase only.  For its
+    wet-gas capability, an inlet is therefore valid only when its specified
+    water ratio does not exceed the equilibrium vapor capacity at ``T_in``
+    and ``p``.  Equality (including numerical noise within the documented
+    absolute/relative tolerance) is accepted because saturation alone does
+    not establish a liquid inventory.
+
+    Temperatures below the water triple point are deliberately left to the
+    existing controlled frost/ice path.  At temperatures where saturation
+    pressure is at least the total pressure, a liquid phase cannot coexist
+    with a carrier-gas mixture in equilibrium, so no liquid-water alarm is
+    emitted and ``saturated_water_ratio`` is not called outside its domain.
+    """
+    capability = detect_phase_change_capability(provider)
+    if capability.provider_kind != "gas_mixture" or not capability.capable:
+        return
+    if T_in is None:
+        return
+
+    from core.phase_change.water_equilibrium import saturated_water_ratio
+    from core.properties.water import (
+        WATER_CRITICAL_TEMPERATURE_K,
+        WATER_TRIPLE_POINT_TEMPERATURE_K,
+        water_saturation_pressure,
+    )
+
+    if T_in < WATER_TRIPLE_POINT_TEMPERATURE_K:
+        return
+    if T_in >= WATER_CRITICAL_TEMPERATURE_K:
+        return
+    p_sat = water_saturation_pressure(T_in)
+    if p_sat >= p:
+        return
+
+    W_in = capability.W_in
+    W_sat = saturated_water_ratio(
+        p_total=p,
+        T=T_in,
+        M_dry=capability.M_dry,
+        M_h2o=capability.M_condensable,
+    )
+    tolerance = (
+        WET_GAS_INLET_SATURATION_ABSOLUTE_TOLERANCE
+        + WET_GAS_INLET_SATURATION_RELATIVE_TOLERANCE
+        * max(abs(W_in), abs(W_sat))
+    )
+    if W_in <= W_sat + tolerance:
+        return
+
+    raise LiquidWaterInGasInletNotSupportedError(
+        f"The {side} inlet composition implies a gas-liquid water mixture "
+        f"(W_in={W_in:.12g} kg/kg dry gas exceeds "
+        f"W_sat={W_sat:.12g} kg/kg by more than the numerical tolerance "
+        f"{tolerance:.3g}). The current GasMixturePropertyProvider "
+        "represents the gas phase only; evaporation of liquid water carried "
+        "by a gas is not modelled. No ordinary sensible or condensing "
+        "result was returned."
+    )
 
 
 def is_pure_water_provider(provider: object) -> bool:

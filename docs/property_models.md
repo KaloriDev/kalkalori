@@ -847,6 +847,15 @@ true duty and outlet temperature may differ from the dry result.
 
 ### 15.4 Scope (v0.6.1)
 
+`GasMixturePropertyProvider` represents the gas phase, not a pre-existing
+liquid-water inventory transported with that gas.  Public Simulation and
+Rating calls therefore compare the specified inlet water ratio with the
+equilibrium vapor capacity before evaluating gas-mixture properties.  An
+exactly saturated inlet (within `1e-10 kg/kg` absolute plus `1e-8` relative
+tolerance) is accepted; a composition above that capacity is rejected with
+`LIQUID_WATER_IN_GAS_INLET_NOT_SUPPORTED`.  Droplet, mist, wall-film and
+other carried-liquid evaporation are not included in v0.6.3.
+
 - Only H2O condenses from a wet gas with a non-condensable dry carrier;
   either the **inside** or **outside** stream may be active.
 - This wet-gas solver supports only **partial** condensation
