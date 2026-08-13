@@ -38,6 +38,20 @@ class TubeOrientation(str, Enum):
     DOWNWARD_INCLINED_15_PLUS = "downward_inclined_15_plus"
 
 
+class TubeSurfaceType(str, Enum):
+    """External surface family of a tube geometry (v0.7.x).
+
+    Every concrete tube geometry identifies itself through a
+    ``surface_type`` property so solvers can dispatch to the correct
+    outside heat-transfer/pressure-drop providers and reject a provider
+    that does not match the geometry (see ``core.geometry.finned_tube``
+    and ``core.pressure_drop.outside_pressure_drop``).
+    """
+
+    PLAIN = "plain"
+    CIRCULAR_FINNED = "circular_finned"
+
+
 @dataclass(frozen=True)
 class BaseTube:
     """
@@ -164,6 +178,11 @@ class BareTube(BaseTube):
             return None
         return self.roughness_outer / self.D_o
 
+    @property
+    def surface_type(self) -> TubeSurfaceType:
+        """Every ``BareTube`` is a plain (smooth) surface."""
+        return TubeSurfaceType.PLAIN
+
 
 def _validate_roughness(value: float | None, name: str) -> None:
     if value is None:
@@ -172,5 +191,8 @@ def _validate_roughness(value: float | None, name: str) -> None:
         raise ValueError(f"{name} must be None or a finite, non-negative value.")
 
 
-# TODO class FinnedTube(BaseTube):
-#     ...
+# Circular finned-tube geometry (v0.7.x) is implemented in
+# core.geometry.finned_tube.CircularFinnedTube. It composes a BareTube as
+# its core_tube (single source of truth for D_i/D_o/length/wall_k/
+# roughness/orientation) rather than duplicating those fields or their
+# validation rules.

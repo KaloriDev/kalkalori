@@ -5,7 +5,15 @@
 Geometric definitions for heat exchanger components.
 """
 
-from .tube import BaseTube, BareTube, TubeOrientation
+from .tube import BaseTube, BareTube, TubeOrientation, TubeSurfaceType
+from .finned_tube import CircularFinnedTube
+from .finned_flow_geometry import (
+    FinnedTubeGeometryOverlapError,
+    finned_blocked_equivalent_diameter,
+    finned_min_free_flow_area_per_length,
+    finned_vmax_ratio_min_freeflow,
+    validate_no_fin_row_overlap,
+)
 from .bundle import TubeBundle, TubePathType
 
 from .pressure_drop_stages import (
@@ -40,6 +48,13 @@ __all__ = [
     "BaseTube",
     "BareTube",
     "TubeOrientation",
+    "TubeSurfaceType",
+    "CircularFinnedTube",
+    "FinnedTubeGeometryOverlapError",
+    "finned_blocked_equivalent_diameter",
+    "finned_min_free_flow_area_per_length",
+    "finned_vmax_ratio_min_freeflow",
+    "validate_no_fin_row_overlap",
     "TubeBundle",
     "TubePathType",
 
