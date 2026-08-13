@@ -447,6 +447,69 @@ class EsduEulerProvider:
         )
 
 
+class RobinsonBriggsEulerProvider:
+    """
+    Reserved provider for Robinson & Briggs (1966) finned-tube-bank
+    pressure drop.
+
+    Current status: architecture stub with an explicit geometry gate,
+    NOT a numerical implementation.
+
+    Why this is a stub (v0.7.x)
+    ----------------------------
+    Robinson, K.K.; Briggs, D.E. (1966), "Pressure Drop of Air Flowing
+    Across Triangular Pitch Banks of Finned Tubes", Chemical Engineering
+    Progress Symposium Series, Vol. 62, No. 64, pp. 177-184, is not
+    freely available in a form that lets this project independently
+    confirm the exact closed-form Euler/friction-factor equation and its
+    complete symbol definitions from primary or reliably-corroborated
+    secondary sources. Several facts about the correlation ARE
+    independently corroborated (staggered/equilateral + isosceles
+    triangular pitch, Reynolds number based on the bare/root tube outer
+    diameter, Re range approximately 2000-50000, requires >= 4 tube
+    rows, ~10.7% reported standard deviation) -- but the precise
+    coefficients and exponents of the Euler-number correlation itself
+    could not be confirmed to the standard this project requires before
+    encoding a formula (see docs/finned_tube_model.md, "Unresolved
+    limitations"). Per project policy this is treated as a documented
+    blocker rather than a guess: the geometry/applicability contract is
+    implemented and ready, but ``evaluate`` deliberately raises
+    ``NotImplementedError`` instead of silently reusing a different
+    correlation's coefficients under the Robinson-Briggs name.
+
+    Do not adapt Gaddis-Gnielinski, Zukauskas, ESDU, or any other
+    provider's Euler number under this name; do not extrapolate the
+    Nir (1991) or Genic et al. (2006) correlations into this slot either
+    (see their module-level references) -- each has a distinct Euler/
+    friction-factor definition.
+    """
+
+    def evaluate(self, request: EulerRequest) -> EulerResult:
+        _validate_request(request)
+
+        if not request.is_finned:
+            raise ValueError(
+                "Robinson-Briggs pressure-drop provider is reserved for finned "
+                "tube banks; current request is bare-tube geometry."
+            )
+        if request.layout != "staggered":
+            raise ValueError(
+                "Robinson-Briggs (1966) correlation covers staggered "
+                "(triangular pitch) finned tube banks only; "
+                f"got layout={request.layout!r}."
+            )
+
+        raise NotImplementedError(
+            "Robinson-Briggs (1966) finned-tube pressure-drop model is not "
+            "implemented in GPL core: the exact closed-form equation could "
+            "not be independently verified from accessible sources in this "
+            "pass (see docs/finned_tube_model.md, 'Unresolved limitations'). "
+            "This provider name is reserved for a future contributor with "
+            "primary-source access to Chem. Eng. Prog. Symp. Ser. 62(64), "
+            "pp. 177-184 (1966)."
+        )
+
+
 # Note:
 # This Gaddis–Gnielinski tube-bank pressure-drop correlation is
 # independent of the Gnielinski Nusselt correlation used for
@@ -654,11 +717,14 @@ def _resolve_builtin_provider(euler_provider: str) -> EulerProvider:
         return GaddisGnielinskiEulerProvider()
     if name == "esdu":
         return EsduEulerProvider()
+    if name in ("robinson_briggs", "robinson-briggs"):
+        return RobinsonBriggsEulerProvider()
 
     raise ValueError(
         f"Unknown euler_provider='{euler_provider}'. "
         "Supported built-in providers: 'zukauskas', 'gaddis_gnielinski', 'esdu', "
-        "or pass a custom provider object implementing EulerProvider."
+        "'robinson_briggs', or pass a custom provider object implementing "
+        "EulerProvider."
     )
 
 
@@ -989,6 +1055,42 @@ def check_outside_dp_applicability(
                         message="outside_dp: ESDU provider is reserved for future finned-bank implementation and is not yet available in GPL core.",
                         source="outside_dp",
                         severity="info",
+                    )
+                )
+        elif provider_name in ("robinson_briggs", "robinson-briggs"):
+            if not request.is_finned:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_robinson_briggs_bare_tube",
+                        message="outside_dp: Robinson-Briggs provider is intended for finned tube banks; current request is bare-tube geometry.",
+                        source="outside_dp",
+                        severity="critical",
+                    )
+                )
+            elif request.layout != "staggered":
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_robinson_briggs_inline_not_supported",
+                        message="outside_dp: Robinson-Briggs (1966) covers staggered (triangular pitch) finned tube banks only; inline is unsupported.",
+                        source="outside_dp",
+                        severity="critical",
+                    )
+                )
+            else:
+                warnings.append(
+                    make_warning(
+                        code="outside_dp_robinson_briggs_not_implemented",
+                        message=(
+                            "outside_dp: Robinson-Briggs (1966) finned-tube "
+                            "pressure-drop model is a documented blocker in "
+                            "GPL core -- the exact closed-form equation could "
+                            "not be independently verified from accessible "
+                            "sources in this pass. See "
+                            "docs/finned_tube_model.md, 'Unresolved "
+                            "limitations'."
+                        ),
+                        source="outside_dp",
+                        severity="critical",
                     )
                 )
     else:
