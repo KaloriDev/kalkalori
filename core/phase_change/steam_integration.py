@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Public Simulation/Rating adapters for the shared steam-heater solver."""
+"""Public Simulation/Rating adapters for pure water/steam zone solvers."""
 
 from __future__ import annotations
 
@@ -47,6 +47,12 @@ from core.phase_change.steam_heater import (
     rate_steam_heater,
     solve_steam_heater,
 )
+from core.phase_change.water_evaporator import (
+    WaterEvaporatorSolution,
+    WaterEvaporatorZoneKind,
+    rate_water_evaporator,
+    solve_water_evaporator,
+)
 from core.phase_change.types import (
     PhaseChangeDirection,
     PhaseChangeMode,
@@ -63,8 +69,8 @@ class PureSteamOutsideNotSupportedError(RuntimeError):
     warning_code = WC.PURE_STEAM_OUTSIDE_NOT_SUPPORTED
 
 
-def translate_saturation_crossing_error(inside, exc: ValueError) -> None:
-    """Translate the dry solver's saturation ambiguity only for boiling."""
+def translate_saturation_crossing_error(inside, exc: ValueError, outside=None) -> None:
+    """Translate dry-solver saturation ambiguity into controlled scope errors."""
     state = getattr(inside, "water_steam_state", None)
     if (
         is_pure_water_provider(inside.provider)
@@ -77,6 +83,19 @@ def translate_saturation_crossing_error(inside, exc: ValueError) -> None:
         raise SteamEvaporationNotSupportedError(
             "The sensible-only trial reached the water saturation boundary "
             "in the heating direction; boiling/evaporation is unsupported."
+        ) from exc
+    outside_state = getattr(outside, "water_steam_state", None)
+    if (
+        outside is not None
+        and is_pure_water_provider(outside.provider)
+        and outside_state is not None
+        and outside_state.phase is WaterSteamPhase.SUBCOOLED_LIQUID
+        and "T+p lies on the water saturation line" in str(exc)
+    ):
+        raise PureSteamOutsideNotSupportedError(
+            "The outside pure-water stream reached its saturation boundary "
+            "in the heating direction; pure-water evaporation outside tubes "
+            "is not supported."
         ) from exc
     raise exc
 
@@ -95,6 +114,43 @@ def is_inside_water_steam_case(inside) -> bool:
     )
 
 
+def is_inside_water_evaporation_case(inside, outside) -> bool:
+    """Return whether the IAPWS tube stream is heated by the outside inlet."""
+    state = getattr(inside, "water_steam_state", None)
+    return (
+        is_pure_water_provider(inside.provider)
+        and state is not None
+        and state.phase is not WaterSteamPhase.SUPERCRITICAL_FLUID
+        and outside.T_in > state.T
+    )
+
+
+def water_evaporation_reaches_saturation(hx, inside, outside, *, euler_provider: str) -> bool:
+    """Test whether full geometry can reach x=0 without invoking boiling HTC."""
+    state = getattr(inside, "water_steam_state", None)
+    if state is None or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
+        return True
+    saturated_liquid = water_steam_props_iapws97(p=state.p, x=0.0)
+    try:
+        boundary = rate_water_evaporator(
+            hx,
+            inlet_state=state,
+            outlet_state=saturated_liquid,
+            mass_flow_water=inside.m_dot,
+            outside_provider=outside.provider,
+            mass_flow_outside=outside.m_dot,
+            T_in_outside=outside.T_in,
+            p_outside=outside.p,
+            orientation=None,
+            euler_provider=euler_provider,
+        )
+    except ValueError as exc:
+        if "violates a positive zone temperature difference" in str(exc):
+            return False
+        raise
+    return boundary.A_total < hx.bundle.total_outer_area
+
+
 def reject_unsupported_outside_pure_steam(outside) -> None:
     if not is_pure_water_provider(outside.provider):
         return
@@ -105,9 +161,132 @@ def reject_unsupported_outside_pure_steam(outside) -> None:
         return
     if state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
         raise PureSteamOutsideNotSupportedError(
-            "Pure water/steam condensation or two-phase flow outside tubes is "
-            "outside the planned KalKalori scope."
+            "Pure-water evaporation/condensation or two-phase flow outside "
+            "tubes is outside the supported KalKalori scope."
         )
+
+
+def reject_outside_pure_water_evaporation_crossing(outside, *, T_out: float) -> None:
+    """Reject an IAPWS outside-liquid program only when it crosses Tsat."""
+    state = getattr(outside, "water_steam_state", None)
+    if (
+        not is_pure_water_provider(outside.provider)
+        or state is None
+        or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID
+    ):
+        return
+    saturation = water_steam_props_iapws97(p=state.p, x=0.0)
+    if T_out >= saturation.T - 1.0e-6:
+        raise PureSteamOutsideNotSupportedError(
+            "The outside pure-water temperature program reaches saturation; "
+            "pure-water evaporation is supported only inside tubes."
+        )
+
+
+def apply_water_evaporation_simulation(
+    hx,
+    inside,
+    outside,
+    *,
+    surface_margin: float,
+    iterate: bool,
+    flow_arrangement: str | None,
+    K_inlet: float,
+    K_outlet: float,
+    K_turn: float,
+    euler_provider: str,
+    max_iter: int,
+    temperature_tolerance_K: float,
+    relative_duty_tolerance: float,
+    relaxation_factor: float,
+    relative_alfa_tolerance: float,
+    settings: PhaseChangeSettings,
+):
+    """Run public Simulation for an IAPWS tube stream heated from outside."""
+    if not math.isfinite(surface_margin) or surface_margin < 0.0:
+        raise ValueError("surface_margin must be a non-negative finite value.")
+    if not iterate:
+        raise ValueError("Pure-water multi-zone calculation requires iterate=True.")
+    solve_kwargs = dict(
+        inlet_state=inside.water_steam_state,
+        mass_flow_water=inside.m_dot,
+        outside_provider=outside.provider,
+        mass_flow_outside=outside.m_dot,
+        T_in_outside=outside.T_in,
+        p_outside=outside.p,
+        orientation=hx.bundle.tube.tube_orientation,
+        euler_provider=euler_provider,
+    )
+    full_solution = solve_water_evaporator(hx, **solve_kwargs)
+    solution = full_solution
+    if surface_margin > 0.0:
+        solution = solve_water_evaporator(
+            hx,
+            available_area=hx.bundle.total_outer_area / (1.0 + surface_margin),
+            **solve_kwargs,
+        )
+    possible = full_solution.Q_evaporation > 0.0
+    water_result = _water_evaporation_result(
+        solution, mode=inside.phase_change_mode, possible=possible
+    )
+    if inside.phase_change_mode is PhaseChangeMode.DISABLED and water_result.active:
+        raise PhaseChangeDisabledButRequiredError(
+            "The achievable water-heating duty crosses the saturation dome; "
+            "phase_change_mode=DISABLED cannot extrapolate liquid cp through boiling."
+        )
+
+    outside_capability = detect_phase_change_capability(outside.provider)
+    outside_evaluation = solution.outside_evaluation
+    outside_result = capability_only_result(
+        "outside", outside.phase_change_mode, outside_capability
+    )
+    result = _simulation_from_solution(
+        hx,
+        inside,
+        outside,
+        solution,
+        outside_evaluation=outside_evaluation,
+        steam_result=water_result,
+        outside_result=outside_result,
+        surface_margin=surface_margin,
+        Q_full=full_solution.Q_total,
+        active=water_result.active,
+        inside_is_hot=False,
+        two_phase_warning=_water_evaporation_two_phase_dp_warning(),
+    )
+    if outside_capability.provider_kind == "gas_mixture":
+        onset, *_ = evaluate_side_onset(
+            side="outside",
+            mode=outside.phase_change_mode,
+            capability=outside_capability,
+            p=outside.p,
+            thermal_state=result.thermal_state,
+            envelope=result.wall_temperature_envelope,
+            settings=settings,
+        )
+        outside_active = bool(
+            onset is not None
+            and onset.active
+            and outside.phase_change_mode is PhaseChangeMode.AUTO
+        )
+        if outside_active and water_result.active:
+            raise MultiplePhaseChangeSidesError(
+                "Inside pure-water evaporation and outside wet-gas "
+                "condensation are both active; only one phase-changing side is supported."
+            )
+        if outside_active and not water_result.active:
+            wet_result = apply_phase_change(
+                hx,
+                inside,
+                outside,
+                result,
+                iterate=True,
+                euler_provider=euler_provider,
+                settings=settings,
+                skip_inside_pure_steam_guard=True,
+            )
+            return replace(wet_result, inside_phase_change=water_result)
+    return result
 
 
 def apply_water_steam_simulation(
@@ -181,6 +360,9 @@ def apply_water_steam_simulation(
         outside_result=outside_result,
         surface_margin=surface_margin,
         Q_full=full_solution.Q_total,
+        active=steam_result.active,
+        inside_is_hot=True,
+        two_phase_warning=_two_phase_dp_warning(),
     )
     if outside_capability.provider_kind == "gas_mixture":
         onset, *_ = evaluate_side_onset(
@@ -330,14 +512,20 @@ def _simulation_from_solution(
     outside_result,
     surface_margin,
     Q_full,
+    active,
+    inside_is_hot,
+    two_phase_warning,
 ):
-    final_result, thermal_state, envelope, warnings = _steam_diagnostics(
+    final_result, thermal_state, envelope, warnings = _water_steam_diagnostics(
         hx,
         inside,
         outside,
         solution,
         outside_evaluation=outside_evaluation,
         UA=solution.UA_total,
+        active=active,
+        inside_is_hot=inside_is_hot,
+        two_phase_warning=two_phase_warning,
     )
     return HXSimulationResult(
         converged=solution.converged,
@@ -384,13 +572,16 @@ def _rating_from_solution(
     A_required = solution.A_total
     scale = A_actual / A_required
     UA_actual = solution.UA_total * scale
-    final_result, thermal_state, envelope, warnings = _steam_diagnostics(
+    final_result, thermal_state, envelope, warnings = _water_steam_diagnostics(
         hx,
         inside,
         outside,
         solution,
         outside_evaluation=outside_evaluation,
         UA=UA_actual,
+        active=steam_result.active,
+        inside_is_hot=True,
+        two_phase_warning=_two_phase_dp_warning(),
     )
     return HXRatingResult(
         overdesign_factor=A_actual / A_required - 1.0,
@@ -416,22 +607,23 @@ def _rating_from_solution(
     )
 
 
-def _steam_diagnostics(
+def _water_steam_diagnostics(
     hx,
     inside,
     outside,
-    solution: SteamHeaterSolution,
+    solution: SteamHeaterSolution | WaterEvaporatorSolution,
     *,
     outside_evaluation: OutsideSideEvaluation,
     UA: float,
+    active: bool,
+    inside_is_hot: bool,
+    two_phase_warning: ModelWarning,
 ):
     """Build honest result diagnostics without running a sensible HX proxy."""
-    active = solution.Q_condensation > 1.0e-8
     tube_hydraulic = tube_pressure_drop = None
     inside_velocity = inside_reynolds = inside_prandtl = math.nan
-    midpoint = water_steam_props_iapws97(
-        p=solution.state_in.p,
-        h=0.5 * (solution.state_in.h + solution.state_out.h),
+    midpoint = getattr(solution, "state_midpoint", None) or water_steam_props_iapws97(
+        p=solution.state_in.p, h=0.5 * (solution.state_in.h + solution.state_out.h)
     )
     if not active:
         transports = (
@@ -441,7 +633,8 @@ def _steam_diagnostics(
         )
         if all(value is not None for value in transports):
             tube_bundle = calculate_tube_bundle_hydraulics(
-                m_dot=solution.mass_flow_steam,
+                m_dot=getattr(solution, "mass_flow_steam", None)
+                or solution.mass_flow_water,
                 flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
                 hydraulic_diameter=hx.bundle.internal_hydraulic_diameter,
                 hydraulic_length_total=hx.bundle.internal_length_total,
@@ -479,9 +672,9 @@ def _steam_diagnostics(
     )
     warnings = list(solution.warnings) + list(outside_evaluation.warnings)
     if active:
-        warnings.append(_two_phase_dp_warning())
+        warnings.append(two_phase_warning)
 
-    thermal_state, envelope = _steam_wall_diagnostics(
+    thermal_state, envelope = _water_steam_wall_diagnostics(
         hx,
         inside,
         outside,
@@ -489,6 +682,7 @@ def _steam_diagnostics(
         midpoint=midpoint,
         outside_evaluation=outside_evaluation,
         UA=UA,
+        active=active,
     )
     warnings.extend(thermal_state.warnings)
     warnings.extend(envelope.warnings)
@@ -498,10 +692,10 @@ def _steam_diagnostics(
         A_o=hx.bundle.total_outer_area,
         A_frontal=hx.bundle.frontal_flow_area,
         UA=UA,
-        eps=_steam_effectiveness(solution, outside_evaluation, outside.m_dot),
+        eps=_water_steam_effectiveness(solution, outside_evaluation, outside.m_dot),
         Q=solution.Q_total,
-        T_hot_out=solution.state_out.T,
-        T_cold_out=solution.T_out_outside,
+        T_hot_out=(solution.state_out.T if inside_is_hot else solution.T_out_outside),
+        T_cold_out=(solution.T_out_outside if inside_is_hot else solution.state_out.T),
         tube_side_thermal=HXOutSideThermalResults(
             v=inside_velocity,
             Re=inside_reynolds,
@@ -523,7 +717,7 @@ def _steam_diagnostics(
     return final_result, thermal_state, envelope, warnings_result
 
 
-def _steam_wall_diagnostics(
+def _water_steam_wall_diagnostics(
     hx,
     inside,
     outside,
@@ -532,6 +726,7 @@ def _steam_wall_diagnostics(
     midpoint,
     outside_evaluation: OutsideSideEvaluation,
     UA: float,
+    active: bool,
 ):
     """Build a 0D endpoint wall envelope using the equivalent inside HTC.
 
@@ -603,9 +798,9 @@ def _steam_wall_diagnostics(
     diagnostics = ThermalIterationDiagnostics(
         inside_Nu_base=inside_nusselt,
         inside_Nu_corrected=inside_nusselt,
-        inside_length_correction=None if solution.Q_condensation > 1.0e-8 else 1.0,
-        inside_wall_temperature_correction=None if solution.Q_condensation > 1.0e-8 else 1.0,
-        inside_combined_correction=None if solution.Q_condensation > 1.0e-8 else 1.0,
+        inside_length_correction=None if active else 1.0,
+        inside_wall_temperature_correction=None if active else 1.0,
+        inside_combined_correction=None if active else 1.0,
         inside_alfa_base=solution.inside_alpha_equivalent,
         inside_alfa_corrected=solution.inside_alpha_equivalent,
         outside_Nu_base=outside_evaluation.nusselt_base,
@@ -636,19 +831,19 @@ def _steam_wall_diagnostics(
     return state, envelope
 
 
-def _steam_effectiveness(
-    solution: SteamHeaterSolution,
+def _water_steam_effectiveness(
+    solution: SteamHeaterSolution | WaterEvaporatorSolution,
     outside_evaluation: OutsideSideEvaluation,
     mass_flow_outside: float,
 ) -> float:
-    delta_T_steam = solution.state_in.T - solution.state_out.T
-    C_steam = (
-        solution.Q_total / delta_T_steam
-        if delta_T_steam > 1.0e-9
+    delta_T_inside = abs(solution.state_in.T - solution.state_out.T)
+    C_inside = (
+        solution.Q_total / delta_T_inside
+        if delta_T_inside > 1.0e-9
         else math.inf
     )
     C_outside = mass_flow_outside * outside_evaluation.properties_mean.cp
-    Q_max = min(C_steam, C_outside) * (
+    Q_max = min(C_inside, C_outside) * abs(
         solution.state_in.T - outside_evaluation.T_in
     )
     return solution.Q_total / Q_max
@@ -732,6 +927,125 @@ def _steam_result(
         assumptions=solution.assumptions,
         inside_alpha_equivalent=solution.inside_alpha_equivalent,
         inside_alpha_area_weighted=solution.inside_alpha_area_weighted,
+    )
+
+
+def _water_evaporation_result(
+    solution: WaterEvaporatorSolution,
+    *,
+    mode: PhaseChangeMode,
+    possible: bool,
+) -> WaterSteamPhaseChangeResult:
+    zones = {zone.kind: zone for zone in solution.zones}
+
+    def zone_value(kind, name, default=None):
+        zone = zones.get(kind)
+        return default if zone is None else getattr(zone, name)
+
+    active = solution.Q_evaporation > 0.0
+    warnings = list(solution.warnings)
+    if active:
+        warnings.append(_water_evaporation_two_phase_dp_warning())
+    elif possible and mode is PhaseChangeMode.DISABLED:
+        warnings.append(
+            make_warning(
+                code=WC.PHASE_CHANGE_DISABLED_BUT_POSSIBLE,
+                message=(
+                    "inside: full geometry could reach pure-water boiling, "
+                    "but the accepted derated duty remains single-phase while "
+                    "phase_change_mode=DISABLED."
+                ),
+                source="steam_integration",
+                severity="warning",
+            )
+        )
+    return WaterSteamPhaseChangeResult(
+        side="inside",
+        mode=mode,
+        direction=(
+            PhaseChangeDirection.EVAPORATION
+            if active
+            else PhaseChangeDirection.NONE
+        ),
+        component="H2O",
+        capable=True,
+        possible=possible,
+        active=active,
+        converged=solution.converged,
+        method="water_evaporator_multizone_0d",
+        state_in=solution.state_in,
+        state_midpoint=solution.state_midpoint,
+        state_out=solution.state_out,
+        phase_in=solution.state_in.phase,
+        phase_out=solution.state_out.phase,
+        T_in=solution.state_in.T,
+        T_out=solution.state_out.T,
+        Tsat=solution.saturation.Tsat,
+        p=solution.state_in.p,
+        h_in=solution.state_in.h,
+        h_out=solution.state_out.h,
+        quality_in=solution.state_in.quality,
+        quality_out=solution.state_out.quality,
+        Q_desuperheat=0.0,
+        Q_condensation=0.0,
+        Q_subcooling=0.0,
+        Q_total=solution.Q_total,
+        A_desuperheat=0.0,
+        A_condensation=0.0,
+        A_subcooling=0.0,
+        A_total=solution.A_total,
+        zone_fraction_desuperheat=0.0,
+        zone_fraction_condensation=0.0,
+        zone_fraction_subcooling=0.0,
+        zone_alpha_desuperheat=None,
+        zone_alpha_condensation=None,
+        zone_alpha_subcooling=None,
+        zone_U_desuperheat=None,
+        zone_U_condensation=None,
+        zone_U_subcooling=None,
+        zone_UA_desuperheat=0.0,
+        zone_UA_condensation=0.0,
+        zone_UA_subcooling=0.0,
+        UA_total=solution.UA_total,
+        mass_flow_total=solution.mass_flow_water,
+        mass_flux=solution.mass_flux,
+        m_dot_condensate=0.0,
+        two_phase_pressure_drop_supported=not active,
+        two_phase_pressure_drop_status=(
+            "not_supported" if active else "not_applicable_single_phase"
+        ),
+        iterations=solution.iterations,
+        root_iterations=solution.root_iterations,
+        property_evaluations=solution.property_evaluations,
+        warnings=tuple(_deduplicate_warnings(warnings) or ()),
+        assumptions=solution.assumptions,
+        inside_alpha_equivalent=solution.inside_alpha_equivalent,
+        inside_alpha_area_weighted=solution.inside_alpha_area_weighted,
+        Q_preheat=solution.Q_preheat,
+        Q_evaporation=solution.Q_evaporation,
+        Q_superheat=solution.Q_superheat,
+        A_preheat=solution.A_preheat,
+        A_evaporation=solution.A_evaporation,
+        A_superheat=solution.A_superheat,
+        zone_fraction_preheat=solution.zone_fraction_preheat,
+        zone_fraction_evaporation=solution.zone_fraction_evaporation,
+        zone_fraction_superheat=solution.zone_fraction_superheat,
+        zone_alpha_preheat=solution.zone_alpha_preheat,
+        zone_alpha_evaporation=solution.zone_alpha_evaporation,
+        zone_alpha_superheat=solution.zone_alpha_superheat,
+        zone_U_preheat=zone_value(WaterEvaporatorZoneKind.PREHEAT, "U"),
+        zone_U_evaporation=zone_value(WaterEvaporatorZoneKind.EVAPORATION, "U"),
+        zone_U_superheat=zone_value(WaterEvaporatorZoneKind.SUPERHEAT, "U"),
+        zone_UA_preheat=solution.UA_preheat,
+        zone_UA_evaporation=solution.UA_evaporation,
+        zone_UA_superheat=solution.UA_superheat,
+        m_dot_evaporated=solution.m_dot_evaporated,
+        heat_flux_inner_evaporation=solution.heat_flux_inner_evaporation,
+        heat_flux_outer_evaporation=solution.heat_flux_outer_evaporation,
+        heat_flux_converged=solution.heat_flux_converged,
+        heat_flux_iterations=solution.heat_flux_iterations,
+        heat_flux_residual=solution.heat_flux_residual,
+        cache_hits=solution.cache_hits,
     )
 
 
@@ -831,6 +1145,18 @@ def _two_phase_dp_warning() -> ModelWarning:
         message=(
             "Tube-side pressure drop is not reported because the steam path "
             "contains a two-phase condensation zone."
+        ),
+        source="steam_integration",
+        severity="warning",
+    )
+
+
+def _water_evaporation_two_phase_dp_warning() -> ModelWarning:
+    return make_warning(
+        code=WC.WATER_EVAPORATION_TWO_PHASE_PRESSURE_DROP_NOT_SUPPORTED,
+        message=(
+            "Tube-side pressure drop is not reported because the pure-water "
+            "path contains a two-phase evaporation zone."
         ),
         source="steam_integration",
         severity="warning",

@@ -1087,10 +1087,14 @@ class BareTubeHeatExchanger:
             relaxation_factor=phase_change_relaxation_factor,
         )
         from core.phase_change.steam_integration import (
+            apply_water_evaporation_simulation,
             apply_water_steam_simulation,
+            is_inside_water_evaporation_case,
             is_inside_water_steam_case,
+            reject_outside_pure_water_evaporation_crossing,
             reject_unsupported_outside_pure_steam,
             translate_saturation_crossing_error,
+            water_evaporation_reaches_saturation,
         )
         from core.phase_change.capability import (
             guard_pure_water_single_phase_provider,
@@ -1105,6 +1109,28 @@ class BareTubeHeatExchanger:
             outside.provider, T_in=outside.T_in, p=outside.p, side="outside"
         )
         reject_unsupported_outside_pure_steam(outside)
+        if (
+            is_inside_water_evaporation_case(inside, outside)
+            and water_evaporation_reaches_saturation(
+                self, inside, outside, euler_provider=euler_provider
+            )
+        ):
+            return apply_water_evaporation_simulation(
+                self, inside, outside,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                K_inlet=K_inlet,
+                K_outlet=K_outlet,
+                K_turn=K_turn,
+                euler_provider=euler_provider,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+                settings=settings,
+            )
         if is_inside_water_steam_case(inside):
             return apply_water_steam_simulation(
                 self, inside, outside,
@@ -1159,7 +1185,10 @@ class BareTubeHeatExchanger:
                 relative_alfa_tolerance=relative_alfa_tolerance,
             )
         except ValueError as exc:
-            translate_saturation_crossing_error(inside, exc)
+            translate_saturation_crossing_error(inside, exc, outside)
+        reject_outside_pure_water_evaporation_crossing(
+            outside, T_out=dry_result.T_out_outside
+        )
         reject_unsupported_pure_water_phase_crossing(
             inside.provider,
             T_in=inside.T_in,

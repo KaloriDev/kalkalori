@@ -18,7 +18,6 @@ from core.phase_change.steam_integration import (
 )
 import core.phase_change.steam_integration as steam_integration
 from core.phase_change.types import PhaseChangeMode, WaterSteamPhaseChangeResult
-from core.phase_change.steam_heater import SteamEvaporationNotSupportedError
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider
 from core.properties.gas_mixture import GasMixturePropertyProvider, GasMixtureSpec
@@ -420,7 +419,7 @@ def test_subcooled_sensible_water_keeps_existing_simulation_path():
     assert actual.inside_dp_total == expected.inside_dp_total
 
 
-def test_public_reverse_boiling_is_controlled_unsupported():
+def test_public_water_heating_routes_to_evaporation_solver():
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(), m_dot=1.0,
         T_in=300.0, p=P,
@@ -429,8 +428,13 @@ def test_public_reverse_boiling_is_controlled_unsupported():
         provider=OUTSIDE_PROVIDER, m_dot=30.0,
         T_in=700.0, p=101325.0,
     )
-    with pytest.raises(SteamEvaporationNotSupportedError):
-        _hx(n_rows=20, n_tubes_per_row=20).simulate(inside, outside)
+    result = _hx(
+        n_rows=20,
+        n_tubes_per_row=20,
+        orientation=TubeOrientation.VERTICAL_UPWARD,
+    ).simulate(inside, outside)
+    assert result.inside_phase_change.is_evaporating is True
+    assert result.inside_phase_change.Q_evaporation > 0.0
 
 
 def test_public_low_g_case_keeps_finite_condensation_zone_htc():

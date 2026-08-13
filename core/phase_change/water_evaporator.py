@@ -269,7 +269,26 @@ def solve_water_evaporator(
     upper_state = water_steam_props_iapws97(T=T_upper, p=inlet_state.p)
     if upper_state.h <= inlet_state.h:
         raise ValueError("No positive water-heating enthalpy interval exists.")
-    q_high = mass_flow_water * (upper_state.h - inlet_state.h) * (1.0 - 1e-10)
+    q_water_pinch = mass_flow_water * (upper_state.h - inlet_state.h)
+    # Also bound the trial by the opposing stream's positive-temperature
+    # capacity.  Its 0D energy model uses cp at the current mean state, so
+    # evaluating cp at the limiting mean gives the matching finite bracket
+    # without ever passing a negative temperature to the property provider.
+    T_hot_floor = max(inlet_state.T + 1.0e-3, 1.0e-3)
+    hot_limit_props = cache.outside_state(
+        0.5 * (T_in_outside + T_hot_floor)
+    )
+    q_hot_pinch = (
+        mass_flow_outside
+        * hot_limit_props.cp
+        * (T_in_outside - T_hot_floor)
+    )
+    q_high = min(q_water_pinch, q_hot_pinch) * (1.0 - 1e-10)
+    if not math.isfinite(q_high) or q_high <= 0.0:
+        raise ValueError("No positive finite thermal-pinch duty is available.")
+    upper_state = water_steam_props_iapws97(
+        p=inlet_state.p, h=inlet_state.h + q_high / mass_flow_water
+    )
     q_low = max(1e-9, q_high * 1e-12)
 
     def trial(q: float) -> _TrialResult:
@@ -908,7 +927,10 @@ def _build_solution(
             "shared_opposing_stream_0d_mean_temperature",
             "inside_area_self_consistent_boiling_heat_flux",
             "zone_UA_sum_is_authoritative",
-            "two_phase_pressure_drop_not_supported_when_evaporation_active",
+        ) + (
+            ("two_phase_pressure_drop_not_supported_when_evaporation_active",)
+            if has_two_phase
+            else ()
         ),
     )
 
