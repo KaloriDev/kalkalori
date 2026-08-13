@@ -80,6 +80,20 @@ from .fin_efficiency import (
     effective_outside_area,
 )
 
+from .finned_tube_outside import (
+    FinnedTubeLayout,
+    FinnedTubeHeatTransferMetadata,
+    FinnedTubeHeatTransferRequest,
+    FinnedTubeHeatTransferResult,
+    FinnedTubeHeatTransferProvider,
+    BriggsYoung1963Provider,
+    BRIGGS_YOUNG_1963_APPLICABILITY,
+    BRIGGS_YOUNG_1963_METADATA,
+    evaluate_finned_tube_heat_transfer,
+    calculate_finned_tube_outside_heat_transfer,
+    finned_tube_outside_heat_transfer,
+)
+
 from core.common.warnings import (
     ApplicabilityRange,
     ModelWarning,
@@ -156,6 +170,19 @@ __all__ = [
     "fin_efficiency",
     "overall_surface_efficiency",
     "effective_outside_area",
+
+    # Outside heat transfer for circular-finned tube banks
+    "FinnedTubeLayout",
+    "FinnedTubeHeatTransferMetadata",
+    "FinnedTubeHeatTransferRequest",
+    "FinnedTubeHeatTransferResult",
+    "FinnedTubeHeatTransferProvider",
+    "BriggsYoung1963Provider",
+    "BRIGGS_YOUNG_1963_APPLICABILITY",
+    "BRIGGS_YOUNG_1963_METADATA",
+    "evaluate_finned_tube_heat_transfer",
+    "calculate_finned_tube_outside_heat_transfer",
+    "finned_tube_outside_heat_transfer",
 
     # Warnings and applicability checks
     "ApplicabilityRange",
