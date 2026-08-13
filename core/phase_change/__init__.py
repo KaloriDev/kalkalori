@@ -68,6 +68,20 @@ from core.phase_change.steam_heater import (
     rate_steam_heater,
     solve_steam_heater,
 )
+from core.phase_change.water_evaporation import (
+    WaterEvaporationZoneResult,
+    local_water_evaporation_alpha,
+    solve_water_evaporation_zone,
+    water_mass_flux,
+)
+from core.phase_change.water_evaporator import (
+    WaterCondensationRequiredError,
+    WaterEvaporatorSolution,
+    WaterEvaporatorZoneKind,
+    WaterEvaporatorZoneResult,
+    rate_water_evaporator,
+    solve_water_evaporator,
+)
 
 __all__ = [
     "PhaseChangeCapability",
@@ -88,4 +102,14 @@ __all__ = [
     "SteamHeaterZoneResult",
     "rate_steam_heater",
     "solve_steam_heater",
+    "WaterEvaporationZoneResult",
+    "local_water_evaporation_alpha",
+    "solve_water_evaporation_zone",
+    "water_mass_flux",
+    "WaterCondensationRequiredError",
+    "WaterEvaporatorSolution",
+    "WaterEvaporatorZoneKind",
+    "WaterEvaporatorZoneResult",
+    "rate_water_evaporator",
+    "solve_water_evaporator",
 ]
