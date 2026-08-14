@@ -7,6 +7,10 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [Unreleased]
 
+### Added
+
+- Added an analytical fast path for constant-thickness circular fins.
+
 ### Changed
 
 - Refined circular-finned-tube geometry boundaries and limited the built-in

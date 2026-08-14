@@ -1,7 +1,7 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Efficiency of full circular (annular) fins with linear thickness taper.
+"""Efficiency of full circular (annular) fins with optional linear taper.
 
 The fin model solves the standard one-dimensional radial balance
 
@@ -12,13 +12,17 @@ thickness to the tip thickness.  ``P_s(r)`` includes both sloping faces of
 the fin.  The root temperature is prescribed and the outside edge has a
 convective boundary condition.  No average fin thickness is substituted.
 
-A conservative cell-centred finite-volume discretisation and a local Thomas
-tridiagonal solver keep the implementation deterministic and dependency-free.
-The last half-cell conduction resistance and tip convection resistance are
-combined in series. Integrated convection is used for efficiency because it
-remains well conditioned in the isothermal-fin limit; the separately exposed
-root-flux diagnostic can lose relative precision there through subtraction of
-nearly equal temperatures.
+Constant-thickness fins use the exact modified-Bessel solution at the physical
+tip radius, including the convective condition ``-k*d(theta)/dr = h*theta``.
+Exponentially scaled Bessel functions avoid overflow in otherwise finite
+function products.  No corrected-radius/adiabatic-tip approximation is used.
+
+Linearly tapered fins retain the conservative cell-centred finite-volume
+solver and local Thomas tridiagonal solver.  The last half-cell conduction
+resistance and tip convection resistance are combined in series. Integrated
+convection is used for FVM efficiency because it remains well conditioned in
+the isothermal-fin limit; the separately exposed root-flux diagnostic can lose
+relative precision there through subtraction of nearly equal temperatures.
 
 The geometry represents a continuous spiral fin as an equivalent periodic
 train of full annular fins; see
@@ -31,9 +35,20 @@ from dataclasses import dataclass
 import math
 
 from core.geometry.finned_tube import CircularFinnedTube
+from core.heat_transfer.modified_bessel import (
+    scaled_bessel_i0,
+    scaled_bessel_i1,
+    scaled_bessel_k0,
+    scaled_bessel_k1,
+)
 
 
 DEFAULT_FIN_RADIAL_CELLS = 400
+_ANALYTICAL_METHOD = (
+    "analytical_modified_bessel_constant_annular_fin_convective_tip"
+)
+_FINITE_VOLUME_METHOD = "conservative_finite_volume_linear_taper_annular_fin"
+_BESSEL_APPROXIMATION_RELATIVE_TOLERANCE = 2.0e-7
 
 
 @dataclass(frozen=True)
@@ -63,7 +78,7 @@ class FinEfficiencyResult:
     root_heat_rate_per_base_temperature: float
     convective_heat_rate_per_base_temperature: float
     energy_balance_relative_error: float
-    method: str = "conservative_finite_volume_linear_taper_annular_fin"
+    method: str = _FINITE_VOLUME_METHOD
 
 
 def annular_fin_efficiency(
@@ -72,7 +87,11 @@ def annular_fin_efficiency(
     *,
     radial_cells: int = DEFAULT_FIN_RADIAL_CELLS,
 ) -> FinEfficiencyResult:
-    """Solve one linearly tapered annular fin and return tube-area metrics.
+    """Return annular-fin efficiency and tube-area metrics.
+
+    Constant thickness dispatches to the exact analytical modified-Bessel
+    solution. A genuine linear taper dispatches to the finite-volume solver.
+    Callers therefore do not choose the physical solver explicitly.
 
     Parameters
     ----------
@@ -82,21 +101,154 @@ def annular_fin_efficiency(
         Physical dry outside convection coefficient ``h_o`` [W/(m2 K)],
         before fin efficiency is applied.
     radial_cells:
-        Number of uniform cell-centred finite volumes over the fin height.
-        The default is selected to make constant-thickness results agree
-        closely with the classical modified-Bessel solution while retaining
-        inexpensive deterministic evaluation.
+        Number of uniform cell-centred finite volumes over the fin height for
+        the tapered/reference path. It remains validated for every call for
+        public API compatibility, but is not used by the analytical path.
     """
-    if not isinstance(tube, CircularFinnedTube):
-        raise TypeError("tube must be a CircularFinnedTube instance.")
-    if not math.isfinite(outside_htc) or outside_htc <= 0.0:
-        raise ValueError("outside_htc must be positive and finite.")
-    if (
-        isinstance(radial_cells, bool)
-        or not isinstance(radial_cells, int)
-        or radial_cells < 4
+    _validate_fin_efficiency_inputs(tube, outside_htc, radial_cells)
+    if tube.fin_thickness_root == tube.fin_thickness_tip_effective:
+        return _annular_fin_efficiency_analytical(tube, outside_htc)
+    return _annular_fin_efficiency_fvm(
+        tube,
+        outside_htc,
+        radial_cells=radial_cells,
+    )
+
+
+def _annular_fin_efficiency_analytical(
+    tube: CircularFinnedTube,
+    outside_htc: float,
+) -> FinEfficiencyResult:
+    """Solve a constant-thickness annular fin with an exact convective tip.
+
+    For ``theta = T - T_inf`` the solution of
+
+    ``d/dr(r*dtheta/dr) - m**2*r*theta = 0``
+
+    is a combination of ``I0(m*r)`` and ``K0(m*r)``.  The coefficients below
+    impose ``theta(r_root) = 1`` and the physical-radius tip condition
+    ``-k*dtheta/dr = h*theta`` at ``r_tip``.  Exponentially scaled Bessel
+    functions and a common exponential cancellation are used throughout.
+    """
+    r_root = 0.5 * tube.D_root
+    r_tip = 0.5 * tube.D_fin
+    thickness = tube.fin_thickness_root
+    k_fin = tube.fin_k
+
+    m = math.sqrt(2.0 * outside_htc / (k_fin * thickness))
+    x_root = m * r_root
+    x_tip = m * r_tip
+    tip_biot_over_m = outside_htc / (m * k_fin)
+    argument_delta = x_tip - x_root
+
+    i0_root = scaled_bessel_i0(x_root)
+    i1_root = scaled_bessel_i1(x_root)
+    k0_root = scaled_bessel_k0(x_root)
+    k1_root = scaled_bessel_k1(x_root)
+    i0_tip = scaled_bessel_i0(x_tip)
+    i1_tip = scaled_bessel_i1(x_tip)
+    k0_tip = scaled_bessel_k0(x_tip)
+    k1_tip = scaled_bessel_k1(x_tip)
+
+    # If unscaled functions were used, the corresponding coefficients would
+    # be A = I1(x_tip) + beta*I0(x_tip) and
+    # C = K1(x_tip) - beta*K0(x_tip), beta = h/(m*k).
+    coefficient_i = i1_tip + tip_biot_over_m * i0_tip
+    coefficient_k = k1_tip - tip_biot_over_m * k0_tip
+    attenuation = math.exp(-2.0 * argument_delta)
+
+    denominator = (
+        coefficient_i * k0_root
+        + attenuation * coefficient_k * i0_root
+    )
+    numerator = (
+        coefficient_i * k1_root
+        - attenuation * coefficient_k * i1_root
+    )
+    if not (
+        math.isfinite(denominator)
+        and math.isfinite(numerator)
+        and denominator > 0.0
+        and numerator > 0.0
     ):
-        raise ValueError("radial_cells must be an integer greater than or equal to 4.")
+        raise ValueError(
+            "Analytical annular-fin solution is numerically degenerate."
+        )
+
+    dimensionless_root_gradient = numerator / denominator
+    root_heat_rate_raw = (
+        2.0
+        * math.pi
+        * k_fin
+        * r_root
+        * thickness
+        * m
+        * dimensionless_root_gradient
+    )
+    ideal_fin_heat_rate = outside_htc * tube.fin_area_per_fin
+    efficiency = _validated_analytical_efficiency(
+        root_heat_rate_raw / ideal_fin_heat_rate
+    )
+    # Preserve q = eta*h*A exactly if a roundoff-sized overshoot was normalized.
+    root_heat_rate = efficiency * ideal_fin_heat_rate
+
+    # At the physical tip the two common exponential factors cancel; only
+    # exp(-(x_tip-x_root)) remains relative to the normalized root solution.
+    tip_numerator = (
+        coefficient_k * i0_tip + coefficient_i * k0_tip
+    )
+    tip_temperature = (
+        math.exp(-argument_delta) * tip_numerator / denominator
+    )
+    if not (
+        math.isfinite(tip_temperature)
+        and 0.0 <= tip_temperature <= (
+            1.0 + _BESSEL_APPROXIMATION_RELATIVE_TOLERANCE
+        )
+    ):
+        raise ValueError(
+            "Analytical annular-fin tip temperature is outside its physical range."
+        )
+    tip_temperature = min(tip_temperature, 1.0)
+
+    return _build_fin_efficiency_result(
+        tube=tube,
+        outside_htc=outside_htc,
+        efficiency=efficiency,
+        radial_cells=0,
+        tip_temperature_ratio=tip_temperature,
+        root_heat_rate=root_heat_rate,
+        convective_heat_rate=root_heat_rate,
+        energy_balance_relative_error=0.0,
+        method=_ANALYTICAL_METHOD,
+    )
+
+
+def _validated_analytical_efficiency(efficiency: float) -> float:
+    """Allow only the documented modified-Bessel approximation error."""
+    upper_bound = 1.0 + _BESSEL_APPROXIMATION_RELATIVE_TOLERANCE
+    if not (
+        math.isfinite(efficiency)
+        and efficiency > 0.0
+        and efficiency <= upper_bound
+    ):
+        raise ValueError(
+            "Computed analytical annular-fin efficiency is outside its "
+            "physical range beyond the modified-Bessel approximation tolerance."
+        )
+    # This is deliberately not a broad [0, 1] clip: negative values and any
+    # overshoot beyond the helper's stated ~2e-7 error are rejected above.
+    return min(efficiency, 1.0)
+
+
+def _annular_fin_efficiency_fvm(
+    tube: CircularFinnedTube,
+    outside_htc: float,
+    *,
+    radial_cells: int = DEFAULT_FIN_RADIAL_CELLS,
+) -> FinEfficiencyResult:
+    """Reference finite-volume solver, used publicly for tapered fins."""
+    _validate_fin_efficiency_inputs(tube, outside_htc, radial_cells)
 
     r_root = 0.5 * tube.D_root
     r_tip = 0.5 * tube.D_fin
@@ -170,24 +322,6 @@ def annular_fin_efficiency(
     # limit.  Root flux is a subtraction of two nearly equal temperatures and
     # is therefore retained as a diagnostic rather than used to calculate eta.
     efficiency = convective_heat_rate / ideal_fin_heat_rate
-    if not math.isfinite(efficiency) or not 0.0 < efficiency <= 1.0 + 1.0e-10:
-        raise ValueError("Computed annular-fin efficiency is outside its physical range.")
-    efficiency = min(efficiency, 1.0)
-
-    gross_area = tube.area_outside_gross
-    primary_area = tube.area_primary_outside
-    fin_area = tube.area_fin
-    effective_area = primary_area + efficiency * fin_area
-    overall_efficiency = effective_area / gross_area
-
-    if not (
-        math.isfinite(effective_area)
-        and math.isfinite(overall_efficiency)
-        and effective_area > 0.0
-        and 0.0 < overall_efficiency <= 1.0 + 1.0e-10
-    ):
-        raise ValueError("Computed effective outside area is outside its physical range.")
-    overall_efficiency = min(overall_efficiency, 1.0)
 
     energy_scale = max(abs(convective_heat_rate), 1.0e-300)
     balance_error = abs(root_heat_rate - convective_heat_rate) / energy_scale
@@ -195,6 +329,55 @@ def annular_fin_efficiency(
     # Recover the actual edge temperature from the last-cell value through
     # the convective tip boundary; this is a reporting diagnostic only.
     tip_temperature = tip_heat_rate / (outside_htc * tube.fin_tip_area_per_fin)
+
+    return _build_fin_efficiency_result(
+        tube=tube,
+        outside_htc=outside_htc,
+        efficiency=efficiency,
+        radial_cells=radial_cells,
+        tip_temperature_ratio=tip_temperature,
+        root_heat_rate=root_heat_rate,
+        convective_heat_rate=convective_heat_rate,
+        energy_balance_relative_error=balance_error,
+        method=_FINITE_VOLUME_METHOD,
+    )
+
+
+def _build_fin_efficiency_result(
+    *,
+    tube: CircularFinnedTube,
+    outside_htc: float,
+    efficiency: float,
+    radial_cells: int,
+    tip_temperature_ratio: float,
+    root_heat_rate: float,
+    convective_heat_rate: float,
+    energy_balance_relative_error: float,
+    method: str,
+) -> FinEfficiencyResult:
+    """Assemble shared physical-area metrics for either solution method."""
+    if not math.isfinite(efficiency) or not 0.0 < efficiency <= 1.0 + 1.0e-10:
+        raise ValueError(
+            "Computed annular-fin efficiency is outside its physical range."
+        )
+    # Normalize only a roundoff-sized overshoot after rejecting larger errors.
+    efficiency = min(efficiency, 1.0)
+
+    gross_area = tube.area_outside_gross
+    primary_area = tube.area_primary_outside
+    fin_area = tube.area_fin
+    effective_area = primary_area + efficiency * fin_area
+    overall_efficiency = effective_area / gross_area
+    if not (
+        math.isfinite(effective_area)
+        and math.isfinite(overall_efficiency)
+        and effective_area > 0.0
+        and 0.0 < overall_efficiency <= 1.0 + 1.0e-10
+    ):
+        raise ValueError(
+            "Computed effective outside area is outside its physical range."
+        )
+    overall_efficiency = min(overall_efficiency, 1.0)
 
     return FinEfficiencyResult(
         fin_efficiency=efficiency,
@@ -207,11 +390,29 @@ def annular_fin_efficiency(
         outside_area_effective=effective_area,
         outside_htc=outside_htc,
         radial_cells=radial_cells,
-        tip_temperature_ratio=tip_temperature,
+        tip_temperature_ratio=tip_temperature_ratio,
         root_heat_rate_per_base_temperature=root_heat_rate,
         convective_heat_rate_per_base_temperature=convective_heat_rate,
-        energy_balance_relative_error=balance_error,
+        energy_balance_relative_error=energy_balance_relative_error,
+        method=method,
     )
+
+
+def _validate_fin_efficiency_inputs(
+    tube: CircularFinnedTube,
+    outside_htc: float,
+    radial_cells: int,
+) -> None:
+    if not isinstance(tube, CircularFinnedTube):
+        raise TypeError("tube must be a CircularFinnedTube instance.")
+    if not math.isfinite(outside_htc) or outside_htc <= 0.0:
+        raise ValueError("outside_htc must be positive and finite.")
+    if (
+        isinstance(radial_cells, bool)
+        or not isinstance(radial_cells, int)
+        or radial_cells < 4
+    ):
+        raise ValueError("radial_cells must be an integer greater than or equal to 4.")
 
 
 def calculate_fin_efficiency(
