@@ -18,7 +18,8 @@ from typing import Any
 
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import CircularFinnedTube, TubeSurfaceType
+from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.fin_efficiency import FinEfficiencyResult, annular_fin_efficiency
 from core.heat_transfer.finned_tube_outside import (
     BriggsYoung1963Provider,

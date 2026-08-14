@@ -24,7 +24,7 @@ import math
 from dataclasses import dataclass, replace
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import CircularFinnedTube, TubeSurfaceType
+from core.geometry.tube import TubeSurfaceType
 
 from core.heat_transfer.internal_flow import (
     FluidProps as InternalFlowFluidProps,
@@ -1026,10 +1026,8 @@ class BareTubeHeatExchanger:
 
         finned_diagnostics = None
         if outside_thermal_dispatch is not None:
-            geometry_warnings = (
-                self.bundle.tube.geometry_warnings
-                if isinstance(self.bundle.tube, CircularFinnedTube)
-                else ()
+            geometry_warnings = tuple(
+                getattr(self.bundle.tube, "geometry_warnings", ())
             )
             finned_diagnostics = build_finned_tube_diagnostics(
                 network=resistance_network,

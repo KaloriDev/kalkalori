@@ -13,7 +13,8 @@ the fractional count `length_effective / fin_pitch`; it does not round the
 number of fins and therefore does not introduce area jumps when tube length
 changes.
 
-The implemented empirical correlations cover staggered triangular banks.
+The implemented empirical correlations cover staggered equilateral triangular
+banks.
 `TubeBundle(layout="inline")` remains valid public geometry, but the built-in
 Briggs--Young and Robinson--Briggs providers reject it as unsupported.
 
@@ -24,7 +25,9 @@ No smooth-tube correlation is used as a fallback.
 
 ## Public geometry
 
-`CircularFinnedTube` composes an existing `BareTube` as `core_tube`. The
+`CircularFinnedTube` is defined in `core.geometry.finned_tube` and remains
+available through the public `core.geometry` package. It composes an existing
+`BareTube` as `core_tube`. The
 inside diameter, outside core diameter, total/effective lengths, wall
 conductivity, roughness and orientation are delegated to that object. This
 keeps one source of truth for core-tube validation and tube-side hydraulics.
@@ -191,7 +194,7 @@ Fin efficiency and contact resistance are each applied exactly once.
 |---|---|---|---|---|---:|---|---|---|
 | Annular-fin conduction | Gardner (1945); extended-surface texts | Fin and overall surface efficiency | `D_root` to `D_fin` radial domain | n/a | n/a | Individual full circular fin | Actual two faces plus tip | 1D radial conduction, uniform physical `h_o`, linear taper |
 | Briggs--Young (1963) | *Chem. Eng. Prog. Symp. Ser.* 59(41), 1--10 | Dry outside HTC | `D_root` | `V_max` on `A_min` | 1,100--18,000 | Staggered equilateral triangular; at least 4 rows, source banks had 6 | Physical film coefficient on exposed gross surface; efficiency separate | Air data; no inline or row correction; other gases are an extrapolation |
-| Robinson--Briggs (1966) | *Chem. Eng. Prog. Symp. Ser.* 62(64), 177--184 | Dry bank pressure loss | `D_root` | `V_max` on `A_min` | 2,000--50,000 | Staggered triangular; at least 4 rows, source banks had 6 | Dynamic pressure based on `V_max`; coefficient is per row | Isothermal air data; only two isosceles banks; high uncertainty outside original geometry |
+| Robinson--Briggs (1966) | *Chem. Eng. Prog. Symp. Ser.* 62(64), 177--184 | Dry bank pressure loss | `D_root` | `V_max` on `A_min` | 2,000--50,000 | Staggered equilateral triangular; at least 4 rows, source banks had 6 | Dynamic pressure based on `V_max`; coefficient is per row | Isothermal air data; materially isosceles layouts are outside the verified v0.7.0 scope |
 
 ### Briggs--Young heat transfer
 
@@ -243,8 +246,10 @@ does not silently substitute the inlet state.
 Provider results report method/source, geometry family, velocity and
 Reynolds bases, reference diameter, area and row bases, applicability ranges
 and structured warnings. The built-in models reject bare tubes, inline
-banks, too few rows and geometry-family mismatches rather than falling back
-to a smooth-tube model.
+banks, materially isosceles banks, too few rows and geometry-family mismatches
+rather than falling back to a smooth-tube model. A 0.1% relative tolerance on
+`P_d/P_t` accepts ordinary rounded dimensions without extending the model to
+arbitrary isosceles geometry.
 
 Any attempt to activate wet-gas condensation or another wet/phase-change path
 on a `CircularFinnedTube` is conservatively rejected with a dedicated
@@ -259,9 +264,9 @@ outside correlation state as air. The low-level contracts can label another
 dry gas and emit an extrapolation warning; arbitrary property providers do
 not expose enough phase metadata for the engine to infer gas versus liquid,
 so the caller remains responsible for supplying a dry single-phase gas state.
-Briggs--Young was based on equilateral
-triangular banks. Robinson--Briggs included fifteen equilateral and only two
-isosceles banks; later comparisons report substantial disagreement outside
-that narrow data family. Correlation warnings are therefore engineering
+Briggs--Young was based on equilateral triangular banks. The tracked
+Robinson--Briggs provenance does not establish an unambiguous production
+mapping for arbitrary isosceles pitch geometry, so v0.7.0 conservatively
+supports only the equilateral case. Correlation warnings are engineering
 diagnostics, not permission to extrapolate blindly. Industrial/vendor data
 should be used for final design validation.

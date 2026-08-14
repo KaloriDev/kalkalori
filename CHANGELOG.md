@@ -5,6 +5,15 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [Unreleased]
+
+### Changed
+
+- Refined circular-finned-tube geometry boundaries and limited the built-in
+  Robinson--Briggs pressure-drop model to verified equilateral staggered banks.
+
+---
+
 ## [0.6.3] — In-tube water evaporation
 
 ### Added

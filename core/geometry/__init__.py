@@ -8,9 +8,11 @@ Geometric definitions for heat exchanger components.
 from .tube import (
     BaseTube,
     BareTube,
-    CircularFinnedTube,
     TubeOrientation,
     TubeSurfaceType,
+)
+from .finned_tube import (
+    CircularFinnedTube,
     EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD,
 )
 from .bundle import TubeBundle, TubePathType

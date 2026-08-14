@@ -12,9 +12,18 @@ import pytest
 from core.geometry import (
     BareTube,
     CircularFinnedTube,
+    EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD,
     TubeBundle,
     TubeOrientation,
     TubeSurfaceType,
+)
+from core.geometry.finned_tube import (
+    CircularFinnedTube as CanonicalCircularFinnedTube,
+    EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD as CANONICAL_AREA_WARNING_THRESHOLD,
+)
+from core.geometry.tube import (
+    CircularFinnedTube as CompatibleCircularFinnedTube,
+    EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD as COMPATIBLE_AREA_WARNING_THRESHOLD,
 )
 
 
@@ -93,6 +102,20 @@ def test_bare_tube_public_constructor_and_surface_type_are_backward_compatible()
     tube = BareTube(0.020, 0.025, 2.0, 1.8, 45.0)
     assert tube.surface_type is TubeSurfaceType.PLAIN
     assert tube.area_outer == math.pi * 0.025 * 1.8
+    assert tube.projected_blocking_area_per_length == tube.D_o
+    assert _bundle(tube).projected_blocking_area_per_length == (
+        tube.projected_blocking_area_per_length
+    )
+
+
+def test_circular_finned_tube_public_and_compatibility_imports_are_identical() -> None:
+    assert CircularFinnedTube is CanonicalCircularFinnedTube
+    assert CompatibleCircularFinnedTube is CanonicalCircularFinnedTube
+    assert CircularFinnedTube.__module__ == "core.geometry.finned_tube"
+    assert EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD == (
+        CANONICAL_AREA_WARNING_THRESHOLD
+    )
+    assert COMPATIBLE_AREA_WARNING_THRESHOLD == CANONICAL_AREA_WARNING_THRESHOLD
 
 
 @pytest.mark.parametrize("name", ["D_i", "D_o", "length_total", "length_effective", "wall_k"])

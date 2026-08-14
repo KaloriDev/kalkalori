@@ -21,7 +21,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from core.common.warnings import ApplicabilityRange, ModelWarning, make_warning
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import CircularFinnedTube
+from core.geometry.finned_tube import CircularFinnedTube
 from core.properties.common import FluidTransportProperties
 
 
@@ -104,10 +104,7 @@ ROBINSON_BRIGGS_1966_METADATA = FinnedTubePressureDropMetadata(
         ">=4 rows is a later handbook recommendation"
     ),
     source_fluid="air",
-    supported_layouts=(
-        "staggered_equilateral_triangular",
-        "staggered_isosceles_triangular",
-    ),
+    supported_layouts=("staggered_equilateral_triangular",),
     supported_fin_profiles=("solid_circular_constant_or_linear_taper",),
     applicability=ROBINSON_BRIGGS_1966_APPLICABILITY,
 )
@@ -296,6 +293,12 @@ class RobinsonBriggs1966Provider:
         equilateral_deviation = abs(
             diagonal_pitch / request.pitch_transverse - 1.0
         )
+        if equilateral_deviation > self.equilateral_relative_tolerance:
+            raise ValueError(
+                "RobinsonBriggs1966Provider requires an equilateral triangular "
+                "bank (P_d approximately equal to P_t). The isosceles mapping "
+                "is outside the verified v0.7.0 geometry scope."
+            )
         t_mean = 0.5 * (
             request.fin_thickness_root + request.fin_thickness_tip
         )
@@ -338,8 +341,6 @@ class RobinsonBriggs1966Provider:
             spacing=spacing,
             t_mean=t_mean,
             height=height,
-            equilateral_deviation=equilateral_deviation,
-            equilateral_tolerance=self.equilateral_relative_tolerance,
         )
         return FinnedTubePressureDropResult(
             coefficient=coefficient,
@@ -801,8 +802,6 @@ def _robinson_briggs_warnings(
     spacing: float,
     t_mean: float,
     height: float,
-    equilateral_deviation: float,
-    equilateral_tolerance: float,
 ) -> tuple[ModelWarning, ...]:
     warnings: list[ModelWarning] = []
     values = (
@@ -849,19 +848,6 @@ def _robinson_briggs_warnings(
         )
         if warning is not None:
             warnings.append(warning)
-    if equilateral_deviation > equilateral_tolerance:
-        warnings.append(
-            make_warning(
-                code="robinson_briggs_1966_isosceles_triangular_geometry",
-                message=(
-                    "Robinson-Briggs is being used for an isosceles "
-                    "triangular bank. The source included two isosceles and "
-                    "fifteen equilateral banks; P_t/P_d remains explicit."
-                ),
-                source="finned_tube_pressure_drop",
-                severity="info",
-            )
-        )
     if request.n_rows != 6:
         warnings.append(
             make_warning(

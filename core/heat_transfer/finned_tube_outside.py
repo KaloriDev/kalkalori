@@ -22,7 +22,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from core.common.warnings import ApplicabilityRange, ModelWarning, make_warning
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import CircularFinnedTube
+from core.geometry.finned_tube import CircularFinnedTube
 from core.properties.common import FluidTransportProperties
 
 

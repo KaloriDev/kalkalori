@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
-from core.geometry.tube import BaseTube, CircularFinnedTube
+from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.tube import BaseTube
 
 
 class TubePathType(str, Enum):
@@ -247,13 +248,7 @@ class TubeBundle:
     @property
     def projected_blocking_area_per_length(self) -> float:
         """Per-tube flow-normal periodic blockage [m2/m]."""
-        return float(
-            getattr(
-                self.tube,
-                "projected_blocking_area_per_length",
-                getattr(self.tube, "D_o"),
-            )
-        )
+        return float(self.tube.projected_blocking_area_per_length)
 
     @property
     def projected_blocking_area_per_row(self) -> float:

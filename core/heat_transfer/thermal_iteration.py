@@ -142,7 +142,6 @@ from core.heat_transfer.outside_dispatch import (
     calculate_resistance_network,
     evaluate_outside_thermal,
 )
-from core.geometry.tube import CircularFinnedTube
 from core.heat_transfer.ntu import effectiveness_ntu, heat_duty_from_effectiveness
 from core.heat_transfer.streams import SensibleHeatStream
 
@@ -387,9 +386,7 @@ def _evaluate_local_wall_state(
     heat_rate = (
         inside_bulk_temperature - outside_bulk_temperature
     ) / network.resistance_total
-    geometry_warnings = (
-        tube.geometry_warnings if isinstance(tube, CircularFinnedTube) else ()
-    )
+    geometry_warnings = tuple(getattr(tube, "geometry_warnings", ()))
     warnings.extend(geometry_warnings)
     finned_diagnostics = build_finned_tube_diagnostics(
         network=network,

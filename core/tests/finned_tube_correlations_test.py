@@ -193,6 +193,9 @@ def test_metadata_states_diameter_velocity_area_and_row_bases() -> None:
     assert "fin-root" in pressure.reference_diameter
     assert "A_min" in pressure.area_basis
     assert "per-row" in pressure.row_basis
+    assert pressure.metadata.supported_layouts == (
+        "staggered_equilateral_triangular",
+    )
     assert pressure.applicability
 
 
@@ -218,7 +221,7 @@ def test_briggs_young_hard_rejects_inline_fewer_rows_and_isosceles() -> None:
     assert rounded.equilateral_relative_deviation < 1.0e-3
 
 
-def test_robinson_briggs_rejects_inline_and_fewer_rows_but_flags_isosceles() -> None:
+def test_robinson_briggs_hard_rejects_inline_fewer_rows_and_isosceles() -> None:
     bundle, props, m_dot = _benchmark_state()
     request = _pressure_request(bundle, props, m_dot)
     provider = RobinsonBriggs1966Provider()
@@ -228,14 +231,17 @@ def test_robinson_briggs_rejects_inline_and_fewer_rows_but_flags_isosceles() -> 
     with pytest.raises(ValueError, match="at least four"):
         provider.evaluate(replace(request, n_rows=3))
 
-    result = provider.evaluate(
-        replace(request, pitch_longitudinal=1.40 * INCH)
+    with pytest.raises(ValueError, match="equilateral"):
+        provider.evaluate(
+            replace(request, pitch_longitudinal=1.40 * INCH)
+        )
+
+    # Common rounded nominal inch pitches remain an equilateral engineering
+    # geometry (relative diagonal mismatch about 5.6e-4).
+    rounded = provider.evaluate(
+        replace(request, pitch_longitudinal=1.625 * INCH)
     )
-    assert result.coefficient > 0.0
-    assert any(
-        warning.code == "robinson_briggs_1966_isosceles_triangular_geometry"
-        for warning in result.warnings
-    )
+    assert rounded.equilateral_relative_deviation < 1.0e-3
 
 
 def test_high_level_adapters_reject_a_bare_tube_bundle() -> None:

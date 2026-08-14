@@ -21,7 +21,8 @@ root-flux diagnostic can lose relative precision there through subtraction of
 nearly equal temperatures.
 
 The geometry represents a continuous spiral fin as an equivalent periodic
-train of full annular fins; see :class:`core.geometry.tube.CircularFinnedTube`.
+train of full annular fins; see
+:class:`core.geometry.finned_tube.CircularFinnedTube`.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from core.geometry.tube import CircularFinnedTube
+from core.geometry.finned_tube import CircularFinnedTube
 
 
 DEFAULT_FIN_RADIAL_CELLS = 400
