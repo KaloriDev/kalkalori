@@ -41,11 +41,12 @@ Iteration sequence
    (``T_mean = 0.5*(T_in + T_out)``; ``T_out`` starts at the previous
    iterate, or ``T_in`` on the first pass).
 2. Evaluate bulk properties for both sides via the supplied providers.
-3. Calculate alfa_i and alfa_o at the bulk state (uncorrected on the first
-   pass; wall-corrected from the second pass onward, using the previous
-   iteration's wall temperatures).
-4. Calculate thermal resistances, U and UA from alfa_i, alfa_o and the
-   existing cylindrical wall-resistance model.
+3. Calculate the physical outside film HTC and ``alfa_i`` at the bulk state
+   (uncorrected on the first pass; wall-corrected from the second pass onward,
+   using the previous iteration's wall temperatures).
+4. Calculate the topology-aware thermal resistance network. Its public
+   generic ``alfa_o`` is the resulting effective coefficient on gross outside
+   area (identical to the physical film HTC for a plain tube).
 5. Calculate the current heat duty via epsilon-NTU (``core.heat_transfer.ntu``).
 6. Determine inside and outside tube-wall surface temperatures from the
    mean bulk temperatures and the resistance network (see sign convention
@@ -54,9 +55,10 @@ Iteration sequence
 8. Recalculate alfa_i (turbulent-gas wall-temperature correction,
    ``internal_flow.gas_wall_temperature_correction``, plus the finite
    heated-length correction, ``internal_flow.internal_length_correction``,
-   applied once each) and alfa_o (outside wall Prandtl number ``Pr_s``,
-   ``outside_flow.nusselt_zukauskas``) using the *separate* wall properties
-   from step 7.
+   applied once each) and the physical outside film HTC (outside wall Prandtl
+   number ``Pr_s``, ``outside_flow.nusselt_zukauskas``) using the *separate*
+   wall properties from step 7; then derive the gross-area effective
+   ``alfa_o`` from the resistance network.
 9. Recalculate U, UA and both wall temperatures.
 10. Repeat (relaxed) until wall temperatures and alfa's converge, or
     ``max_iterations`` is reached.
@@ -66,10 +68,12 @@ Signed heat-flow convention
 ``q_inside_to_outside = UA * (T_bulk_inside - T_bulk_outside)`` is positive
 when the inside (tube) stream runs hotter on a mean-bulk basis, and negative
 for the reverse -- so both wall temperatures are derived from a
-resistance-weighted split of the mean bulk temperature difference:
+resistance-weighted split of the mean bulk temperature difference. Here
+``R_outside`` is the complete core-wall-to-outside-bulk path, including a
+continuous root/contact layer when present:
 
     T_wall_inside  = T_bulk_inside  - q_inside_to_outside * R_i
-    T_wall_outside = T_bulk_outside + q_inside_to_outside * R_o
+    T_wall_outside = T_bulk_outside + q_inside_to_outside * R_outside
 
 This uses the *mean-bulk-consistent* heat rate (``UA`` times the mean bulk
 temperature difference), not the actual duty ``Q`` from epsilon-NTU on the
@@ -220,7 +224,7 @@ class IterativeThermalState:
     outside_wall_props: FluidTransportProperties | None
 
     alfa_i: float   # [W/(m2*K)] wall/length-corrected
-    alfa_o: float   # [W/(m2*K)] wall-corrected
+    alfa_o: float   # [W/(m2*K)] effective gross-area outside coefficient
 
     U: float    # [W/(m2*K)] referenced to outer area A_o
     UA: float   # [W/K]
@@ -230,6 +234,13 @@ class IterativeThermalState:
     residual: float   # [K] last wall-temperature residual
 
     diagnostics: ThermalIterationDiagnostics
+
+    # The correlation-level physical HTC is retained explicitly for extended
+    # surfaces.  ``alfa_o`` and ``outside_alpha_effective_gross`` are the
+    # same generic, resistance-reconstructing quantity; they equal the
+    # physical HTC for a plain tube.
+    outside_alpha_physical: float = math.nan
+    outside_alpha_effective_gross: float = math.nan
 
     # Property-provider identity, for engineering audit (which provider
     # implementation produced inside_bulk_props/outside_bulk_props).
@@ -266,6 +277,8 @@ class WallTemperatureProbe:
     outside_nusselt: float = math.nan
     heat_rate_probe: float = math.nan
     residual: float = math.inf
+    outside_alpha_physical: float = math.nan
+    outside_alpha_effective_gross: float = math.nan
 
 
 @dataclass(frozen=True)
@@ -290,7 +303,8 @@ class _LocalWallEvaluation:
     outside_bulk_props: FluidTransportProperties
     outside_wall_props: FluidTransportProperties | None
     alfa_i: float
-    alfa_o: float
+    alfa_o_physical: float
+    alfa_o_effective_gross: float
     inside_nusselt: float
     outside_nusselt: float
     inside_wall_temperature: float
@@ -303,6 +317,11 @@ class _LocalWallEvaluation:
     resistance_network: ThermalResistanceNetwork
     finned_tube_diagnostics: FinnedTubeDiagnostics | None
     warnings: tuple[ModelWarning, ...]
+
+    @property
+    def alfa_o(self) -> float:
+        """Generic outside coefficient: effective on gross outside area."""
+        return self.alfa_o_effective_gross
 
 
 def _evaluate_local_wall_state(
@@ -372,7 +391,7 @@ def _evaluate_local_wall_state(
         finned_heat_transfer_provider=finned_heat_transfer_provider,
     )
     warnings.extend(outside_dispatch.warnings)
-    alfa_o = outside_dispatch.alpha
+    alfa_o_physical = outside_dispatch.alpha_physical
     Nu_o_base = outside_dispatch.nusselt_number_base
     Nu_o = outside_dispatch.nusselt_number
 
@@ -380,9 +399,10 @@ def _evaluate_local_wall_state(
     network = calculate_resistance_network(
         bundle=bundle,
         alpha_inside=alfa_i,
-        alpha_outside=alfa_o,
+        outside_alpha_physical=alfa_o_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
     )
+    alfa_o_effective_gross = network.outside_alpha_effective_gross
     heat_rate = (
         inside_bulk_temperature - outside_bulk_temperature
     ) / network.resistance_total
@@ -400,12 +420,16 @@ def _evaluate_local_wall_state(
         outside_bulk_props=bulk_o,
         outside_wall_props=wall_o,
         alfa_i=alfa_i,
-        alfa_o=alfa_o,
+        alfa_o_physical=alfa_o_physical,
+        alfa_o_effective_gross=alfa_o_effective_gross,
         inside_nusselt=internal.Nu_corrected,
         outside_nusselt=Nu_o,
         inside_wall_temperature=(
             inside_bulk_temperature - heat_rate * network.resistance_inside
         ),
+        # ``resistance_outside`` is the complete core-wall-to-outside-bulk
+        # path.  For a continuous root it includes the common root/contact
+        # series terms as well as the downstream convection branches.
         outside_wall_temperature=(
             outside_bulk_temperature + heat_rate * network.resistance_outside
         ),
@@ -534,6 +558,8 @@ def _solve_wall_temperature_probe(
         outside_nusselt=final.outside_nusselt,
         heat_rate_probe=final.heat_rate,
         residual=residual,
+        outside_alpha_physical=final.alfa_o_physical,
+        outside_alpha_effective_gross=final.alfa_o_effective_gross,
     )
 
 
@@ -743,7 +769,9 @@ def solve_iterative_thermal_state(
             "props_wall_inside": local.inside_wall_props,
             "props_wall_outside": local.outside_wall_props,
             "alfa_i": local.alfa_i,
-            "alfa_o": local.alfa_o,
+            "alfa_o": local.alfa_o_effective_gross,
+            "outside_alpha_physical": local.alfa_o_physical,
+            "outside_alpha_effective_gross": local.alfa_o_effective_gross,
             "UA": UA,
             "T_out_inside_calc": T_out_inside_calc,
             "T_out_outside_calc": T_out_outside_calc,
@@ -912,6 +940,8 @@ def solve_iterative_thermal_state(
         converged=converged,
         residual=residual,
         diagnostics=diagnostics,
+        outside_alpha_physical=final["outside_alpha_physical"],
+        outside_alpha_effective_gross=final["outside_alpha_effective_gross"],
         inside_provider_name=type(inside_provider).__name__,
         outside_provider_name=type(outside_provider).__name__,
         warnings=tuple(all_warnings),

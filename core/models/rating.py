@@ -59,6 +59,11 @@ obtain the areas and the final provider-based three-state tube-bundle
 hydraulic result; its thermal coefficients are deliberately not propagated to
 ``HXRatingResult`` because the thermal-state values are authoritative.
 
+For a circular-finned tube, public ``alfa_o`` is the equivalent coefficient
+on authoritative gross outside area. The correlation-level physical film HTC
+is retained separately in ``finned_tube_diagnostics``; both values are equal
+for a plain tube.
+
 Algorithm
 ---------
 1. Balance is already closed (``ClosedBalance``): duty ``Q``, both ``T_in``,
@@ -132,7 +137,7 @@ class HXRatingResult:
     # Multi-zone pure water/steam reports the resistance-consistent equivalent HTC here;
     # all other models retain their established corrected-HTC semantics.
     alfa_i: float              # [W/(m2*K)] wall/length-corrected (== thermal_state.alfa_i)
-    alfa_o: float              # [W/(m2*K)] wall-corrected (== thermal_state.alfa_o)
+    alfa_o: float              # [W/(m2*K)] effective gross-area HTC (== thermal_state.alfa_o)
 
     Q_required: float          # [W] duty of the closed balance
     Q_achievable: float | None  # [W] from an optional comparison simulate() run

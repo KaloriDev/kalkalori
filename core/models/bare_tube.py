@@ -381,6 +381,8 @@ class HXResult:
     tube_side_thermal: HXOutSideThermalResults
     tube_side_hydraulic: HXTubeSideHydraulicResults | None
 
+    # Generic gross-area effective HTC; for circular fins the physical
+    # correlation HTC is exposed separately by ``finned_tube_diagnostics``.
     outside_side_thermal: HXOutSideThermalResults
     outside_side_hydraulic: HXOutSideHydraulicResults
 
@@ -790,7 +792,7 @@ class BareTubeHeatExchanger:
             v_o = outside_thermal_dispatch.face_velocity
             Re_o = outside_thermal_dispatch.reynolds_number
             Pr_o = outside_thermal_dispatch.prandtl_number
-            alfa_o_calc = outside_thermal_dispatch.alpha
+            alfa_o_calc = outside_thermal_dispatch.alpha_physical
             outside_warnings = list(outside_thermal_dispatch.warnings)
             outside_bank_hydraulic = evaluate_outside_hydraulics(
                 bundle=self.bundle,
@@ -826,7 +828,7 @@ class BareTubeHeatExchanger:
         if alfa_o is not None:
             if alfa_o <= 0.0:
                 raise ValueError("alfa_o must be positive when provided.")
-            alfa_o_used = alfa_o
+            alfa_o_physical = alfa_o
         else:
             if alfa_o_calc is None:
                 raise ValueError(
@@ -834,9 +836,8 @@ class BareTubeHeatExchanger:
                     "- (m_dot_outside and outside_props) to compute alfa_o, or\n"
                     "- alfa_o directly as an override."
                 )
-            alfa_o_used = alfa_o_calc
+            alfa_o_physical = alfa_o_calc
 
-        outside_thermal = HXOutSideThermalResults(v=v_o, Re=Re_o, Pr=Pr_o, alfa=alfa_o_used)
         outside_hyd = HXOutSideHydraulicResults(
             dp_total=dp_o,
             Re=(
@@ -859,8 +860,17 @@ class BareTubeHeatExchanger:
         resistance_network = calculate_resistance_network(
             bundle=self.bundle,
             alpha_inside=alfa_i,
-            alpha_outside=alfa_o_used,
+            outside_alpha_physical=alfa_o_physical,
             resistance_core_wall=R_w,
+        )
+        # Generic exchanger-facing alfa is referenced to authoritative gross
+        # outside area and reconstructs the complete outside resistance.  For
+        # a plain tube it is exactly the physical film coefficient.
+        outside_thermal = HXOutSideThermalResults(
+            v=v_o,
+            Re=Re_o,
+            Pr=Pr_o,
+            alfa=resistance_network.outside_alpha_effective_gross,
         )
         UA = resistance_network.UA
 

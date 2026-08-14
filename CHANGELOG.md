@@ -13,6 +13,8 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ### Changed
 
+- Clarified physical and effective outside heat-transfer coefficients for
+  extended surfaces.
 - Refined circular-finned-tube geometry boundaries and limited the built-in
   Robinson--Briggs pressure-drop model to verified equilateral staggered banks.
 

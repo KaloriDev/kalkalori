@@ -55,7 +55,15 @@ class IncompatibleOutsideCorrelationProviderError(TypeError):
 
 @dataclass(frozen=True)
 class OutsideThermalDispatchResult:
-    """Common physical outside-film result used by exchanger solvers."""
+    """Physical outside-film result selected by the surface dispatcher.
+
+    ``alpha_physical`` is the mean film coefficient returned directly by the
+    selected correlation.  It intentionally does *not* include extended
+    surface efficiency, contact resistance, area enhancement, or root-layer
+    conduction.  Those geometry/topology effects are applied only by
+    :func:`calculate_resistance_network`, which produces the separately
+    named gross-area effective coefficient.
+    """
 
     surface_type: TubeSurfaceType
     face_velocity: float
@@ -65,14 +73,38 @@ class OutsideThermalDispatchResult:
     nusselt_number: float
     nusselt_number_base: float
     wall_property_correction: float
-    alpha: float
+    alpha_physical: float
     warnings: tuple[ModelWarning, ...]
     finned_result: FinnedTubeHeatTransferResult | None = None
+
+    @property
+    def alpha(self) -> float:
+        """Compatibility alias for the physical outside-film coefficient."""
+        return self.alpha_physical
+
+    @property
+    def outside_alpha_physical(self) -> float:
+        """Fully qualified alias for :attr:`alpha_physical`."""
+        return self.alpha_physical
+
+    @property
+    def outside_htc(self) -> float:
+        """Compatibility alias for the physical outside-film coefficient."""
+        return self.alpha_physical
 
 
 @dataclass(frozen=True)
 class ThermalResistanceNetwork:
-    """Whole-exchanger resistance network on a gross-area U basis."""
+    """Whole-exchanger resistance network on an authoritative gross-area basis.
+
+    ``outside_alpha_physical`` is the film coefficient supplied to the fin
+    model.  ``outside_alpha_effective_gross`` is derived *after* the complete
+    outside topology is assembled and therefore satisfies
+    ``resistance_outside == 1 / (outside_alpha_effective_gross *
+    area_outside_gross)``.  In particular, finite fin contact and a continuous
+    root layer are part of ``resistance_outside`` rather than hidden in the
+    total-resistance sum.
+    """
 
     surface_type: TubeSurfaceType
     area_inside: float
@@ -83,6 +115,8 @@ class ThermalResistanceNetwork:
     area_outside_effective: float
     fin_efficiency: float
     overall_surface_efficiency: float
+    outside_alpha_physical: float
+    outside_alpha_effective_gross: float
     resistance_inside: float
     resistance_core_wall: float
     resistance_root: float
@@ -93,6 +127,7 @@ class ThermalResistanceNetwork:
     contact_topology: str
     conductance_primary_outside: float
     conductance_fin_outside: float
+    resistance_outside_branches: float
     resistance_outside: float
     resistance_total: float
     UA: float
@@ -102,7 +137,13 @@ class ThermalResistanceNetwork:
 
 @dataclass(frozen=True)
 class FinnedTubeDiagnostics:
-    """Public, auditable circular-finned-tube thermal/hydraulic result."""
+    """Public, auditable circular-finned-tube thermal/hydraulic result.
+
+    ``outside_alpha_physical`` is the direct Briggs-Young film HTC.  The
+    separately named ``outside_alpha_effective_gross`` is the generic
+    gross-area coefficient reconstructed from the full outside resistance,
+    including the declared contact/root topology.
+    """
 
     tube_surface_type: TubeSurfaceType
     area_inside: float
@@ -113,7 +154,8 @@ class FinnedTubeDiagnostics:
     area_outside_effective: float
     fin_efficiency: float
     overall_surface_efficiency: float
-    outside_htc: float
+    outside_alpha_physical: float
+    outside_alpha_effective_gross: float
     resistance_inside: float
     resistance_core_wall: float
     resistance_root: float
@@ -124,6 +166,7 @@ class FinnedTubeDiagnostics:
     contact_topology: str
     conductance_primary_outside: float
     conductance_fin_outside: float
+    resistance_outside_branches: float
     resistance_outside: float
     resistance_total: float
     UA: float
@@ -142,6 +185,21 @@ class FinnedTubeDiagnostics:
     heat_transfer_metadata: object | None
     pressure_drop_metadata: object | None
     warnings: tuple[ModelWarning, ...]
+
+    @property
+    def alpha(self) -> float:
+        """Compatibility alias for the physical outside-film coefficient."""
+        return self.outside_alpha_physical
+
+    @property
+    def alpha_physical(self) -> float:
+        """Short alias for :attr:`outside_alpha_physical`."""
+        return self.outside_alpha_physical
+
+    @property
+    def outside_htc(self) -> float:
+        """Compatibility alias for the physical outside-film coefficient."""
+        return self.outside_alpha_physical
 
     @property
     def A_i(self) -> float:
@@ -286,7 +344,7 @@ def evaluate_outside_thermal(
             nusselt_number=nu,
             nusselt_number_base=nu_base,
             wall_property_correction=nu / nu_base if nu_base != 0.0 else 1.0,
-            alpha=alpha,
+            alpha_physical=alpha,
             warnings=tuple(warnings),
         )
 
@@ -311,7 +369,7 @@ def evaluate_outside_thermal(
         nusselt_number=result.nusselt_number,
         nusselt_number_base=result.nusselt_number,
         wall_property_correction=1.0,
-        alpha=result.alpha,
+        alpha_physical=result.alpha,
         warnings=result.warnings,
         finned_result=result,
     )
@@ -384,14 +442,22 @@ def calculate_resistance_network(
     *,
     bundle: TubeBundle,
     alpha_inside: float,
-    alpha_outside: float,
+    outside_alpha_physical: float,
     resistance_core_wall: float,
 ) -> ThermalResistanceNetwork:
-    """Build the core series terms and topology-correct outside branches."""
+    """Build core terms and the full topology-correct outside resistance.
+
+    ``outside_alpha_physical`` is always the physical film HTC from the selected
+    outside correlation.  The returned ``resistance_outside`` starts at the
+    core tube's external wall and ends in the outside bulk fluid.  For a
+    continuous root layer it consequently includes the common root/contact
+    series terms; ``resistance_outside_branches`` exposes only the downstream
+    primary/fin parallel branch component for auditability.
+    """
 
     for name, value in (
         ("alpha_inside", alpha_inside),
-        ("alpha_outside", alpha_outside),
+        ("outside_alpha_physical", outside_alpha_physical),
     ):
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"{name} must be positive and finite.")
@@ -417,12 +483,17 @@ def calculate_resistance_network(
         contact_area = 0.0
         contact_area_basis = "not_applicable"
         contact_topology = "not_applicable"
-        conductance_primary = alpha_outside * area_primary
+        conductance_primary = outside_alpha_physical * area_primary
         conductance_fin = 0.0
+        resistance_outside_branches = 1.0 / conductance_primary
+        resistance_outside = resistance_outside_branches
+        # Preserve the exact historical bare-tube value instead of producing
+        # a numerically equivalent reciprocal round trip.
+        outside_alpha_effective_gross = outside_alpha_physical
     else:
         tube = bundle.tube
         assert isinstance(tube, CircularFinnedTube)
-        fin_result = annular_fin_efficiency(tube, alpha_outside)
+        fin_result = annular_fin_efficiency(tube, outside_alpha_physical)
         area_primary = bundle.total_primary_outside_area
         area_fin = bundle.total_fin_area
         area_geometric = bundle.total_outer_geometric_area
@@ -435,8 +506,8 @@ def calculate_resistance_network(
         contact_area = tube.contact_area_per_tube * bundle.n_tubes_total
         contact_area_basis = tube.contact_area_basis
         contact_topology = tube.contact_topology
-        conductance_primary = alpha_outside * area_primary
-        ideal_fin_conductance = alpha_outside * eta_fin * area_fin
+        conductance_primary = outside_alpha_physical * area_primary
+        ideal_fin_conductance = outside_alpha_physical * eta_fin * area_fin
         if tube.D_root == tube.D_o:
             # Welded fins contact only beneath their roots. The exposed
             # primary cylinder is a genuine parallel bypass and must not be
@@ -447,28 +518,35 @@ def calculate_resistance_network(
                 else 1.0
                 / (resistance_contact + 1.0 / ideal_fin_conductance)
             )
+            common_root_contact = 0.0
         else:
             # A continuous root layer covers the core/root interface, so its
             # conduction and contact terms are common to both outside
             # branches. Their parallel convection remains represented by the
             # effective-area conductance below.
             conductance_fin = ideal_fin_conductance
+            common_root_contact = resistance_root + resistance_contact
 
     outside_conductance = conductance_primary + conductance_fin
     if not math.isfinite(outside_conductance) or outside_conductance <= 0.0:
         raise ValueError("Invalid outside thermal conductance.")
-    resistance_o = 1.0 / outside_conductance
-    common_root_contact = 0.0
-    if surface is TubeSurfaceType.CIRCULAR_FINNED:
-        tube = bundle.tube
-        assert isinstance(tube, CircularFinnedTube)
-        if tube.D_root > tube.D_o:
-            common_root_contact = resistance_root + resistance_contact
+    if surface is not TubeSurfaceType.PLAIN:
+        resistance_outside_branches = 1.0 / outside_conductance
+        resistance_outside = common_root_contact + resistance_outside_branches
+        outside_alpha_effective_gross = 1.0 / (
+            resistance_outside * area_gross
+        )
+    if not math.isfinite(resistance_outside) or resistance_outside <= 0.0:
+        raise ValueError("Invalid outside thermal resistance.")
+    if (
+        not math.isfinite(outside_alpha_effective_gross)
+        or outside_alpha_effective_gross <= 0.0
+    ):
+        raise ValueError("Invalid effective gross-area outside heat-transfer coefficient.")
     resistance_total = (
         resistance_i
         + resistance_core_wall
-        + common_root_contact
-        + resistance_o
+        + resistance_outside
     )
     if not math.isfinite(resistance_total) or resistance_total <= 0.0:
         raise ValueError("Invalid total thermal resistance.")
@@ -483,6 +561,8 @@ def calculate_resistance_network(
         area_outside_effective=area_effective,
         fin_efficiency=eta_fin,
         overall_surface_efficiency=eta_overall,
+        outside_alpha_physical=outside_alpha_physical,
+        outside_alpha_effective_gross=outside_alpha_effective_gross,
         resistance_inside=resistance_i,
         resistance_core_wall=resistance_core_wall,
         resistance_root=resistance_root,
@@ -493,7 +573,8 @@ def calculate_resistance_network(
         contact_topology=contact_topology,
         conductance_primary_outside=conductance_primary,
         conductance_fin_outside=conductance_fin,
-        resistance_outside=resistance_o,
+        resistance_outside_branches=resistance_outside_branches,
+        resistance_outside=resistance_outside,
         resistance_total=resistance_total,
         UA=ua,
         U_gross_outside=ua / area_gross,
@@ -528,7 +609,8 @@ def build_finned_tube_diagnostics(
         area_outside_effective=network.area_outside_effective,
         fin_efficiency=network.fin_efficiency,
         overall_surface_efficiency=network.overall_surface_efficiency,
-        outside_htc=thermal.alpha,
+        outside_alpha_physical=network.outside_alpha_physical,
+        outside_alpha_effective_gross=network.outside_alpha_effective_gross,
         resistance_inside=network.resistance_inside,
         resistance_core_wall=network.resistance_core_wall,
         resistance_root=network.resistance_root,
@@ -539,6 +621,7 @@ def build_finned_tube_diagnostics(
         contact_topology=network.contact_topology,
         conductance_primary_outside=network.conductance_primary_outside,
         conductance_fin_outside=network.conductance_fin_outside,
+        resistance_outside_branches=network.resistance_outside_branches,
         resistance_outside=network.resistance_outside,
         resistance_total=network.resistance_total,
         UA=network.UA,

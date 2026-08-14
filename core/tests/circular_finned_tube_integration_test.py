@@ -17,6 +17,7 @@ from core.heat_transfer.outside_dispatch import (
     evaluate_outside_hydraulics,
     evaluate_outside_thermal,
 )
+from core.heat_transfer.thermal_iteration import _evaluate_local_wall_state
 from core.heat_transfer.outside_flow import (
     FluidProps as OutsideFluidProps,
     calculate_outside_tube_bank_hydraulics,
@@ -163,6 +164,8 @@ def _assert_finned_diagnostics(result) -> None:
         diagnostics.A_outside_effective,
         diagnostics.eta_fin,
         diagnostics.eta_overall,
+        diagnostics.outside_alpha_physical,
+        diagnostics.outside_alpha_effective_gross,
         diagnostics.outside_htc,
         diagnostics.UA,
         diagnostics.U,
@@ -183,6 +186,16 @@ def _assert_finned_diagnostics(result) -> None:
     )
     assert diagnostics.contact_resistance_used == 0.0
     assert diagnostics.resistance_contact == 0.0
+    assert diagnostics.alpha == diagnostics.outside_alpha_physical
+    assert diagnostics.alpha_physical == diagnostics.outside_alpha_physical
+    assert diagnostics.outside_htc == diagnostics.outside_alpha_physical
+    assert diagnostics.resistance_outside == pytest.approx(
+        1.0
+        / (
+            diagnostics.outside_alpha_effective_gross
+            * diagnostics.area_outside_gross
+        )
+    )
     assert diagnostics.UA == pytest.approx(1.0 / diagnostics.resistance_total)
     assert diagnostics.U == pytest.approx(
         diagnostics.UA / diagnostics.A_outside_gross
@@ -199,6 +212,29 @@ def _assert_finned_diagnostics(result) -> None:
     assert not any(
         warning.code.endswith(("_below_range", "_above_range"))
         for warning in diagnostics.warnings
+    )
+
+
+def _welded_bundle(*, contact: float | None) -> TubeBundle:
+    core = _core_tube()
+    pitch_transverse = 0.060
+    return TubeBundle(
+        tube=CircularFinnedTube(
+            core_tube=core,
+            fin_k=200.0,
+            D_fin=0.047,
+            D_root=core.D_o,
+            fin_thickness_root=0.0005,
+            fin_pitch=0.0024,
+            fin_contact_resistance=contact,
+        ),
+        n_rows=6,
+        n_tubes_per_row=8,
+        pitch_transverse=pitch_transverse,
+        pitch_longitudinal=math.sqrt(3.0) * pitch_transverse / 2.0,
+        layout="staggered",
+        n_passes_tube=2,
+        flow_arrangement="counterflow",
     )
 
 
@@ -221,6 +257,20 @@ def test_dry_solve_simulate_and_rate_expose_consistent_finned_results() -> None:
         for warning in (solve_result.warnings or [])
     )
     _assert_finned_diagnostics(solve_result)
+    solve_diagnostics = solve_result.finned_tube_diagnostics
+    assert solve_diagnostics is not None
+    dispatched = evaluate_outside_thermal(
+        bundle=hx.bundle,
+        m_dot=M_DOT_OUTSIDE,
+        props=OutsideFluidProps(**OUTSIDE_TRANSPORT.__dict__),
+    )
+    assert dispatched.alpha == dispatched.alpha_physical
+    assert solve_diagnostics.outside_alpha_physical == pytest.approx(
+        dispatched.alpha_physical
+    )
+    assert solve_result.outside_side_thermal.alfa == pytest.approx(
+        solve_diagnostics.outside_alpha_effective_gross
+    )
 
     inside, outside = _side_inputs()
     simulation = hx.simulate(inside, outside)
@@ -237,6 +287,30 @@ def test_dry_solve_simulate_and_rate_expose_consistent_finned_results() -> None:
     assert simulation.q == pytest.approx(q_outside, rel=2.0e-9)
     assert simulation.UA == pytest.approx(
         simulation.finned_tube_diagnostics.UA
+    )
+    assert simulation.outside_alfa_mean == pytest.approx(
+        simulation.finned_tube_diagnostics.outside_alpha_effective_gross
+    )
+    assert simulation.thermal_state is not None
+    assert simulation.thermal_state.alfa_o == pytest.approx(
+        simulation.finned_tube_diagnostics.outside_alpha_effective_gross
+    )
+    assert simulation.thermal_state.outside_alpha_effective_gross == pytest.approx(
+        simulation.thermal_state.alfa_o
+    )
+    assert simulation.thermal_state.outside_alpha_physical == pytest.approx(
+        simulation.finned_tube_diagnostics.outside_alpha_physical
+    )
+    assert simulation.final_result.outside_side_thermal.alfa == pytest.approx(
+        simulation.final_result.finned_tube_diagnostics.outside_alpha_effective_gross
+    )
+    single_pass = hx.simulate(inside, outside, iterate=False)
+    assert single_pass.thermal_state is None
+    assert single_pass.outside_alfa_mean == pytest.approx(
+        single_pass.finned_tube_diagnostics.outside_alpha_effective_gross
+    )
+    assert single_pass.outside_alfa_mean == pytest.approx(
+        single_pass.final_result.outside_side_thermal.alfa
     )
     assert simulation.outside_properties_midpoint.Pr > 0.0
 
@@ -262,6 +336,13 @@ def test_dry_solve_simulate_and_rate_expose_consistent_finned_results() -> None:
     assert rating.finned_tube == rating.finned_tube_diagnostics
     _assert_finned_diagnostics(rating)
     assert rating.UA_actual == pytest.approx(rating.finned_tube_diagnostics.UA)
+    assert rating.alfa_o == pytest.approx(
+        rating.finned_tube_diagnostics.outside_alpha_effective_gross
+    )
+    assert rating.thermal_state.alfa_o == pytest.approx(rating.alfa_o)
+    assert rating.thermal_state.outside_alpha_effective_gross == pytest.approx(
+        rating.alfa_o
+    )
 
 
 class _CountingHeatTransferProvider:
@@ -386,9 +467,30 @@ def test_plain_dispatch_is_exact_legacy_regression() -> None:
         dispatched.face_velocity,
         dispatched.reynolds_number,
         dispatched.prandtl_number,
-        dispatched.alpha,
+        dispatched.alpha_physical,
         list(dispatched.warnings),
     ) == (legacy[0], legacy[1], legacy[2], legacy[3], legacy[5])
+    assert dispatched.alpha == dispatched.alpha_physical
+    assert dispatched.outside_alpha_physical == dispatched.alpha_physical
+    assert dispatched.outside_htc == dispatched.alpha_physical
+
+    plain_network = calculate_resistance_network(
+        bundle=bundle,
+        alpha_inside=800.0,
+        outside_alpha_physical=dispatched.alpha_physical,
+        resistance_core_wall=0.001,
+    )
+    # Preserve exact bare-tube semantics: no efficiency/contact/root layer
+    # turns the physical correlation coefficient into a different generic
+    # gross-area value.
+    assert plain_network.outside_alpha_physical == dispatched.alpha_physical
+    assert (
+        plain_network.outside_alpha_effective_gross
+        == dispatched.alpha_physical
+    )
+    assert plain_network.resistance_outside == 1.0 / (
+        dispatched.alpha_physical * plain_network.area_outside_gross
+    )
 
     outside_provider = _providers()[1]
     dispatched_hydraulics = evaluate_outside_hydraulics(
@@ -414,7 +516,9 @@ def test_plain_dispatch_is_exact_legacy_regression() -> None:
         pressure=P,
     )
     assert dispatched_hydraulics == legacy_hydraulics
-    assert _solve(BareTubeHeatExchanger(bundle)).finned_tube_diagnostics is None
+    plain_solve = _solve(BareTubeHeatExchanger(bundle))
+    assert plain_solve.finned_tube_diagnostics is None
+    assert plain_solve.outside_side_thermal.alfa == dispatched.alpha_physical
     with pytest.raises(IncompatibleOutsideCorrelationProviderError):
         evaluate_outside_thermal(
             bundle=bundle,
@@ -630,7 +734,7 @@ def test_welded_contact_resistance_affects_only_the_parallel_fin_branch() -> Non
     network = calculate_resistance_network(
         bundle=bundle,
         alpha_inside=1000.0,
-        alpha_outside=50.0,
+        outside_alpha_physical=50.0,
         resistance_core_wall=hx.tube_wall_resistance(),
     )
 
@@ -643,8 +747,110 @@ def test_welded_contact_resistance_affects_only_the_parallel_fin_branch() -> Non
     assert network.contact_area_basis == "periodic_fin_root_footprints"
     assert network.conductance_primary_outside > 0.0
     assert network.conductance_fin_outside > 0.0
+    assert network.conductance_fin_outside < (
+        1.0e-7 * network.conductance_primary_outside
+    )
+    assert network.resistance_outside == network.resistance_outside_branches
+    assert network.resistance_outside == pytest.approx(
+        1.0
+        / (
+            network.outside_alpha_effective_gross
+            * network.area_outside_gross
+        )
+    )
     assert network.UA == pytest.approx(primary_only_limit, rel=1.0e-8)
     assert network.UA > 0.0
+
+
+def test_welded_effective_gross_alpha_uses_actual_contact_topology() -> None:
+    """Ideal/finite contact must use the real welded parallel network."""
+    alpha_physical = 50.0
+    contact_values = (0.0, 1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2)
+    networks = []
+    for contact in contact_values:
+        network = calculate_resistance_network(
+            bundle=_welded_bundle(contact=contact),
+            alpha_inside=800.0,
+            outside_alpha_physical=alpha_physical,
+            resistance_core_wall=0.001,
+        )
+        ideal_fin_conductance = (
+            alpha_physical * network.fin_efficiency * network.area_fin
+        )
+        expected_fin_conductance = 1.0 / (
+            network.resistance_contact + 1.0 / ideal_fin_conductance
+        )
+        assert network.contact_topology == "fin_branch_only"
+        assert network.outside_alpha_physical == alpha_physical
+        assert network.conductance_fin_outside == pytest.approx(
+            expected_fin_conductance
+        )
+        assert network.resistance_outside == pytest.approx(
+            network.resistance_outside_branches
+        )
+        assert network.resistance_outside == pytest.approx(
+            1.0
+            / (
+                network.outside_alpha_effective_gross
+                * network.area_outside_gross
+            )
+        )
+        networks.append(network)
+
+    ideal = networks[0]
+    assert ideal.outside_alpha_effective_gross == pytest.approx(
+        alpha_physical
+        * (
+            ideal.area_primary_outside + ideal.fin_efficiency * ideal.area_fin
+        )
+        / ideal.area_outside_gross
+    )
+    # Higher contact resistance can only reduce the fin branch and the full
+    # exchanger UA; the exposed primary path remains available throughout.
+    fin_conductances = [network.conductance_fin_outside for network in networks]
+    uas = [network.UA for network in networks]
+    assert fin_conductances == sorted(fin_conductances, reverse=True)
+    assert uas == sorted(uas, reverse=True)
+    assert all(network.conductance_primary_outside > 0.0 for network in networks)
+    assert all(network.UA > 0.0 for network in networks)
+    assert networks[-1].outside_alpha_effective_gross < (
+        ideal.outside_alpha_effective_gross
+    )
+
+
+def test_continuous_root_wall_node_uses_full_outside_resistance() -> None:
+    """The wall node is at the core exterior, before common root/contact."""
+    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    inside_provider, outside_provider = _providers()
+    local = _evaluate_local_wall_state(
+        hx,
+        m_dot_inside=M_DOT_INSIDE,
+        m_dot_outside=M_DOT_OUTSIDE,
+        inside_provider=inside_provider,
+        outside_provider=outside_provider,
+        inside_bulk_temperature=T_INSIDE,
+        outside_bulk_temperature=T_OUTSIDE,
+        p_inside=P,
+        p_outside=P,
+        inside_wall_temperature=None,
+        outside_wall_temperature=None,
+        euler_provider="zukauskas",
+    )
+    network = local.resistance_network
+    assert network.contact_topology == (
+        "series_before_primary_and_fin_parallel_branches"
+    )
+    assert network.resistance_outside > network.resistance_outside_branches
+    assert local.outside_wall_temperature == pytest.approx(
+        T_OUTSIDE + local.heat_rate * network.resistance_outside
+    )
+    assert local.outside_wall_temperature != pytest.approx(
+        T_OUTSIDE + local.heat_rate * network.resistance_outside_branches
+    )
+    assert local.alfa_o == local.alfa_o_effective_gross
+    assert local.alfa_o_effective_gross == pytest.approx(
+        1.0 / (network.resistance_outside * network.area_outside_gross)
+    )
 
 
 def test_primary_only_area_override_is_valid_for_welded_topology() -> None:
@@ -677,7 +883,7 @@ def test_primary_only_area_override_is_valid_for_welded_topology() -> None:
     network = calculate_resistance_network(
         bundle=bundle,
         alpha_inside=800.0,
-        alpha_outside=50.0,
+        outside_alpha_physical=50.0,
         resistance_core_wall=0.001,
     )
 
@@ -704,11 +910,11 @@ def test_extruded_root_and_positive_contact_are_common_series_terms() -> None:
     network = calculate_resistance_network(
         bundle=bundle,
         alpha_inside=800.0,
-        alpha_outside=50.0,
+        outside_alpha_physical=50.0,
         resistance_core_wall=0.001,
     )
 
-    expected_outside = 1.0 / (
+    expected_branches = 1.0 / (
         50.0
         * (
             network.area_primary_outside
@@ -720,7 +926,7 @@ def test_extruded_root_and_positive_contact_are_common_series_terms() -> None:
         + network.resistance_core_wall
         + network.resistance_root
         + network.resistance_contact
-        + expected_outside
+        + expected_branches
     )
     assert network.contact_topology == (
         "series_before_primary_and_fin_parallel_branches"
@@ -728,5 +934,11 @@ def test_extruded_root_and_positive_contact_are_common_series_terms() -> None:
     assert network.contact_area_basis == "complete_core_root_layer_interface"
     assert network.resistance_root > 0.0
     assert network.resistance_contact > 0.0
-    assert network.resistance_outside == pytest.approx(expected_outside)
+    assert network.resistance_outside_branches == pytest.approx(expected_branches)
+    assert network.resistance_outside == pytest.approx(
+        network.resistance_root + network.resistance_contact + expected_branches
+    )
+    assert network.outside_alpha_effective_gross == pytest.approx(
+        1.0 / (network.resistance_outside * network.area_outside_gross)
+    )
     assert network.resistance_total == pytest.approx(expected_total)

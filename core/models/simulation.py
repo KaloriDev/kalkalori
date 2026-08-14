@@ -45,7 +45,8 @@ solve()`` passes. Concretely:
 
     1. ``solve_iterative_thermal_state(...)`` converges the mean bulk
        temperatures, both tube-wall surface temperatures, and the
-       wall/length-corrected ``alfa_i``, ``alfa_o``, ``U``, ``UA``.
+       wall/length-corrected ``alfa_i``, gross-area-effective ``alfa_o``,
+       ``U``, ``UA``.
     2. Achievable duty and outlet temperatures are computed from that
        converged ``UA`` via the existing epsilon-NTU relations
        (``effectiveness_ntu``/``heat_duty_from_effectiveness``) -- reused, not
@@ -297,7 +298,9 @@ class HXSimulationResult:
     For the ``iterate=False`` single-pass escape hatch, ``converged`` is True
     and ``iterations`` is 1, ``thermal_state`` is ``None``, and
     ``inside_alfa_mean``/``outside_alfa_mean``/``U_mean``/``UA`` are the plain
-    uncorrected coefficients from that single pass; the reported ``T_mean_*``
+    uncorrected coefficients from that single pass; ``outside_alfa_mean``
+    still uses the generic gross-area-effective outside basis (and therefore
+    equals the physical coefficient for a plain tube). The reported ``T_mean_*``
     are the bulk means of the computed outlet temperatures. Otherwise (the
     default, corrected path), ``inside_alfa_mean``/``outside_alfa_mean``/
     ``U_mean``/``UA`` are read from the converged ``thermal_state`` (wall/
@@ -338,6 +341,8 @@ class HXSimulationResult:
     # For multi-zone pure water/steam this is the resistance-consistent equivalent HTC;
     # for all other models its established semantics are unchanged.
     inside_alfa_mean: float    # == thermal_state.alfa_i when thermal_state is not None
+    # Gross-area effective outside coefficient. It equals the physical film
+    # HTC for a plain tube; physical finned HTC remains in diagnostics.
     outside_alfa_mean: float   # == thermal_state.alfa_o when thermal_state is not None
 
     # Overall performance (of the real, undegraded geometry)

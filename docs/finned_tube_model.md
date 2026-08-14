@@ -166,7 +166,9 @@ fin contact. The physical contact basis is the periodic root footprint,
 ```text
 G_primary = h_o A_primary
 G_fin     = 1/[R_contact''/A_contact + 1/(h_o eta_fin A_fin)]
-R_total   = R_i + R_wall + 1/(G_primary + G_fin)
+R_outside,branches = 1/(G_primary + G_fin)
+R_outside = R_outside,branches
+R_total   = R_i + R_wall + R_outside
 ```
 
 For an extruded geometry (`D_root>D_o`) the root layer is continuous. Its
@@ -176,8 +178,9 @@ are therefore common series terms before the parallel outside convection:
 ```text
 R_root    = ln(D_root/D_o)/(2 pi fin_k L N)
 R_contact = R_contact''/A_contact
-R_total   = R_i + R_wall + R_root + R_contact
-            + 1/[h_o (A_primary + eta_fin A_fin)]
+R_outside,branches = 1/[h_o (A_primary + eta_fin A_fin)]
+R_outside = R_root + R_contact + R_outside,branches
+R_total   = R_i + R_wall + R_outside
 UA        = 1/R_total
 U_out,gross = UA/A_out,gross
 ```
@@ -187,6 +190,43 @@ model. `fin_contact_resistance=0.0` means known ideal contact; `None` uses
 zero but produces a warning that data were not supplied.
 
 Fin efficiency and contact resistance are each applied exactly once.
+
+## Physical film HTC vs effective gross-area HTC vs overall U
+
+All three quantities use units of `W/(m2 K)`, but they have deliberately
+different meanings and must not be compared interchangeably.
+
+- `outside_alpha_physical` is the physical mean film HTC returned directly by
+  Briggs--Young. It has no fin-efficiency, area-enhancement, contact, or
+  root-conduction adjustment. Use it to validate the heat-transfer
+  correlation against literature, vendor output, or HTRI film HTC.
+- `outside_alpha_effective_gross` is the equivalent outside-side coefficient
+  referenced to the authoritative gross outside area `A_outside_gross`. It
+  is calculated from the complete topology-aware outside path, including a
+  finite fin contact and, where present, the continuous root layer:
+
+  ```text
+  R_outside = 1/(outside_alpha_effective_gross A_outside_gross)
+  ```
+
+  Use it for generic outside-resistance reporting. With ideal contact on a
+  simple extended surface it reduces to
+
+  ```text
+  outside_alpha_effective_gross = outside_alpha_physical
+      (A_primary + eta_fin A_fin) / A_outside_gross
+  ```
+
+  but that shortcut is not valid for finite contact resistance.
+- `U_gross_outside` is the overall exchanger coefficient on the same gross
+  area, including inside convection and core-wall conduction as well as the
+  whole outside path. The whole-exchanger source of truth is `UA`, with
+  `U_gross_outside = UA/A_outside_gross`.
+
+For compatibility, `OutsideThermalDispatchResult.alpha` and
+`FinnedTubeDiagnostics.outside_htc` remain aliases for the **physical** film
+HTC. Generic top-level `alfa_o` / `outside_alfa_mean` fields instead report
+the **effective gross-area** value (the values coincide for a plain tube).
 
 ## Correlations and applicability
 
