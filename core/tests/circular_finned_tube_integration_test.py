@@ -8,7 +8,12 @@ import math
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube, CircularFinnedTube, TubeSurfaceType
+from core.geometry.tube import (
+    BareTube,
+    CircularFinnedTube,
+    TubeOrientation,
+    TubeSurfaceType,
+)
 from core.heat_transfer.finned_tube_outside import BriggsYoung1963Provider
 from core.heat_transfer.internal_flow import FluidProps as InternalFluidProps
 from core.heat_transfer.outside_dispatch import (
@@ -63,6 +68,7 @@ def _core_tube() -> BareTube:
         length_total=2.0,
         length_effective=2.0,
         wall_k=45.0,
+        tube_orientation=TubeOrientation.VERTICAL_UPWARD,
     )
 
 
@@ -574,7 +580,7 @@ def test_active_wet_simulation_and_rating_are_rejected_but_dry_disabled_runs(
     )
     with pytest.raises(
         CircularFinnedTubeWetSurfaceNotSupportedError,
-        match="dry single-phase operation.*unsupported",
+        match="dry outside surface only.*unsupported",
     ):
         simulation_integration.apply_phase_change(
             hx, inside, outside, dry_result, iterate=True
@@ -592,7 +598,7 @@ def test_active_wet_simulation_and_rating_are_rejected_but_dry_disabled_runs(
     )
     with pytest.raises(
         CircularFinnedTubeWetSurfaceNotSupportedError,
-        match="dry single-phase operation.*unsupported",
+        match="dry outside surface only.*unsupported",
     ):
         hx.rate(
             BalanceSideSpec(
@@ -652,8 +658,10 @@ def test_finned_subcooled_water_preheat_uses_surface_dispatch_not_bare_probe(
         T_in=300.0,
         p=1.0e6,
     )
-    with pytest.raises(CircularFinnedTubeWetSurfaceNotSupportedError):
-        hx.simulate(crossing_inside, outside)
+    crossing = hx.simulate(crossing_inside, outside)
+    assert crossing.inside_phase_change.active is True
+    assert crossing.finned_tube_diagnostics is not None
+    assert crossing.final_result.finned_tube_diagnostics is not None
 
 
 def test_surface_margin_is_used_by_finned_water_phase_boundary_probe() -> None:

@@ -1147,9 +1147,6 @@ class BareTubeHeatExchanger:
         """
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
-        from core.phase_change.finned_tube_guard import (
-            reject_circular_finned_tube_wet_surface,
-        )
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,
@@ -1205,11 +1202,6 @@ class BareTubeHeatExchanger:
                 relative_alfa_tolerance=relative_alfa_tolerance,
             )
         ):
-            reject_circular_finned_tube_wet_surface(
-                self,
-                inside_active=True,
-                context="tube-side pure-water evaporation/phase change",
-            )
             return apply_water_evaporation_simulation(
                 self, inside, outside,
                 surface_margin=surface_margin,
@@ -1219,6 +1211,8 @@ class BareTubeHeatExchanger:
                 K_outlet=K_outlet,
                 K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 max_iter=max_iter,
                 temperature_tolerance_K=temperature_tolerance_K,
                 relative_duty_tolerance=relative_duty_tolerance,
@@ -1227,11 +1221,6 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
         if is_inside_water_steam_case(inside):
-            reject_circular_finned_tube_wet_surface(
-                self,
-                inside_active=True,
-                context="tube-side pure-water/steam phase change",
-            )
             return apply_water_steam_simulation(
                 self, inside, outside,
                 surface_margin=surface_margin,
@@ -1241,6 +1230,8 @@ class BareTubeHeatExchanger:
                 K_outlet=K_outlet,
                 K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 max_iter=max_iter,
                 temperature_tolerance_K=temperature_tolerance_K,
                 relative_duty_tolerance=relative_duty_tolerance,
@@ -1305,7 +1296,11 @@ class BareTubeHeatExchanger:
         )
         return apply_phase_change(
             self, inside, outside, dry_result,
-            iterate=iterate, euler_provider=euler_provider, settings=settings,
+            iterate=iterate,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+            settings=settings,
         )
 
     def rate(
@@ -1379,9 +1374,6 @@ class BareTubeHeatExchanger:
         """
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
-        from core.phase_change.finned_tube_guard import (
-            reject_circular_finned_tube_wet_surface,
-        )
 
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
@@ -1423,17 +1415,14 @@ class BareTubeHeatExchanger:
             Q=Q,
             effectiveness=effectiveness,
         ):
-            reject_circular_finned_tube_wet_surface(
-                self,
-                inside_active=True,
-                context="tube-side pure-water evaporation/phase-change rating",
-            )
             return apply_water_evaporation_rating(
                 self, inside, outside,
                 Q=Q, effectiveness=effectiveness,
                 flow_arrangement=flow_arrangement,
                 K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 include_simulation=include_simulation,
                 over_specified_tolerance=over_specified_tolerance,
                 max_iterations=max_iterations,
@@ -1443,17 +1432,14 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
         if is_inside_water_steam_case(inside):
-            reject_circular_finned_tube_wet_surface(
-                self,
-                inside_active=True,
-                context="tube-side pure-water/steam phase-change rating",
-            )
             return apply_water_steam_rating(
                 self, inside, outside,
                 Q=Q, effectiveness=effectiveness,
                 flow_arrangement=flow_arrangement,
                 K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 include_simulation=include_simulation,
                 over_specified_tolerance=over_specified_tolerance,
                 max_iterations=max_iterations,

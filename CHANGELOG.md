@@ -9,7 +9,13 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ### Added
 
+- Added dry circular-finned-tube geometry, annular-fin efficiency, and
+  topology-aware root/contact thermal resistance.
+- Added Briggs--Young dry outside heat transfer and verified-scope
+  Robinson--Briggs finned-bank pressure loss to Simulation and Rating.
 - Added an analytical fast path for constant-thickness circular fins.
+- Added deterministic release regressions for dry water/air finned banks,
+  geometry, efficiency, correlation bounds, and inside phase-change routes.
 
 ### Changed
 
@@ -17,6 +23,9 @@ The project follows **Semantic Versioning (SemVer)**:
   extended surfaces.
 - Refined circular-finned-tube geometry boundaries and limited the built-in
   Robinson--Briggs pressure-drop model to verified equilateral staggered banks.
+- Enabled supported inside evaporation and condensation paths opposite a dry
+  circular-finned outside surface; wet/condensing finned outside paths remain
+  controlled unsupported cases.
 
 ---
 

@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.6.3`
+**Current version:** `v0.7.0`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -153,19 +153,21 @@ selection remain outside the solver's scope.
 
 ---
 
-### v0.7.x — Finned Tubes
+### v0.7.0 — Dry Circular Finned Tubes — RELEASED
 
-**Goal:**  
-Extend geometry support to real-world air coolers.
+**Delivered scope:**
 
-**Focus areas:**
-- finned tube geometry
-- fin efficiency
-- corrected outside heat transfer coefficients
-- corrected outside pressure drop
+- circular annular fins with constant thickness or linear taper;
+- welded (`D_root == D_o`) and continuous-root (`D_root > D_o`) topology,
+  fin conductivity, and explicit or ideal contact resistance;
+- dry outside forced convection using Briggs--Young within its declared
+  applicability, plus verified-scope finned-bank pressure loss;
+- public `solve`, Simulation and Rating workflows, including the established
+  inside-side phase-change models when the finned outside surface remains dry.
 
-**Outcome:**  
-Support for common industrial air-cooled heat exchangers.
+**Explicitly excluded:** wet/condensing finned outside surfaces, frost/ice,
+condensate retention, serrated or longitudinal fins, non-circular finned
+geometries, and unsupported tube-bank layouts or correlation extrapolation.
 
 ---
 

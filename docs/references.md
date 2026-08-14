@@ -149,7 +149,7 @@ Used for:
 - Reynolds and Prandtl number interpretation,
 - outside-side pressure-drop modelling through Euler-number methods.
 
-### Experimental circular-finned-tube branch
+### Circular-finned tubes (v0.7.0)
 
 - Briggs, D. E.; Young, E. H. (1963).
   "Convection Heat Transfer and Pressure Drop of Air Flowing Across
@@ -191,7 +191,7 @@ Schmidt, VDI, Genić and Nir were reviewed as extended-surface or comparative
 references; their correlations are not blended into the two implemented
 Briggs--Young/Robinson--Briggs empirical models.
 
-Used for the experimental implementation described in
+Used for the v0.7.0 implementation described in
 [`finned_tube_model.md`](finned_tube_model.md):
 
 - physical outside film HTC separate from fin efficiency;

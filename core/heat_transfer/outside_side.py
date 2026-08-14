@@ -8,10 +8,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.common.warnings import ModelWarning
-from core.heat_transfer.outside_flow import (
-    OutsideTubeBankHydraulicResult,
-    calculate_outside_tube_bank_hydraulics,
-    outside_flow_from_mass_flow,
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    OutsideBankHydraulicResult,
+    OutsideThermalDispatchResult,
+    calculate_resistance_network,
+    evaluate_outside_hydraulics,
+    evaluate_outside_thermal,
 )
 from core.pressure_drop.flow_path import (
     PressureDropPathResult,
@@ -22,7 +26,13 @@ from core.properties.common import FluidTransportProperties
 
 @dataclass(frozen=True)
 class OutsideSideEvaluation:
-    """Thermal and hydraulic diagnostics for one outside temperature program."""
+    """Thermal and hydraulic diagnostics for one dry outside program.
+
+    ``alpha_physical`` is the direct correlation film coefficient.  The
+    generic ``alpha_corrected``/``alpha_effective_gross`` value is the
+    topology-aware coefficient on the bundle's gross outside area.  They are
+    identical for a plain tube and deliberately distinct for a finned tube.
+    """
 
     T_in: float
     T_out: float
@@ -35,9 +45,12 @@ class OutsideSideEvaluation:
     nusselt_corrected: float
     alpha_base: float
     alpha_corrected: float
+    alpha_physical: float
+    alpha_effective_gross: float
     wall_property_correction: float
     correction_status: str
-    hydraulics: OutsideTubeBankHydraulicResult
+    outside_dispatch: OutsideThermalDispatchResult
+    hydraulics: OutsideBankHydraulicResult
     pressure_drop: PressureDropPathResult
     warnings: tuple[ModelWarning, ...]
 
@@ -52,64 +65,66 @@ def evaluate_outside_side(
     p: float,
     euler_provider: str = "zukauskas",
     properties_mean: FluidTransportProperties | None = None,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
 ) -> OutsideSideEvaluation:
-    """Evaluate outside properties, HTC and three-state bare-bank hydraulics.
+    """Evaluate dry outside properties, HTC and three-state hydraulics.
 
     No tube-side stream, fake property provider, NTU solve or full exchanger
     result is created. ``properties_mean`` may be supplied by a caller-owned
     cache; identical trial states therefore do not trigger a second property
-    evaluation. The current steam model applies no outside wall-property
-    multiplier, so corrected and base HTC diagnostics are intentionally equal.
+    evaluation. Surface-specific correlation and hydraulic families are
+    selected only by the central dispatchers.  The reference inside
+    coefficient below is used solely to materialize the outside-only
+    effective coefficient; each phase zone builds its own full resistance
+    network with its actual inside coefficient.
     """
     T_mean = 0.5 * (T_in + T_out)
     props = properties_mean or _transport(provider.at(T=T_mean, p=p))
-    tube = hx.bundle.tube
-    velocity, reynolds, prandtl, alpha, _legacy_dp, ht_warnings, _ = (
-        outside_flow_from_mass_flow(
-            m_dot=mass_flow,
-            frontal_area=hx.bundle.frontal_flow_area,
-            tube_outer_diameter=float(tube.D_o),
-            tube_pitch_transverse=hx.bundle.pitch_transverse,
-            tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-            layout=hx.bundle.layout,
-            n_rows=hx.bundle.n_rows,
-            n_tubes_per_row=hx.bundle.n_tubes_per_row,
-            props=_outside_fluid_props(props),
-            euler_provider=euler_provider,
-            calculate_pressure_drop=False,
-        )
-    )
-    hydraulics = calculate_outside_tube_bank_hydraulics(
+    thermal = evaluate_outside_thermal(
+        bundle=hx.bundle,
         m_dot=mass_flow,
-        face_area=hx.bundle.frontal_flow_area,
-        tube_outer_diameter=float(tube.D_o),
-        tube_pitch_transverse=hx.bundle.pitch_transverse,
-        tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-        layout=hx.bundle.layout,
-        n_rows=hx.bundle.n_rows,
-        n_tubes_per_row=hx.bundle.n_tubes_per_row,
-        provider=provider,
+        props=_outside_fluid_props(props),
+        euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+    )
+    hydraulics = evaluate_outside_hydraulics(
+        bundle=hx.bundle,
+        m_dot=mass_flow,
+        property_provider=provider,
         temperature_in=T_in,
         temperature_out=T_out,
         pressure=p,
         euler_provider=euler_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
-    nusselt = alpha * float(tube.D_o) / props.k
-    warnings = _deduplicate((*ht_warnings, *hydraulics.warnings))
+    # The effective outside coefficient depends only on the physical film
+    # coefficient and the declared fin topology.  The reference inside film
+    # and zero core-wall resistance do not influence this outside-only term.
+    reference_network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=1.0,
+        outside_alpha_physical=thermal.alpha_physical,
+        resistance_core_wall=0.0,
+    )
+    warnings = _deduplicate((*thermal.warnings, *hydraulics.warnings))
     return OutsideSideEvaluation(
         T_in=T_in,
         T_out=T_out,
         T_mean=T_mean,
         properties_mean=props,
-        velocity=velocity,
-        reynolds=reynolds,
-        prandtl=prandtl,
-        nusselt_base=nusselt,
-        nusselt_corrected=nusselt,
-        alpha_base=alpha,
-        alpha_corrected=alpha,
-        wall_property_correction=1.0,
-        correction_status="not_applied_by_steam_zone_model",
+        velocity=thermal.face_velocity,
+        reynolds=thermal.reynolds_number,
+        prandtl=thermal.prandtl_number,
+        nusselt_base=thermal.nusselt_number_base,
+        nusselt_corrected=thermal.nusselt_number,
+        alpha_base=thermal.alpha_physical,
+        alpha_corrected=reference_network.outside_alpha_effective_gross,
+        alpha_physical=thermal.alpha_physical,
+        alpha_effective_gross=reference_network.outside_alpha_effective_gross,
+        wall_property_correction=thermal.wall_property_correction,
+        correction_status="surface_dispatch_dry_film",
+        outside_dispatch=thermal,
         hydraulics=hydraulics,
         pressure_drop=build_outside_pressure_drop_result(hydraulics),
         warnings=warnings,

@@ -185,6 +185,31 @@ def test_constant_dispatch_is_independent_of_reference_cell_count() -> None:
     assert minimum.radial_cells == 0
 
 
+@pytest.mark.parametrize("outside_htc", [10.0, 25.0, 50.0, 100.0, 200.0])
+def test_public_dispatch_keeps_constant_and_linear_taper_paths_distinct(
+    outside_htc: float,
+) -> None:
+    """The public API, not callers, selects the validated numerical path."""
+    constant = annular_fin_efficiency(_tube(fin_thickness_tip=None), outside_htc)
+    tapered = annular_fin_efficiency(_tube(fin_thickness_tip=0.00045), outside_htc)
+
+    assert constant.method == (
+        "analytical_modified_bessel_constant_annular_fin_convective_tip"
+    )
+    assert constant.radial_cells == 0
+    assert constant.energy_balance_relative_error == 0.0
+    assert tapered.method == "conservative_finite_volume_linear_taper_annular_fin"
+    assert tapered.radial_cells == 400
+    assert tapered.energy_balance_relative_error < 1.0e-9
+    for result in (constant, tapered):
+        assert 0.0 < result.fin_efficiency <= 1.0
+        assert 0.0 <= result.tip_temperature_ratio <= 1.0
+        assert result.root_heat_rate_per_base_temperature == pytest.approx(
+            result.convective_heat_rate_per_base_temperature,
+            rel=1.0e-9,
+        )
+
+
 def test_analytical_range_guard_only_normalizes_bessel_roundoff() -> None:
     assert _validated_analytical_efficiency(1.0 + 1.0e-8) == 1.0
     for invalid in (0.0, -1.0, math.nan, math.inf, 1.0 + 3.0e-7):

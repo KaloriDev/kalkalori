@@ -87,6 +87,49 @@ def _benchmark_state() -> tuple[TubeBundle, FluidTransportProperties, float]:
     return bundle, props, m_dot
 
 
+def _published_range_tube(*, fin_thickness_tip: float = 0.0005) -> CircularFinnedTube:
+    """Geometry deliberately inside both published correlation envelopes."""
+    core = BareTube(
+        D_i=0.021,
+        D_o=0.025,
+        length_total=2.0,
+        length_effective=2.0,
+        wall_k=45.0,
+    )
+    return CircularFinnedTube(
+        core_tube=core,
+        fin_k=200.0,
+        D_fin=0.052,
+        D_root=0.025,
+        fin_thickness_root=0.0005,
+        fin_thickness_tip=fin_thickness_tip,
+        fin_pitch=0.003,
+        fin_contact_resistance=0.0,
+    )
+
+
+def _published_range_bundle(
+    *,
+    n_rows: int = 6,
+    fin_thickness_tip: float = 0.0005,
+) -> TubeBundle:
+    pitch_transverse = 0.060
+    return TubeBundle(
+        tube=_published_range_tube(fin_thickness_tip=fin_thickness_tip),
+        n_rows=n_rows,
+        n_tubes_per_row=8,
+        pitch_transverse=pitch_transverse,
+        pitch_longitudinal=math.sqrt(3.0) * pitch_transverse / 2.0,
+        layout="staggered",
+        n_passes_tube=2,
+        flow_arrangement="crossflow",
+    )
+
+
+def _published_range_properties() -> FluidTransportProperties:
+    return FluidTransportProperties(rho=1.10, mu=1.90e-5, k=0.028, cp=1007.0)
+
+
 def _heat_request(
     bundle: TubeBundle,
     props: FluidTransportProperties,
@@ -171,6 +214,137 @@ def test_independent_1960s_benchmark_uses_physical_a_min_re_and_pa() -> None:
     )
     assert pressure.dp_drag == pytest.approx(expected_dp)
     assert pressure.dp_drag == pytest.approx(101.392, rel=8.0e-7)
+
+
+@pytest.mark.parametrize(
+    "m_dot",
+    [1.0, 3.0, 6.0],
+    ids=["low_in_range", "medium_in_range", "high_in_range"],
+)
+def test_briggs_young_matches_independent_equation_across_published_re_range(
+    m_dot: float,
+) -> None:
+    """Keep the physical HTC equation independent of production helpers."""
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    request = _heat_request(bundle, props, m_dot)
+    result = BriggsYoung1963Provider().evaluate(request)
+
+    t_mean = 0.5 * (request.fin_thickness_root + request.fin_thickness_tip)
+    spacing = request.fin_pitch - t_mean
+    height = 0.5 * (request.D_fin - request.D_root)
+    reference_mass_flux = m_dot / request.minimum_free_flow_area
+    reynolds = reference_mass_flux * request.D_root / request.mu
+    prandtl = request.cp * request.mu / request.k
+    expected_j = (
+        0.134
+        * reynolds ** -0.319
+        * (spacing / height) ** 0.2
+        * (spacing / t_mean) ** 0.1134
+    )
+    expected_nusselt = expected_j * reynolds * prandtl ** (1.0 / 3.0)
+    expected_alpha = expected_nusselt * request.k / request.D_root
+
+    assert 1100.0 < reynolds < 18000.0
+    assert result.reference_mass_flux == pytest.approx(reference_mass_flux)
+    assert result.reference_velocity == pytest.approx(reference_mass_flux / request.rho)
+    assert result.reynolds_number == pytest.approx(reynolds)
+    assert result.colburn_j_factor == pytest.approx(expected_j)
+    assert result.nusselt_number == pytest.approx(expected_nusselt)
+    assert result.alpha == pytest.approx(expected_alpha)
+    assert result.warnings == ()
+
+
+@pytest.mark.parametrize(
+    "m_dot",
+    [1.0, 3.0, 6.0],
+    ids=["low_in_range", "medium_in_range", "high_in_range"],
+)
+def test_robinson_briggs_matches_independent_equation_across_published_re_range(
+    m_dot: float,
+) -> None:
+    """Freeze the verified triangular-bank drag equation and its Vmax basis."""
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    request = _pressure_request(bundle, props, m_dot)
+    result = RobinsonBriggs1966Provider().evaluate(request)
+
+    reference_mass_flux = m_dot / request.minimum_free_flow_area
+    reference_velocity = reference_mass_flux / request.rho
+    reynolds = reference_mass_flux * request.D_root / request.mu
+    diagonal_pitch = math.hypot(
+        request.pitch_longitudinal,
+        0.5 * request.pitch_transverse,
+    )
+    expected_coefficient = (
+        9.465
+        * reynolds ** -0.316
+        * (request.pitch_transverse / request.D_root) ** -0.927
+        * (request.pitch_transverse / diagonal_pitch) ** 0.515
+    )
+    expected_dp_drag = (
+        2.0 * request.n_rows * expected_coefficient * request.rho * reference_velocity**2
+    )
+
+    assert 2000.0 < reynolds < 50000.0
+    assert result.reference_mass_flux == pytest.approx(reference_mass_flux)
+    assert result.reference_velocity == pytest.approx(reference_velocity)
+    assert result.reynolds_number == pytest.approx(reynolds)
+    assert result.coefficient == pytest.approx(expected_coefficient)
+    assert result.dp_drag == pytest.approx(expected_dp_drag)
+    assert result.coefficient_definition == ROBINSON_BRIGGS_COEFFICIENT_BASIS
+    assert result.warnings == ()
+
+
+@pytest.mark.parametrize(
+    ("m_dot", "suffix"),
+    [(0.2, "below_range"), (20.0, "above_range")],
+    ids=["low", "high"],
+)
+def test_correlation_reynolds_range_warnings_are_reported_without_clamping(
+    m_dot: float,
+    suffix: str,
+) -> None:
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    htc = BriggsYoung1963Provider().evaluate(_heat_request(bundle, props, m_dot))
+    pressure = RobinsonBriggs1966Provider().evaluate(
+        _pressure_request(bundle, props, m_dot)
+    )
+
+    htc_codes = {warning.code for warning in htc.warnings}
+    pressure_codes = {warning.code for warning in pressure.warnings}
+    assert f"briggs_young_1963_reynolds_{suffix}" in htc_codes
+    assert f"robinson_briggs_1966_reynolds_{suffix}" in pressure_codes
+    assert htc.alpha > 0.0
+    assert pressure.coefficient > 0.0
+    assert pressure.dp_drag > 0.0
+
+
+def test_correlation_row_extensions_are_explicit_and_drag_scales_per_row() -> None:
+    props = _published_range_properties()
+    six_rows = _published_range_bundle(n_rows=6)
+    four_rows = _published_range_bundle(n_rows=4)
+    m_dot = 3.0
+    heat_six = BriggsYoung1963Provider().evaluate(_heat_request(six_rows, props, m_dot))
+    heat_four = BriggsYoung1963Provider().evaluate(_heat_request(four_rows, props, m_dot))
+    pressure_six = RobinsonBriggs1966Provider().evaluate(
+        _pressure_request(six_rows, props, m_dot)
+    )
+    pressure_four = RobinsonBriggs1966Provider().evaluate(
+        _pressure_request(four_rows, props, m_dot)
+    )
+
+    assert heat_four.alpha == pytest.approx(heat_six.alpha)
+    assert pressure_four.coefficient == pytest.approx(pressure_six.coefficient)
+    assert pressure_four.dp_drag == pytest.approx(pressure_six.dp_drag * 4.0 / 6.0)
+    assert pressure_four.n_rows_effective == 4
+    assert {
+        warning.code for warning in heat_four.warnings
+    } >= {"briggs_young_1963_row_count_secondary_extension"}
+    assert {
+        warning.code for warning in pressure_four.warnings
+    } >= {"robinson_briggs_1966_row_count_secondary_extension"}
 
 
 def test_metadata_states_diameter_velocity_area_and_row_bases() -> None:
@@ -266,7 +440,9 @@ def test_real_taper_geometry_is_kept_and_mean_is_only_correlation_mapping() -> N
     m_dot = props.rho * face_velocity * bundle.frontal_flow_area
 
     htc = calculate_finned_tube_outside_heat_transfer(m_dot, bundle, props)
+    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props)
     expected_mean = 0.5 * (0.019 + 0.011) * INCH
+    expected_spacing = tube.fin_pitch - expected_mean
     expected_blockage = tube.D_root + (
         (tube.D_fin - tube.D_root) * expected_mean / tube.fin_pitch
     )
@@ -277,8 +453,12 @@ def test_real_taper_geometry_is_kept_and_mean_is_only_correlation_mapping() -> N
     )
 
     assert htc.correlation_fin_thickness == pytest.approx(expected_mean)
+    assert htc.correlation_fin_spacing == pytest.approx(expected_spacing)
+    assert pressure.correlation_fin_thickness == pytest.approx(expected_mean)
+    assert pressure.correlation_fin_spacing == pytest.approx(expected_spacing)
     assert bundle.minimum_free_flow_area == pytest.approx(expected_a_min)
     assert any("mean_thickness_mapping" in w.code for w in htc.warnings)
+    assert any("mean_thickness_mapping" in w.code for w in pressure.warnings)
     assert tube.fin_thickness_root != tube.fin_thickness_tip_effective
 
 

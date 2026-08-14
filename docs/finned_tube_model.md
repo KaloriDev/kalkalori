@@ -1,8 +1,8 @@
-# Experimental Circular-Finned-Tube Model
+# Circular-Finned-Tube Model (v0.7.0)
 
-This document describes the experimental dry circular-finned-tube model on
-the `experiment/v0.7.x-finned-tubes-codex` branch. It is not a released
-`v0.7.0` feature and does not change the project version.
+This document describes the released v0.7.0 dry circular-finned-tube model.
+It is a 0D engineering model with explicitly declared geometry and
+correlation boundaries.
 
 ## Scope
 
@@ -240,7 +240,10 @@ the **effective gross-area** value (the values coincide for a plain tube).
 
 For the empirical correlation only, a tapered fin is mapped to
 `t_mean=(t_r+t_t)/2` and `s=p_f-t_mean`. This does not replace the real
-profile in area or fin-efficiency calculations.
+profile in area or fin-efficiency calculations. The source dataset does not
+define arbitrary linearly tapered fins, so this is a controlled engineering
+mapping and emits an information warning; it is not a source-validated
+tapered-fin Briggs--Young correlation.
 
 ```text
 j = 0.134 Re_Droot**(-0.319)
@@ -291,11 +294,13 @@ rather than falling back to a smooth-tube model. A 0.1% relative tolerance on
 `P_d/P_t` accepts ordinary rounded dimensions without extending the model to
 arbitrary isosceles geometry.
 
-Any attempt to activate wet-gas condensation or another wet/phase-change path
-on a `CircularFinnedTube` is conservatively rejected with a dedicated
-controlled unsupported error, including tube-side phase change in this first
-experiment. Wet-gas cases remain available as dry sensible calculations when
-phase change is explicitly disabled and the requested state remains valid.
+An active wet or condensing **outside** surface on a `CircularFinnedTube` is
+conservatively rejected with a dedicated controlled unsupported error. The
+existing tube-side evaporation, steam-condensation and wet-gas-condensation
+paths remain available when the finned outside surface is dry; they use the
+same topology-aware outside resistance network. Wet-gas cases also remain
+available as dry sensible calculations when phase change is explicitly
+disabled and the requested state remains valid.
 
 ## Validation limits
 

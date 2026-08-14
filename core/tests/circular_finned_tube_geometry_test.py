@@ -185,6 +185,64 @@ def test_welded_constant_thickness_periodic_areas_and_volume() -> None:
     )
 
 
+def test_welded_constant_geometry_complete_contract_is_deterministic() -> None:
+    """Freeze every public periodic geometry quantity for a welded fin."""
+    tube = _welded()
+    bundle = _bundle(tube)
+    count = bundle.n_tubes_total
+    root_radius = 0.5 * tube.D_root
+    fin_radius = 0.5 * tube.D_fin
+    thickness = tube.fin_thickness_root
+    pitch = tube.fin_pitch
+
+    expected_primary_per_length = math.pi * tube.D_root * (pitch - thickness) / pitch
+    expected_fin_per_fin = (
+        2.0 * math.pi * (fin_radius**2 - root_radius**2)
+        + math.pi * tube.D_fin * thickness
+    )
+    expected_fin_per_length = expected_fin_per_fin / pitch
+    expected_fin_volume_per_fin = (
+        math.pi * (fin_radius**2 - root_radius**2) * thickness
+    )
+    expected_blockage = tube.D_root + (
+        (tube.D_fin - tube.D_root) * thickness / pitch
+    )
+
+    assert (tube.D_i, tube.D_o, tube.D_root, tube.D_fin) == pytest.approx(
+        (0.020, 0.025, 0.025, 0.050)
+    )
+    assert tube.fin_height == pytest.approx(0.0125)
+    assert tube.root_radial_thickness == 0.0
+    assert tube.fin_thickness_root == tube.fin_thickness_tip_effective == 0.001
+    assert tube.fin_pitch == pytest.approx(0.004)
+    assert tube.fin_density == pytest.approx(250.0)
+    assert tube.effective_fin_count == pytest.approx(450.0)
+    assert tube.clear_spacing_root == pytest.approx(0.003)
+    assert tube.primary_outside_area_per_length == pytest.approx(
+        expected_primary_per_length
+    )
+    assert tube.fin_area_per_fin == pytest.approx(expected_fin_per_fin)
+    assert tube.fin_area_geometric_per_length == pytest.approx(expected_fin_per_length)
+    assert tube.outside_area_geometric_per_length == pytest.approx(
+        expected_primary_per_length + expected_fin_per_length
+    )
+    assert tube.outside_area_used_per_length == tube.outside_area_geometric_per_length
+    assert tube.area_primary_outside == pytest.approx(
+        expected_primary_per_length * tube.length_effective
+    )
+    assert tube.area_fin == pytest.approx(expected_fin_per_length * tube.length_effective)
+    assert tube.area_outside_geometric == tube.area_outside_gross == tube.area_outer
+    assert tube.fin_volume_per_fin == pytest.approx(expected_fin_volume_per_fin)
+    assert tube.fin_volume_per_length == pytest.approx(expected_fin_volume_per_fin / pitch)
+    assert tube.root_layer_volume_per_length == 0.0
+    assert tube.projected_blocking_area_per_length == pytest.approx(expected_blockage)
+    assert bundle.total_primary_outside_area == pytest.approx(
+        count * tube.area_primary_outside
+    )
+    assert bundle.total_fin_area == pytest.approx(count * tube.area_fin)
+    assert bundle.total_outer_area == pytest.approx(count * tube.area_outside_gross)
+
+
 def test_fractional_fin_count_and_periodic_area_are_continuous() -> None:
     tube = _welded(
         core_tube=_core(length_total=1.237, length_effective=1.237),
@@ -218,6 +276,58 @@ def test_extruded_taper_uses_sloping_faces_tip_thickness_and_exact_volume() -> N
     assert tube.fin_tip_area_per_fin == pytest.approx(tip)
     assert tube.fin_volume_per_fin == pytest.approx(exact_volume)
     assert tube.fin_thickness_tip == t_tip
+
+
+def test_extruded_taper_geometry_complete_contract_is_deterministic() -> None:
+    """Exercise the continuous root layer and all tapered periodic terms."""
+    tube = _extruded()
+    bundle = _bundle(tube)
+    root_radius = 0.5 * tube.D_root
+    fin_radius = 0.5 * tube.D_fin
+    t_root = tube.fin_thickness_root
+    t_tip = tube.fin_thickness_tip_effective
+    height = fin_radius - root_radius
+    mean_thickness = 0.5 * (t_root + t_tip)
+    slope = math.sqrt(1.0 + ((t_tip - t_root) / (2.0 * height)) ** 2)
+
+    expected_primary_per_length = (
+        math.pi * tube.D_root * (tube.fin_pitch - t_root) / tube.fin_pitch
+    )
+    expected_fin_per_fin = (
+        2.0 * math.pi * (fin_radius**2 - root_radius**2) * slope
+        + math.pi * tube.D_fin * t_tip
+    )
+    expected_root_layer_volume = math.pi * (tube.D_root**2 - tube.D_o**2) / 4.0
+    expected_blockage = tube.D_root + (
+        (tube.D_fin - tube.D_root) * mean_thickness / tube.fin_pitch
+    )
+
+    assert (tube.D_i, tube.D_o, tube.D_root, tube.D_fin) == pytest.approx(
+        (0.020, 0.025, 0.029, 0.052)
+    )
+    assert tube.fin_height == pytest.approx(height)
+    assert tube.root_radial_thickness == pytest.approx(0.002)
+    assert tube.fin_thickness_root == pytest.approx(0.0012)
+    assert tube.fin_thickness_tip_effective == pytest.approx(0.00055)
+    assert tube.fin_pitch == pytest.approx(0.0045)
+    assert tube.fin_density == pytest.approx(1.0 / 0.0045)
+    assert tube.effective_fin_count == pytest.approx(tube.length_effective / 0.0045)
+    assert tube.clear_spacing_root == pytest.approx(0.0045 - 0.0012)
+    assert tube.primary_outside_area_per_length == pytest.approx(
+        expected_primary_per_length
+    )
+    assert tube.fin_area_per_fin == pytest.approx(expected_fin_per_fin)
+    assert tube.fin_area_geometric_per_length == pytest.approx(
+        expected_fin_per_fin / tube.fin_pitch
+    )
+    assert tube.area_outside_geometric == pytest.approx(
+        tube.length_effective
+        * (expected_primary_per_length + expected_fin_per_fin / tube.fin_pitch)
+    )
+    assert tube.area_outside_gross == tube.area_outside_geometric
+    assert tube.root_layer_volume_per_length == pytest.approx(expected_root_layer_volume)
+    assert tube.projected_blocking_area_per_length == pytest.approx(expected_blockage)
+    assert bundle.projected_blocking_area_per_length == pytest.approx(expected_blockage)
 
 
 def test_none_tip_thickness_means_constant_thickness() -> None:
@@ -300,8 +410,9 @@ def test_root_and_contact_resistance_helpers_scale_for_parallel_tubes() -> None:
     )
 
 
-def test_periodic_blockage_and_staggered_minimum_free_flow_area() -> None:
-    tube = _welded()
+@pytest.mark.parametrize("factory", [_welded, _extruded], ids=["welded", "tapered"])
+def test_periodic_blockage_and_staggered_minimum_free_flow_area(factory) -> None:
+    tube = factory()
     bundle = _bundle(tube, layout="staggered", S_T=0.080, S_L=0.035)
     expected_blockage = tube.D_root + (
         (tube.D_fin - tube.D_root)
@@ -315,6 +426,7 @@ def test_periodic_blockage_and_staggered_minimum_free_flow_area() -> None:
     expected_area = 6 * tube.length_effective * expected_gap
 
     assert tube.projected_blocking_area_per_length == pytest.approx(expected_blockage)
+    assert bundle.projected_blocking_area_per_length == pytest.approx(expected_blockage)
     assert bundle.diagonal_pitch == pytest.approx(diagonal_pitch)
     assert bundle.minimum_free_flow_gap == pytest.approx(expected_gap)
     assert bundle.minimum_free_flow_area == pytest.approx(expected_area)

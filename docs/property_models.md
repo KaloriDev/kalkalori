@@ -1,12 +1,12 @@
 # Property Model Selection Guide
 
-This document explains how to select property models in KalKalori `v0.6.3`.
+This document explains how to select property models in KalKalori `v0.7.0`.
 
 The goal is to avoid hidden assumptions. KalKalori does not automatically decide whether a fluid should be treated as classical moist air, dry gas, wet gas, condensing gas, steam, or water. The user must select the appropriate property path.
 
 ---
 
-## 1. Available Property Paths in v0.6.3
+## 1. Available Property Paths in v0.7.0
 
 | Property path              | Main API                                       | Intended use                                                           | Phase-change support              |
 | -------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------- |
@@ -710,7 +710,8 @@ Recommended procedure:
 
 ### Case D — Condensing economizer / wet surface
 
-Water condensation from wet gas is supported inside and outside bare tubes
+Water condensation from wet gas is supported inside tubes with a dry outside
+surface and outside bare-tube banks
 in v0.6.1, with these 0D limits:
 
 ```text
@@ -774,7 +775,8 @@ Use `GasMixtureSpec` together with the v0.6.1 phase-change solver when:
 ```text
 H2O condenses from a gas with a non-condensable carrier,
 latent heat and condensate removal must be included,
-the wet gas flows inside or outside bare tubes.
+the wet gas flows inside tubes with a dry outside surface or outside bare-tube
+banks.
 ```
 
 Pure-water phase change inside tubes uses the separate v0.6.2/v0.6.3
@@ -789,8 +791,9 @@ H2O-only wet-gas model.
 
 The wet-process / wet-economizer solver referenced as future work in
 sections 8 and 14 above is now available for **partial H2O condensation
-from a `GasMixtureSpec`-based gas mixture flowing either inside bare tubes
-or outside a bare-tube bank**, solved by
+from a `GasMixtureSpec`-based gas mixture flowing either inside tubes with a
+dry outside surface (including a dry circular-finned outside) or outside a
+bare-tube bank**, solved by
 `BareTubeHeatExchanger.simulate()` / `.rate()`. It does not replace the
 property-path decision tree above --
 you still choose `GasMixtureSpec` (with H2O as a component) exactly as
@@ -948,19 +951,21 @@ mean of the zone HTCs. It is a descriptive statistic only and is not used to
 reconstruct `U`, `UA`, or wall temperatures.
 
 `inside_alpha_equivalent` is the resistance-consistent whole-exchanger HTC.
-It is obtained by inverting the same outer-area resistance network used for
-every zone:
+It is obtained by inverting the same authoritative-area resistance network
+used for every zone:
 
 ```text
-inside_alpha_equivalent = (D_o / D_i) / (
-    1 / U_equivalent
-    - D_o * ln(D_o / D_i) / (2 * wall_k)
-    - 1 / alpha_outside
-)
+R_i,equivalent = 1/(U_equivalent A_outside,gross)
+                 - R_wall - R_outside
+inside_alpha_equivalent = 1/(R_i,equivalent A_inside)
+R_outside = 1/(outside_alpha_effective_gross A_outside,gross)
 ```
 
 Here `U_equivalent = UA_total / A_total`, while the authoritative conductance
-remains `UA_total = sum(U_zone * A_zone)`. The historical top-level
+remains `UA_total = sum(U_zone * A_zone)`. For a plain tube this reduces to
+the historical diameter-basis expression. For a dry circular-finned outside,
+`R_outside` includes the physical film, fin efficiency, contact topology and
+root layer through the shared resistance network. The historical top-level
 `alfa_i`/`inside_alfa_mean` fields now expose `inside_alpha_equivalent` for
 multi-zone steam so that they reconstruct `U_equivalent`. Their semantics are
 unchanged for sensible-only calculations, wet-gas condensation, and
@@ -1008,6 +1013,8 @@ Cooling-model limits:
 
 - this v0.6.2 path covers cooling/condensation; the heating direction uses
   the v0.6.3 model in section 17;
+- the opposing outside surface may be bare or a dry circular-finned tube;
+  an active wet/condensing finned outside surface remains unsupported;
 - pure-steam phase change is supported only inside tubes and is outside the
   planned scope on the outside side;
 - one active phase-changing side per exchanger call;
@@ -1027,7 +1034,8 @@ cases.
 ## 17. v0.6.3 — Pure-Water Heating and Evaporation Inside Tubes
 
 The public `BareTubeHeatExchanger.simulate()` and `.rate()` APIs support
-pure water heated inside bare tubes through the ordered constant-pressure
+pure water heated inside tubes, including a dry circular-finned outside
+surface, through the ordered constant-pressure
 p-h zones:
 
 ```text
@@ -1112,6 +1120,8 @@ defines its duty.
 Current limits:
 
 - pure-water evaporation is supported only inside tubes;
+- the opposing outside surface may be bare or a dry circular-finned tube;
+  active wet/condensing finned outside surfaces remain unsupported;
 - at most one side may have active phase change;
 - Shah (1982) does not predict CHF, dryout quality or post-dryout heat
   transfer; warnings expose those applicability limits without clipping;
