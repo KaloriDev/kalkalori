@@ -1,6 +1,7 @@
 # Circular-Finned-Tube Model (v0.7.0)
 
-This document describes the released v0.7.0 dry circular-finned-tube model.
+This document describes the v0.7.0 release-candidate dry
+circular-finned-tube model pending manual HTRI validation.
 It is a 0D engineering model with explicitly declared geometry and
 correlation boundaries.
 

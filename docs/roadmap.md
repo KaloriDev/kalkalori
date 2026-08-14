@@ -153,7 +153,7 @@ selection remain outside the solver's scope.
 
 ---
 
-### v0.7.0 — Dry Circular Finned Tubes — RELEASED
+### v0.7.0 — Dry Circular Finned Tubes — RELEASE CANDIDATE — PENDING MANUAL HTRI VALIDATION
 
 **Delivered scope:**
 

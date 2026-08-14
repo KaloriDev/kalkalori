@@ -245,6 +245,38 @@ def test_refinement_is_stable_for_linearly_tapered_fin() -> None:
     assert 0.0 < fine.fin_efficiency < 1.0
 
 
+@pytest.mark.parametrize("outside_htc", [10.0, 50.0, 200.0])
+def test_analytical_and_fvm_paths_agree_near_the_dispatch_boundary(
+    outside_htc: float,
+) -> None:
+    """The public dispatch boundary (exact constant thickness -> analytical
+    Bessel; any taper, however small -> finite-volume) must not hide a
+    solver discontinuity: a physically negligible ~1e-6 m taper has to give
+    almost the same efficiency as the exact constant-thickness case, even
+    though the two are solved by entirely different numerical methods.
+    """
+    exact_constant = annular_fin_efficiency(
+        _tube(fin_thickness_root=0.0008, fin_thickness_tip=0.0008), outside_htc
+    )
+    near_boundary_taper = annular_fin_efficiency(
+        _tube(fin_thickness_root=0.0008, fin_thickness_tip=0.000799), outside_htc
+    )
+    assert exact_constant.method == (
+        "analytical_modified_bessel_constant_annular_fin_convective_tip"
+    )
+    assert near_boundary_taper.method == (
+        "conservative_finite_volume_linear_taper_annular_fin"
+    )
+    for result in (exact_constant, near_boundary_taper):
+        assert math.isfinite(result.fin_efficiency)
+        assert 0.0 < result.fin_efficiency <= 1.0
+    # Empirically 2e-6..3.5e-5 relative across this h_o sweep; 1e-3 keeps a
+    # conservative margin while still catching a real solver discontinuity.
+    assert near_boundary_taper.fin_efficiency == pytest.approx(
+        exact_constant.fin_efficiency, rel=1.0e-3
+    )
+
+
 def test_expected_efficiency_trends() -> None:
     baseline = _tube()
     low_k = annular_fin_efficiency(_tube(fin_k=80.0), 70.0).fin_efficiency

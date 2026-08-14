@@ -623,6 +623,99 @@ def test_active_wet_simulation_and_rating_are_rejected_but_dry_disabled_runs(
     assert disabled.finned_tube_diagnostics is not None
 
 
+def _inactive_outside_onset(*, side: str, **_kwargs):
+    if side == "inside":
+        return None, None, None, None, None
+    return OnsetDecision(-5.0, False, False, False), 310.0, 320.0, 322.0, 325.0
+
+
+def _steam_rating_desuperheat_only_case() -> tuple[
+    "BareTubeHeatExchanger", BalanceSideSpec, BalanceSideSpec, ConstantPropertyProvider
+]:
+    """A dedicated pure-steam Rating case dispatched via ``apply_water_steam_rating``.
+
+    Inside stays superheated end to end (desuperheat-only cooling, no
+    condensation), so ``inside_phase_change.active`` is False on its own --
+    exactly the "dedicated Rating path continues, inside inactive" gap that
+    was previously unguarded for an outside condensation onset.
+    """
+    outside_provider = ConstantPropertyProvider(OUTSIDE_TRANSPORT)
+    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(),
+        p=1.0e6,
+        m_dot=1.0,
+        T_in=500.0,
+        T_out=480.0,
+    )
+    outside = BalanceSideSpec(
+        provider=outside_provider,
+        p=P,
+        m_dot=30.0,
+        T_in=300.0,
+    )
+    return hx, inside, outside, outside_provider
+
+
+def test_pure_steam_rating_rejects_actually_active_outside_onset_on_finned_tube(
+    monkeypatch,
+) -> None:
+    """Closes the M1 gap: dedicated pure-steam Rating must reject an outside
+    surface that is actually condensing on a CircularFinnedTube, matching the
+    Simulation contract (``apply_phase_change`` ->
+    ``reject_circular_finned_tube_wet_surface``), not merely reject when the
+    outside provider happens to be phase-change capable.
+    """
+    hx, inside, outside, outside_provider = _steam_rating_desuperheat_only_case()
+
+    # Sanity: without any patching this dedicated path is inactive and dry.
+    baseline = hx.rate(inside, outside)
+    assert baseline.inside_phase_change.active is False
+    assert baseline.finned_tube_diagnostics is not None
+
+    import core.phase_change.steam_integration as steam_integration
+
+    monkeypatch.setattr(
+        steam_integration,
+        "detect_phase_change_capability",
+        lambda provider: _capability(provider, outside_provider),
+    )
+    monkeypatch.setattr(
+        steam_integration, "evaluate_side_onset", _active_outside_onset
+    )
+
+    with pytest.raises(
+        CircularFinnedTubeWetSurfaceNotSupportedError,
+        match="dry outside surface only.*unsupported",
+    ):
+        hx.rate(inside, outside)
+
+
+def test_pure_steam_rating_does_not_overguard_when_outside_onset_is_inactive(
+    monkeypatch,
+) -> None:
+    """A phase-change-capable outside provider must not, by itself, reject a
+    finned tube: only an actually active outside onset may. This protects
+    against the prohibited over-guard (capability alone triggering rejection).
+    """
+    hx, inside, outside, outside_provider = _steam_rating_desuperheat_only_case()
+
+    import core.phase_change.steam_integration as steam_integration
+
+    monkeypatch.setattr(
+        steam_integration,
+        "detect_phase_change_capability",
+        lambda provider: _capability(provider, outside_provider),
+    )
+    monkeypatch.setattr(
+        steam_integration, "evaluate_side_onset", _inactive_outside_onset
+    )
+
+    rating = hx.rate(inside, outside)
+    assert rating.inside_phase_change.active is False
+    assert rating.finned_tube_diagnostics is not None
+
+
 def test_finned_subcooled_water_preheat_uses_surface_dispatch_not_bare_probe(
     monkeypatch,
 ) -> None:
@@ -950,3 +1043,118 @@ def test_extruded_root_and_positive_contact_are_common_series_terms() -> None:
         1.0 / (network.resistance_outside * network.area_outside_gross)
     )
     assert network.resistance_total == pytest.approx(expected_total)
+
+
+def _assert_finned_wall_ordering(simulation, *, inside_hotter: bool) -> None:
+    """Physical wall-temperature ordering invariant on a converged solve.
+
+    Does not reproduce the wall-temperature equations; it only checks the
+    produced solver output stays physically ordered, both at the converged
+    mean thermal state and at every corner of the 0D endpoint envelope.
+    """
+    assert simulation.converged is True
+    assert math.isfinite(simulation.UA) and simulation.UA > 0.0
+
+    state = simulation.thermal_state
+    assert state is not None
+    assert state.converged is True
+
+    diagnostics = simulation.finned_tube_diagnostics
+    assert diagnostics is not None
+    assert math.isfinite(diagnostics.resistance_outside)
+    assert diagnostics.resistance_outside > 0.0
+
+    tol = 1.0e-6
+
+    def _check_ordering(t_hot_bulk, t_hot_wall, t_cold_wall, t_cold_bulk) -> None:
+        for value in (t_hot_bulk, t_hot_wall, t_cold_wall, t_cold_bulk):
+            assert math.isfinite(value)
+        assert t_hot_bulk >= t_hot_wall - tol
+        assert t_hot_wall >= t_cold_wall - tol
+        assert t_cold_wall >= t_cold_bulk - tol
+
+    if inside_hotter:
+        _check_ordering(
+            state.inside_bulk_temperature,
+            state.inside_wall_temperature,
+            state.outside_wall_temperature,
+            state.outside_bulk_temperature,
+        )
+    else:
+        _check_ordering(
+            state.outside_bulk_temperature,
+            state.outside_wall_temperature,
+            state.inside_wall_temperature,
+            state.inside_bulk_temperature,
+        )
+
+    envelope = simulation.wall_temperature_envelope
+    assert len(envelope.probes) == 4
+    for probe in envelope.probes:
+        assert probe.converged is True
+        if inside_hotter:
+            _check_ordering(
+                probe.inside_bulk_temperature,
+                probe.inside_wall_temperature,
+                probe.outside_wall_temperature,
+                probe.outside_bulk_temperature,
+            )
+        else:
+            _check_ordering(
+                probe.outside_bulk_temperature,
+                probe.outside_wall_temperature,
+                probe.inside_wall_temperature,
+                probe.inside_bulk_temperature,
+            )
+
+
+def test_welded_wall_ordering_inside_hotter() -> None:
+    """Case A: D_root == D_o (welded), inside bulk hotter than outside."""
+    hx = BareTubeHeatExchanger(_welded_bundle(contact=None))
+    inside_provider, outside_provider = _providers()
+    simulation = hx.simulate(
+        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=650.0, p=P),
+        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=300.0, p=P),
+    )
+    assert simulation.finned_tube_diagnostics.contact_topology == "fin_branch_only"
+    _assert_finned_wall_ordering(simulation, inside_hotter=True)
+
+
+def test_welded_wall_ordering_outside_hotter() -> None:
+    """Case B: D_root == D_o (welded), outside bulk hotter than inside."""
+    hx = BareTubeHeatExchanger(_welded_bundle(contact=None))
+    inside_provider, outside_provider = _providers()
+    simulation = hx.simulate(
+        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=300.0, p=P),
+        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=650.0, p=P),
+    )
+    assert simulation.finned_tube_diagnostics.contact_topology == "fin_branch_only"
+    _assert_finned_wall_ordering(simulation, inside_hotter=False)
+
+
+def test_root_layer_wall_ordering_inside_hotter() -> None:
+    """Case C: D_root > D_o (continuous root layer), inside bulk hotter."""
+    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    inside_provider, outside_provider = _providers()
+    simulation = hx.simulate(
+        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=650.0, p=P),
+        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=300.0, p=P),
+    )
+    assert simulation.finned_tube_diagnostics.contact_topology == (
+        "series_before_primary_and_fin_parallel_branches"
+    )
+    _assert_finned_wall_ordering(simulation, inside_hotter=True)
+
+
+def test_root_layer_wall_ordering_outside_hotter() -> None:
+    """Case D: D_root > D_o (continuous root layer), outside bulk hotter."""
+    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    inside_provider, outside_provider = _providers()
+    simulation = hx.simulate(
+        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=300.0, p=P),
+        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=650.0, p=P),
+    )
+    assert simulation.finned_tube_diagnostics.contact_topology == (
+        "series_before_primary_and_fin_parallel_branches"
+    )
+    _assert_finned_wall_ordering(simulation, inside_hotter=False)

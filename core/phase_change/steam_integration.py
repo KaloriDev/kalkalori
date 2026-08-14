@@ -48,6 +48,9 @@ from core.phase_change.integration import (
     evaluate_side_onset,
     apply_phase_change,
 )
+from core.phase_change.finned_tube_guard import (
+    reject_circular_finned_tube_wet_surface,
+)
 from core.phase_change.steam_heater import (
     SteamHeaterSolution,
     SteamHeaterZoneKind,
@@ -327,6 +330,54 @@ def reject_outside_pure_water_evaporation_rating(outside, inside, *, Q) -> None:
         raise PureSteamOutsideNotSupportedError(
             "The Rating target reaches pure-water saturation on the outside "
             "side; pure-water evaporation is supported only inside tubes."
+        )
+
+
+def _reject_rating_outside_wet_finned_surface(
+    hx,
+    *,
+    outside,
+    outside_capability,
+    inside_active: bool,
+    result,
+    settings: PhaseChangeSettings,
+) -> None:
+    """Close the Rating counterpart of the Simulation outside-onset guard.
+
+    ``apply_water_evaporation_simulation``/``apply_water_steam_simulation``
+    evaluate outside onset and route an actually-active outside condensation
+    through ``apply_phase_change``, which calls
+    ``reject_circular_finned_tube_wet_surface`` before any wet-outside solver
+    could run. The dedicated pure-water/steam Rating paths only reject the
+    combined-active case by provider capability and mode, never by actual
+    onset, so a genuinely condensing outside surface on a ``CircularFinnedTube``
+    could otherwise pass through unrejected. This mirrors the Simulation
+    onset check using the same existing onset/guard contracts; when
+    ``inside_active`` is already true the earlier capability+mode check has
+    already raised ``MultiplePhaseChangeSidesError`` for the AUTO case, so
+    this only needs to act on the "outside alone" case.
+    """
+    if inside_active or outside_capability.provider_kind != "gas_mixture":
+        return
+    onset, *_ = evaluate_side_onset(
+        side="outside",
+        mode=outside.phase_change_mode,
+        capability=outside_capability,
+        p=outside.p,
+        thermal_state=result.thermal_state,
+        envelope=result.wall_temperature_envelope,
+        settings=settings,
+    )
+    outside_active = bool(
+        onset is not None
+        and onset.active
+        and outside.phase_change_mode is PhaseChangeMode.AUTO
+    )
+    if outside_active:
+        reject_circular_finned_tube_wet_surface(
+            hx,
+            outside_active=True,
+            context="wet-gas condensation",
         )
 
 
@@ -660,7 +711,7 @@ def apply_water_steam_rating(
     outside_result = capability_only_result(
         "outside", outside.phase_change_mode, outside_capability
     )
-    return _rating_from_solution(
+    result = _rating_from_solution(
         hx,
         inside,
         outside,
@@ -675,6 +726,15 @@ def apply_water_steam_rating(
         inside_is_hot=True,
         two_phase_warning=_two_phase_dp_warning(),
     )
+    _reject_rating_outside_wet_finned_surface(
+        hx,
+        outside=outside,
+        outside_capability=outside_capability,
+        inside_active=steam_result.active,
+        result=result,
+        settings=settings,
+    )
+    return result
 
 
 def apply_water_evaporation_rating(
@@ -780,7 +840,7 @@ def apply_water_evaporation_rating(
     outside_result = capability_only_result(
         "outside", outside.phase_change_mode, outside_capability
     )
-    return _rating_from_solution(
+    result = _rating_from_solution(
         hx,
         inside,
         outside,
@@ -795,6 +855,15 @@ def apply_water_evaporation_rating(
         inside_is_hot=False,
         two_phase_warning=_water_evaporation_two_phase_dp_warning(),
     )
+    _reject_rating_outside_wet_finned_surface(
+        hx,
+        outside=outside,
+        outside_capability=outside_capability,
+        inside_active=water_result.active,
+        result=result,
+        settings=settings,
+    )
+    return result
 
 
 def _simulation_from_solution(
