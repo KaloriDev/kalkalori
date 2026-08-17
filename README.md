@@ -35,8 +35,12 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.0)
+## Current Capabilities (v0.7.1)
 
+- Rating can derive the required tube-side pure-steam mass flow from an
+  independently known duty (explicit `Q`, or a fully specified opposing-side
+  temperature program) and a requested steam outlet state, defaulting to
+  complete condensation (`quality_out=0.0`) when no outlet target is given.
 - Pure-water heating and evaporation inside tubes with a dry outside surface,
   including liquid
   preheating, partial or complete evaporation, and optional vapor

@@ -31,7 +31,7 @@ from core.models.bare_tube import (
     HXTubeSideHydraulicResults,
     HXTubeSidePressureDropResults,
 )
-from core.models.heat_balance import ClosedBalance, ClosedBalanceSide
+from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide
 from core.models.rating import HXRatingResult
 from core.models.simulation import HXSideInput, HXSimulationResult
 from core.pressure_drop.flow_path import build_tube_side_pressure_drop_result
@@ -635,27 +635,54 @@ def apply_water_steam_rating(
             "Steam Rating requires an explicit duty or outlet state; an "
             "effectiveness-only target is not supported for a phase-changing stream."
         )
-    if inside.m_dot is None or outside.m_dot is None:
+    if inside.m_dot is None and outside.m_dot is None:
+        raise ValueError(
+            "Steam Rating with unknown steam mass flow requires a known "
+            "outside mass flow; solving both inside and outside mass flow "
+            "simultaneously is not supported."
+        )
+    if inside.m_dot is not None and outside.m_dot is None:
         raise ValueError("Steam Rating requires explicit mass flow on both sides.")
-    Q_required = _resolve_rating_duty(
-        inside, outside, Q, tolerance=over_specified_tolerance
-    )
-    solution = rate_steam_heater(
-        hx,
-        inlet_state=inside.water_steam_state,
-        mass_flow_steam=inside.m_dot,
-        outside_provider=outside.provider,
-        mass_flow_outside=outside.m_dot,
-        T_in_outside=outside.T_in,
-        p_outside=outside.p,
-        orientation=hx.bundle.tube.tube_orientation,
-        Q_total=Q_required,
-        euler_provider=euler_provider,
-        finned_heat_transfer_provider=finned_heat_transfer_provider,
-        finned_pressure_drop_provider=finned_pressure_drop_provider,
-    )
-    steam_result = _steam_result(solution, mode=inside.phase_change_mode)
-    if inside.phase_change_mode is PhaseChangeMode.DISABLED and steam_result.active:
+
+    if inside.m_dot is None:
+        resolved_inside, Q_required = _resolve_unknown_steam_mass_flow(
+            inside, outside, Q, tolerance=over_specified_tolerance
+        )
+        solution = rate_steam_heater(
+            hx,
+            inlet_state=resolved_inside.water_steam_state,
+            mass_flow_steam=resolved_inside.m_dot,
+            outside_provider=outside.provider,
+            mass_flow_outside=outside.m_dot,
+            T_in_outside=outside.T_in,
+            p_outside=outside.p,
+            orientation=hx.bundle.tube.tube_orientation,
+            outlet_state=resolved_inside.water_steam_outlet_state,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+    else:
+        resolved_inside = inside
+        Q_required = _resolve_rating_duty(
+            inside, outside, Q, tolerance=over_specified_tolerance
+        )
+        solution = rate_steam_heater(
+            hx,
+            inlet_state=inside.water_steam_state,
+            mass_flow_steam=inside.m_dot,
+            outside_provider=outside.provider,
+            mass_flow_outside=outside.m_dot,
+            T_in_outside=outside.T_in,
+            p_outside=outside.p,
+            orientation=hx.bundle.tube.tube_orientation,
+            Q_total=Q_required,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+    steam_result = _steam_result(solution, mode=resolved_inside.phase_change_mode)
+    if resolved_inside.phase_change_mode is PhaseChangeMode.DISABLED and steam_result.active:
         raise PhaseChangeDisabledButRequiredError(
             "The specified Rating duty crosses the water saturation dome while "
             "phase_change_mode=DISABLED."
@@ -673,7 +700,7 @@ def apply_water_steam_rating(
             )
 
     closed_balance = _closed_balance_for_steam_rating(
-        inside=inside,
+        inside=resolved_inside,
         outside=outside,
         solution=solution,
     )
@@ -692,7 +719,7 @@ def apply_water_steam_rating(
     simulation = None
     Q_achievable = None
     if include_simulation:
-        simulation_inside = _simulation_side_from_rating(inside)
+        simulation_inside = _simulation_side_from_rating(resolved_inside)
         simulation_outside = HXSideInput(
             provider=outside.provider, m_dot=outside.m_dot,
             T_in=outside.T_in, p=outside.p,
@@ -713,7 +740,7 @@ def apply_water_steam_rating(
     )
     result = _rating_from_solution(
         hx,
-        inside,
+        resolved_inside,
         outside,
         solution,
         outside_evaluation=outside_evaluation,
@@ -1588,6 +1615,98 @@ def _resolve_rating_duty(inside, outside, Q, *, tolerance):
                 f"{reference_label}={reference:.9g} W versus {label}={value:.9g} W."
             )
     return reference
+
+
+def _resolve_unknown_steam_mass_flow(inside, outside, Q, *, tolerance):
+    """Derive the required steam mass flow from an independent duty (v0.7.1).
+
+    ``inside.m_dot`` cannot itself imply Q_required (it is the unknown being
+    solved), so the outlet target only fixes the specific enthalpy drop
+    ``delta_h_steam``; Q_required must come from explicit ``Q`` or a fully
+    specified opposing-side temperature program:
+
+        m_dot_steam = Q_required / delta_h_steam
+    """
+    target_outlet_state = inside.water_steam_outlet_state
+    if target_outlet_state is None:
+        target_outlet_state = inside.provider.state(x=0.0, p=inside.p)
+
+    delta_h_steam = inside.water_steam_state.h - target_outlet_state.h
+    if not math.isfinite(delta_h_steam) or delta_h_steam <= 0.0:
+        raise ValueError(
+            "Unknown steam mass-flow Rating requires an outlet target with "
+            "lower specific enthalpy than the steam inlet."
+        )
+
+    Q_required = _resolve_unknown_mass_flow_rating_duty(outside, Q, tolerance=tolerance)
+
+    m_dot = Q_required / delta_h_steam
+    if not math.isfinite(m_dot) or m_dot <= 0.0:
+        raise ValueError("Derived steam mass flow must be positive and finite.")
+
+    resolved_inside = _resolved_inside_for_unknown_steam_mass_flow(
+        inside, m_dot=m_dot, outlet_h=target_outlet_state.h
+    )
+    return resolved_inside, Q_required
+
+
+def _resolve_unknown_mass_flow_rating_duty(outside, Q, *, tolerance):
+    candidates = []
+    if Q is not None:
+        if not math.isfinite(Q) or Q <= 0.0:
+            raise ValueError("Steam Rating Q must be positive and finite.")
+        candidates.append(("Q", Q))
+    if outside.T_out is not None:
+        props = outside.provider.at(
+            T=0.5 * (outside.T_in + outside.T_out), p=outside.p
+        )
+        transport = getattr(props, "transport", props)
+        candidates.append((
+            "outside temperature program",
+            outside.m_dot * transport.cp * (outside.T_out - outside.T_in),
+        ))
+    if not candidates:
+        raise ValueError(
+            "Steam Rating with unknown steam mass flow requires explicit Q or "
+            "a fully specified opposing-side temperature program."
+        )
+    for label, value in candidates:
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"Steam Rating duty from {label} must be positive and finite.")
+    reference_label, reference = candidates[0]
+    for label, value in candidates[1:]:
+        scale = max(abs(reference), abs(value), 1.0)
+        if abs(reference - value) > tolerance * scale:
+            raise ValueError(
+                "Over-specified Steam Rating duties are inconsistent: "
+                f"{reference_label}={reference:.9g} W versus {label}={value:.9g} W."
+            )
+    return reference
+
+
+def _resolved_inside_for_unknown_steam_mass_flow(inside, *, m_dot, outlet_h):
+    """Rebuild an internal, fully resolved ``BalanceSideSpec`` for Rating.
+
+    ``inside`` (caller-owned) is left untouched; downstream Rating code needs
+    a real ``m_dot``. The inlet uses inside's original canonical
+    specification (T+p / p+h / p+x); the outlet uses a single canonical
+    ``h_out`` so ``BalanceSideSpec.__post_init__`` reconstructs a consistent
+    T_out/quality_out without resubmitting more than one outlet field.
+    """
+    kwargs = dict(
+        provider=inside.provider,
+        p=inside.p,
+        m_dot=m_dot,
+        phase_change_mode=inside.phase_change_mode,
+        h_out=outlet_h,
+    )
+    if inside.state_specification == "p+x":
+        kwargs["quality_in"] = inside.quality_in
+    elif inside.state_specification == "p+h":
+        kwargs["h_in"] = inside.h_in
+    else:
+        kwargs["T_in"] = inside.T_in
+    return BalanceSideSpec(**kwargs)
 
 
 def _simulation_side_from_rating(inside):

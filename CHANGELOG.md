@@ -9,6 +9,10 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ### Added
 
+- Rating can derive the required tube-side pure-steam mass flow from the
+  opposing-side heat balance (or explicit duty) and a requested steam outlet
+  state. Unknown steam flow defaults to complete condensation
+  (``quality_out=0.0``) when no outlet target is supplied.
 - Added dry circular-finned-tube geometry, annular-fin efficiency, and
   topology-aware root/contact thermal resistance.
 - Added Briggs--Young dry outside heat transfer and verified-scope

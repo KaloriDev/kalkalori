@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.0`
+**Current version:** `v0.7.1`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -168,6 +168,29 @@ selection remain outside the solver's scope.
 **Explicitly excluded:** wet/condensing finned outside surfaces, frost/ice,
 condensate retention, serrated or longitudinal fins, non-circular finned
 geometries, and unsupported tube-bank layouts or correlation extrapolation.
+
+---
+
+### v0.7.1 — Rating-derived steam mass flow — RELEASE CANDIDATE / pending validation
+
+**Delivered scope:**
+
+- for a tube-side pure water/steam Rating, ``inside.m_dot`` may be left
+  unknown; the required steam mass flow is then derived from an
+  independently known total duty (explicit `Q`, or a fully specified
+  opposing-side temperature program) and the requested steam outlet target;
+- the steam outlet target defaults to saturated liquid (`quality_out=0.0`)
+  when unknown mass flow is combined with no explicit outlet state;
+- explicit `quality_out`/`h_out`/`T_out` targets take precedence over the
+  default and share the existing IAPWS outlet-state machinery;
+- unaffected: known-steam-mass-flow Rating, Simulation, and every v0.6.x/
+  v0.7.0 physical model (contact/root topology, physical/effective outside
+  alpha, Briggs--Young, Robinson--Briggs, the constant-fin and tapered-fin
+  solvers, and the multi-zone phase-change solvers).
+
+**Explicitly excluded:** simultaneously unknown inside and outside mass
+flow, derived unknown mass flow for water evaporation (inside heating), and
+effectiveness-only steam Rating targets.
 
 ---
 

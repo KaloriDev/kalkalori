@@ -1371,6 +1371,16 @@ class BareTubeHeatExchanger:
         IAPWS outlet quality, enthalpy or unambiguous temperature and shares
         its zone physics with Simulation. ``phase_change_mode`` is per
         ``BalanceSideSpec``.
+
+        Derived pure-steam mass flow (v0.7.1)
+        --------------------------------------
+        For a tube-side pure water/steam Rating, ``inside.m_dot`` may be left
+        ``None``: the required steam mass flow is then solved from an
+        independently known duty (explicit ``Q`` or a fully specified
+        opposing-side temperature program) and the steam outlet target
+        (explicit, or saturated liquid ``quality_out=0.0`` by default), as
+        ``m_dot = Q_required / (h_in - h_out_target)``. See
+        ``core.phase_change.steam_integration.apply_water_steam_rating``.
         """
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings

@@ -259,6 +259,201 @@ def test_steam_rating_rejects_inconsistent_over_specified_duties():
         _hx().rate(inside, outside, Q=1.0)
 
 
+# ---------------------------------------------------------------------------
+# v0.7.1 -- derived pure-steam mass flow (inside.m_dot=None) in Rating
+# ---------------------------------------------------------------------------
+def _outside_program(m_dot=30.0, T_in=300.0, T_out=340.0):
+    return BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=m_dot, T_in=T_in, T_out=T_out,
+    )
+
+
+def _expected_outside_duty(outside: BalanceSideSpec) -> float:
+    """Independent reference duty using the documented Rating cp_mean convention."""
+    props = outside.provider.at(T=0.5 * (outside.T_in + outside.T_out), p=outside.p)
+    return outside.m_dot * props.cp * (outside.T_out - outside.T_in)
+
+
+def test_unknown_steam_mass_flow_rating_explicit_full_condensation():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.0,
+    )
+    outside = _outside_program()
+    result = _hx().rate(inside, outside)
+
+    Q_outside = _expected_outside_duty(outside)
+    h_in = inside.water_steam_state.h
+    h_f = IAPWS97WaterSteamProvider().state(x=0.0, p=P).h
+    expected_m_dot = Q_outside / (h_in - h_f)
+
+    assert result.Q_required == pytest.approx(Q_outside)
+    assert result.closed_balance.inside.m_dot == pytest.approx(expected_m_dot)
+    assert result.inside_phase_change.mass_flow_total == pytest.approx(expected_m_dot)
+    assert result.inside_phase_change.quality_out == pytest.approx(0.0, abs=1e-9)
+    assert inside.m_dot is None
+
+
+def test_unknown_steam_mass_flow_rating_defaults_to_saturated_liquid():
+    """No T_out/h_out/quality_out on the steam side -> default x_out=0."""
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None, T_in=600.0,
+    )
+    outside = _outside_program()
+    result = _hx().rate(inside, outside)
+
+    Q_outside = _expected_outside_duty(outside)
+    h_in = inside.water_steam_state.h
+    h_f = IAPWS97WaterSteamProvider().state(x=0.0, p=P).h
+    expected_m_dot = Q_outside / (h_in - h_f)
+
+    assert result.inside_phase_change.quality_out == pytest.approx(0.0, abs=1e-9)
+    assert result.closed_balance.inside.m_dot == pytest.approx(expected_m_dot)
+    assert result.inside_phase_change.mass_flow_total == pytest.approx(expected_m_dot)
+    # The superheated inlet is never force-assigned quality_in=1; desuperheating
+    # is included in the zone solution instead.
+    assert inside.quality_in is None
+    assert inside.m_dot is None
+
+
+def test_unknown_steam_mass_flow_rating_partial_condensation():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.2,
+    )
+    outside = _outside_program()
+    result = _hx().rate(inside, outside)
+
+    Q_outside = _expected_outside_duty(outside)
+    h_in = inside.water_steam_state.h
+    h_target = IAPWS97WaterSteamProvider().state(x=0.2, p=P).h
+    expected_m_dot = Q_outside / (h_in - h_target)
+
+    assert result.closed_balance.inside.m_dot == pytest.approx(expected_m_dot)
+    assert result.inside_phase_change.quality_out == pytest.approx(0.2, abs=1e-6)
+
+
+def test_unknown_steam_mass_flow_rating_explicit_h_out():
+    h_target = IAPWS97WaterSteamProvider().state(T=400.0, p=P).h
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, h_out=h_target,
+    )
+    outside = _outside_program()
+    result = _hx().rate(inside, outside)
+
+    Q_outside = _expected_outside_duty(outside)
+    h_in = inside.water_steam_state.h
+    expected_m_dot = Q_outside / (h_in - h_target)
+
+    assert result.closed_balance.inside.m_dot == pytest.approx(expected_m_dot)
+    assert result.inside_phase_change.h_out == pytest.approx(h_target)
+
+
+def test_unknown_steam_mass_flow_rating_uses_explicit_Q():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+    )
+    h_in = inside.water_steam_state.h
+    h_f = IAPWS97WaterSteamProvider().state(x=0.0, p=P).h
+    Q = 5.0e5
+    expected_m_dot = Q / (h_in - h_f)
+
+    result = _hx().rate(inside, outside, Q=Q)
+    assert result.closed_balance.inside.m_dot == pytest.approx(expected_m_dot)
+    assert result.Q_required == pytest.approx(Q)
+
+
+def test_unknown_steam_mass_flow_rating_over_specified_duty_consistency():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.0,
+    )
+    outside = _outside_program()
+    Q_consistent = _expected_outside_duty(outside)
+
+    result = _hx().rate(inside, outside, Q=Q_consistent)
+    assert result.Q_required == pytest.approx(Q_consistent)
+
+    with pytest.raises(ValueError, match="Over-specified"):
+        _hx().rate(inside, outside, Q=Q_consistent * 2.0)
+
+
+def test_unknown_steam_mass_flow_rating_without_independent_duty_is_rejected():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+    )
+    with pytest.raises(ValueError, match="requires explicit Q"):
+        _hx().rate(inside, outside)
+
+
+def test_unknown_steam_mass_flow_rating_rejects_non_condensing_target():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, T_out=650.0,
+    )
+    outside = _outside_program()
+    with pytest.raises(ValueError, match="lower specific enthalpy"):
+        _hx().rate(inside, outside)
+
+
+def test_unknown_steam_mass_flow_rating_requires_known_outside_mass_flow():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=None, T_in=300.0, T_out=340.0,
+    )
+    with pytest.raises(ValueError, match="unknown steam mass flow requires a known"):
+        _hx().rate(inside, outside, Q=1.0e6)
+
+
+def test_known_steam_mass_flow_rating_does_not_default_outlet_to_saturated_liquid():
+    """Regression: known m_dot + explicit Q must NOT acquire the x_out=0 default."""
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0, T_in=600.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+    )
+    result = _hx().rate(inside, outside, Q=2.0e5)
+    assert result.inside_phase_change.quality_out is None
+    assert result.inside_phase_change.phase_out is WaterSteamPhase.SUPERHEATED_VAPOR
+    assert result.closed_balance.inside.m_dot == pytest.approx(1.0)
+
+
+def test_unknown_steam_mass_flow_rating_include_simulation_uses_resolved_flow():
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=None,
+        T_in=600.0, quality_out=0.0,
+    )
+    outside = _outside_program()
+    result = _hx().rate(inside, outside, include_simulation=True)
+
+    resolved_m_dot = result.closed_balance.inside.m_dot
+    assert result.simulation is not None
+    assert result.Q_achievable == pytest.approx(result.simulation.q)
+
+    direct_simulation = _hx().simulate(
+        HXSideInput(
+            provider=IAPWS97WaterSteamProvider(), m_dot=resolved_m_dot,
+            T_in=600.0, p=P,
+        ),
+        HXSideInput(provider=OUTSIDE_PROVIDER, m_dot=30.0, T_in=300.0, p=101325.0),
+    )
+    assert result.simulation.q == pytest.approx(direct_simulation.q)
+    assert inside.m_dot is None
+
+
 def test_public_steam_result_exposes_equivalent_and_area_weighted_alpha():
     result = _hx().simulate(_inside_sim(T_in=520.0, m_dot=0.25), _outside_sim())
     steam = result.inside_phase_change

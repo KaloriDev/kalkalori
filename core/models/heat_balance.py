@@ -62,7 +62,16 @@ class BalanceSideSpec:
     Attributes:
         provider: Point-property provider exposing ``at(T, p)``.
         p: Bulk pressure used for property evaluation [Pa].
-        m_dot: Mass flow through this side [kg/s], or None if unknown.
+        m_dot: Mass flow through this side [kg/s], or None if unknown. For a
+            tube-side pure water/steam Rating (only), ``m_dot=None`` is also
+            permitted: ``core.phase_change.steam_integration`` then derives
+            the required steam mass flow from an independently known total
+            duty (explicit ``Q``, or a fully specified opposing-side
+            temperature program) and the steam outlet target -- explicit
+            ``quality_out``/``h_out``/``T_out``, or saturated liquid
+            (``quality_out=0.0``) by default when none is given. This is
+            Rating-only heat-balance closure, not generic
+            ``close_heat_balance`` behavior.
         T_in: Inlet bulk temperature [K]. Required by ``close_heat_balance``.
         T_out: Outlet bulk temperature [K], or None if unknown.
         phase_change_mode: See ``core.models.simulation.HXSideInput.
