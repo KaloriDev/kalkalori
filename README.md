@@ -35,27 +35,36 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.6.3)
+## Current Capabilities (v0.7.0)
 
-- Pure-water heating and evaporation inside bare tubes, including liquid
+- Pure-water heating and evaporation inside tubes with a dry outside surface,
+  including liquid
   preheating, partial or complete evaporation, and optional vapor
   superheating through Simulation and Rating. The IAPWS-backed model uses
   Shah (1982) saturated flow boiling with a self-consistent inside-area heat
   flux; see
   [`docs/property_models.md`](docs/property_models.md#17-v063--pure-water-heating-and-evaporation-inside-tubes)
 
-- Pure water/steam cooling inside bare tubes, including superheated steam,
+- Pure water/steam cooling inside tubes with a dry outside surface, including superheated steam,
   saturated or wet-steam inlets, partial/complete condensation, and optional
   condensate subcooling through the public Simulation and Rating APIs. The
   IAPWS-backed model includes gravity-aware low-mass-flux Shah (2009)
   condensation; see
   [`docs/property_models.md`](docs/property_models.md#16-v062--pure-watersteam-cooling-inside-tubes)
 - Partial H2O condensation from a water-containing gas mixture either
-  inside bare tubes or outside a bare-tube bank, with automatic detection
+  inside tubes with a dry outside surface or outside a bare-tube bank, with automatic detection
   (`PhaseChangeMode.AUTO`) and a dry-only override
   (`PhaseChangeMode.DISABLED`); see
   [`docs/property_models.md`](docs/property_models.md#15-v061--wet-gas-water-condensation)
 - Bare tube heat exchangers
+- Dry circular-finned-tube exchangers. `CircularFinnedTube` composes a
+  `BareTube` core and supports constant or linearly tapered annular fins,
+  welded or continuous-root construction, explicit/ideal fin contact,
+  Briggs--Young dry outside heat transfer, verified-scope Robinson--Briggs
+  pressure loss, Simulation, Rating, and the established inside-side phase
+  change paths when the finned outside surface remains dry. See
+  [`docs/finned_tube_model.md`](docs/finned_tube_model.md). Wet/condensing
+  finned outside surfaces remain unsupported.
 - Tube-side forced convection
 - Outside forced convection (mass-flow driven)
 - Multi-pass tube bundles
@@ -83,7 +92,8 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - thermal performance
   - hydraulic performance
 
-Outside pressure change is limited to the bare-tube bank. Duct, plenum,
+Outside pressure change is limited to the calculated plain or dry
+circular-finned tube bank. Duct, plenum,
 casing-transition, screen, louver, damper, fan, and external-piping losses are
 not included.
 
@@ -157,7 +167,8 @@ In short:
 KalKalori is intended to be used as a Python library.
 
 Typical usage:
-1. Define geometry (`BareTube`, `TubeBundle`)
+1. Define geometry (`BareTube` or `CircularFinnedTube`, then
+   `TubeBundle`)
 2. Define energy streams
 3. Solve using a heat exchanger model
 4. Inspect results from `HXResult`

@@ -91,6 +91,26 @@ from .outside_pressure_drop_external import (
     ExternalCliEulerProvider,
 )
 
+from .finned_tube_pressure_drop import (
+    FinnedTubeHydraulicPosition,
+    FinnedTubePressureCoefficientBasis,
+    FinnedTubePressureDropMetadata,
+    FinnedTubePressureDropRequest,
+    FinnedTubePressureDropResult,
+    FinnedTubePressureDropProvider,
+    RobinsonBriggs1966Provider,
+    FinnedTubeHydraulicPoint,
+    FinnedTubeBankHydraulicResult,
+    ROBINSON_BRIGGS_COEFFICIENT_BASIS,
+    ROBINSON_BRIGGS_1966_APPLICABILITY,
+    ROBINSON_BRIGGS_1966_METADATA,
+    evaluate_finned_tube_pressure_drop,
+    calculate_finned_tube_pressure_drop,
+    finned_tube_pressure_drop_from_mass_flow,
+    calculate_finned_tube_bank_hydraulics,
+    finned_tube_bank_hydraulics,
+)
+
 from .flow_path import (
     PressureDropFlowState,
     SectionFlowResult,
@@ -172,6 +192,25 @@ __all__ = [
 
     # Outside pressure drop external adapter
     "ExternalCliEulerProvider",
+
+    # Pressure drop for circular-finned tube banks (dedicated, not EulerRequest)
+    "FinnedTubeHydraulicPosition",
+    "FinnedTubePressureCoefficientBasis",
+    "FinnedTubePressureDropMetadata",
+    "FinnedTubePressureDropRequest",
+    "FinnedTubePressureDropResult",
+    "FinnedTubePressureDropProvider",
+    "RobinsonBriggs1966Provider",
+    "FinnedTubeHydraulicPoint",
+    "FinnedTubeBankHydraulicResult",
+    "ROBINSON_BRIGGS_COEFFICIENT_BASIS",
+    "ROBINSON_BRIGGS_1966_APPLICABILITY",
+    "ROBINSON_BRIGGS_1966_METADATA",
+    "evaluate_finned_tube_pressure_drop",
+    "calculate_finned_tube_pressure_drop",
+    "finned_tube_pressure_drop_from_mass_flow",
+    "calculate_finned_tube_bank_hydraulics",
+    "finned_tube_bank_hydraulics",
 
     # Explicit pressure-drop flow state and reusable section-flow helpers
     # (flow_path.py; v0.5.6 local pressure-drop paths)

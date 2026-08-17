@@ -70,6 +70,30 @@ from .thermal_iteration import (
     solve_iterative_thermal_state,
 )
 
+from .fin_efficiency import (
+    DEFAULT_FIN_RADIAL_CELLS,
+    FinEfficiencyResult,
+    annular_fin_efficiency,
+    calculate_fin_efficiency,
+    fin_efficiency,
+    overall_surface_efficiency,
+    effective_outside_area,
+)
+
+from .finned_tube_outside import (
+    FinnedTubeLayout,
+    FinnedTubeHeatTransferMetadata,
+    FinnedTubeHeatTransferRequest,
+    FinnedTubeHeatTransferResult,
+    FinnedTubeHeatTransferProvider,
+    BriggsYoung1963Provider,
+    BRIGGS_YOUNG_1963_APPLICABILITY,
+    BRIGGS_YOUNG_1963_METADATA,
+    evaluate_finned_tube_heat_transfer,
+    calculate_finned_tube_outside_heat_transfer,
+    finned_tube_outside_heat_transfer,
+)
+
 from core.common.warnings import (
     ApplicabilityRange,
     ModelWarning,
@@ -137,6 +161,28 @@ __all__ = [
     "WallTemperatureEnvelope",
     "estimate_wall_temperature_envelope",
     "solve_iterative_thermal_state",
+
+    # Circular annular-fin efficiency
+    "DEFAULT_FIN_RADIAL_CELLS",
+    "FinEfficiencyResult",
+    "annular_fin_efficiency",
+    "calculate_fin_efficiency",
+    "fin_efficiency",
+    "overall_surface_efficiency",
+    "effective_outside_area",
+
+    # Outside heat transfer for circular-finned tube banks
+    "FinnedTubeLayout",
+    "FinnedTubeHeatTransferMetadata",
+    "FinnedTubeHeatTransferRequest",
+    "FinnedTubeHeatTransferResult",
+    "FinnedTubeHeatTransferProvider",
+    "BriggsYoung1963Provider",
+    "BRIGGS_YOUNG_1963_APPLICABILITY",
+    "BRIGGS_YOUNG_1963_METADATA",
+    "evaluate_finned_tube_heat_transfer",
+    "calculate_finned_tube_outside_heat_transfer",
+    "finned_tube_outside_heat_transfer",
 
     # Warnings and applicability checks
     "ApplicabilityRange",

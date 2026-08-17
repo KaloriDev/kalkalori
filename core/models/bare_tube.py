@@ -24,6 +24,7 @@ import math
 from dataclasses import dataclass, replace
 
 from core.geometry.bundle import TubeBundle
+from core.geometry.tube import TubeSurfaceType
 
 from core.heat_transfer.internal_flow import (
     FluidProps as InternalFlowFluidProps,
@@ -36,12 +37,20 @@ from core.pressure_drop.internal_pressure_drop import (
     calculate_tube_bundle_hydraulics,
 )
 
-from core.heat_transfer.outside_flow import (
-    FluidProps as OutsideFlowFluidProps,
-    OutsideHydraulicPoint,
-    OutsideTubeBankHydraulicResult,
-    calculate_outside_tube_bank_hydraulics,
-    outside_flow_from_mass_flow,
+from core.heat_transfer.outside_flow import FluidProps as OutsideFlowFluidProps
+
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    FinnedTubeDiagnostics,
+    OutsideBankHydraulicPoint,
+    OutsideBankHydraulicResult,
+    build_finned_tube_diagnostics,
+    calculate_resistance_network,
+    evaluate_outside_hydraulics,
+    evaluate_outside_thermal,
+    point_reynolds,
+    tube_surface_type,
 )
 
 from core.pressure_drop.outside_pressure_drop import (
@@ -194,7 +203,7 @@ class HXOutSideHydraulicResults:
     dp_total: float
     Re: float
     v: float
-    tube_bank: OutsideTubeBankHydraulicResult | None = None
+    tube_bank: OutsideBankHydraulicResult | None = None
 
     @property
     def dp_drag(self) -> float:
@@ -218,7 +227,7 @@ class HXOutSideHydraulicResults:
 
     @property
     def outside_dp(self) -> float:
-        """Compatibility alias for total bare-bank pressure change."""
+        """Compatibility alias for total tube-bank pressure change."""
         return self.dp_total
 
     @property
@@ -293,7 +302,7 @@ class HXTubeSidePressureDropResults:
 class HXOutsidePressureDropResults:
     """Outside-side complete pressure-drop result (v0.5.6 architecture).
 
-    ``tube_bank`` is the existing calculated bare tube-bank result (``None``
+    ``tube_bank`` is the calculated plain- or circular-finned-tube-bank result (``None``
     when the outside side was not specified), decomposed in ``flow_path``
     into irreversible drag and signed dynamic-pressure change. With no
     explicitly calculated local-loss path, ``dp_local`` is ``0.0`` and
@@ -301,7 +310,7 @@ class HXOutsidePressureDropResults:
     pressure difference exactly.
     """
 
-    tube_bank: OutsideTubeBankHydraulicResult | None
+    tube_bank: OutsideBankHydraulicResult | None
     flow_path: PressureDropPathResult
 
     @property
@@ -372,6 +381,8 @@ class HXResult:
     tube_side_thermal: HXOutSideThermalResults
     tube_side_hydraulic: HXTubeSideHydraulicResults | None
 
+    # Generic gross-area effective HTC; for circular fins the physical
+    # correlation HTC is exposed separately by ``finned_tube_diagnostics``.
     outside_side_thermal: HXOutSideThermalResults
     outside_side_hydraulic: HXOutSideHydraulicResults
 
@@ -383,6 +394,22 @@ class HXResult:
 
     # Warnings and applicability diagnostics
     warnings: list[ModelWarning] | None = None
+
+    # Present only for TubeSurfaceType.CIRCULAR_FINNED. It keeps the physical
+    # film coefficient separate from eta_fin/area enhancement and carries the
+    # dedicated Briggs-Young/Robinson-Briggs basis and provenance.
+    finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
+
+    @property
+    def tube_surface_type(self) -> TubeSurfaceType:
+        if self.finned_tube_diagnostics is None:
+            return TubeSurfaceType.PLAIN
+        return self.finned_tube_diagnostics.tube_surface_type
+
+    @property
+    def finned_tube(self) -> FinnedTubeDiagnostics | None:
+        """Concise alias for :attr:`finned_tube_diagnostics`."""
+        return self.finned_tube_diagnostics
 
     @property
     def tube_bundle_hydraulic(self) -> TubeBundleHydraulicResult | None:
@@ -401,17 +428,17 @@ class HXResult:
         return None if self.tube_bundle_hydraulic is None else self.tube_bundle_hydraulic.outlet
 
     @property
-    def outside_properties_inlet(self) -> OutsideHydraulicPoint | None:
+    def outside_properties_inlet(self) -> OutsideBankHydraulicPoint | None:
         hydraulic = self.outside_tube_bank_hydraulic
         return None if hydraulic is None else hydraulic.inlet
 
     @property
-    def outside_properties_midpoint(self) -> OutsideHydraulicPoint | None:
+    def outside_properties_midpoint(self) -> OutsideBankHydraulicPoint | None:
         hydraulic = self.outside_tube_bank_hydraulic
         return None if hydraulic is None else hydraulic.midpoint
 
     @property
-    def outside_properties_outlet(self) -> OutsideHydraulicPoint | None:
+    def outside_properties_outlet(self) -> OutsideBankHydraulicPoint | None:
         hydraulic = self.outside_tube_bank_hydraulic
         return None if hydraulic is None else hydraulic.outlet
 
@@ -502,7 +529,7 @@ class HXResult:
         return math.nan if self.tube_side_pressure_drop is None else self.tube_side_pressure_drop.dp_local
 
     @property
-    def outside_tube_bank_hydraulic(self) -> OutsideTubeBankHydraulicResult | None:
+    def outside_tube_bank_hydraulic(self) -> OutsideBankHydraulicResult | None:
         return self.outside_side_hydraulic.tube_bank
 
     @property
@@ -526,8 +553,9 @@ class HXResult:
         return self.outside_dp_total
 
     # -- Canonical outside-side pressure-drop field names (v0.5.6) --------
-    # The outside result covers only bare tube-bank Euler drag and signed
-    # acceleration pressure change; ``outside_dp_local`` is 0.0 and
+    # The outside result covers plain-bank Euler or circular-finned-bank
+    # Robinson-Briggs drag plus signed acceleration pressure change;
+    # ``outside_dp_local`` is 0.0 and
     # ``outside_dp_tube_bank`` == ``outside_dp_total`` because the standard
     # solver does not invoke the separately available local-path models.
 
@@ -550,7 +578,11 @@ class HXResult:
 
 class BareTubeHeatExchanger:
     """
-    Bare (smooth) tube heat exchanger model (MVP).
+    Heat exchanger model retaining its historical public class name.
+
+    Outside-side correlation dispatch supports both smooth ``BareTube`` and
+    dry ``CircularFinnedTube`` geometry; tube-side geometry remains the
+    composed circular core tube in either case.
 
     The thermal conductivity of the tube wall is no longer passed to the
     exchanger; it is expected to be supplied on the ``bundle.tube``
@@ -655,6 +687,11 @@ class BareTubeHeatExchanger:
         # Outside pressure-drop provider selection:
         euler_provider: str | EulerProvider = "zukauskas",
 
+        # Dedicated circular-finned-tube providers. Their defaults are
+        # inactive for plain tubes and selected automatically for finned ones.
+        finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+        finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
+
     ) -> HXResult:
         # Use bundle's flow_arrangement if not provided
         if flow_arrangement is None:
@@ -732,46 +769,50 @@ class BareTubeHeatExchanger:
         )
 
         # --------------------------------------------------------------
-        # Outside-side: compute from mass flow unless overridden
+        # Outside-side: explicit surface-family dispatch. Circular fins can
+        # never enter the historical bare Zukauskas/Euler functions.
         # --------------------------------------------------------------
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
+        surface = tube_surface_type(self.bundle)
+        if surface is TubeSurfaceType.CIRCULAR_FINNED and alfa_o is not None:
+            raise ValueError(
+                "CircularFinnedTube does not accept the bare alfa_o override: "
+                "it would decouple fin efficiency and Briggs-Young provenance "
+                "from the physical outside film coefficient."
+            )
 
         if have_outside:
-            # Keep the existing outside heat-transfer calculation and its
-            # face-velocity/Re/Pr contract, but bypass its historical
-            # one-state pressure-drop calculation.  Outside pressure is
-            # authoritative only from the three-state bank result below.
-            v_o, Re_o, Pr_o, alfa_o_calc, _legacy_dp_o, outside_warnings, _outside_euler_result = outside_flow_from_mass_flow(
+            outside_thermal_dispatch = evaluate_outside_thermal(
+                bundle=self.bundle,
                 m_dot=m_dot_outside,
-                frontal_area=A_frontal,
-                n_tubes_per_row=self.bundle.n_tubes_per_row,
-                tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
-                tube_pitch_transverse=self.bundle.pitch_transverse,
-                tube_pitch_longitudinal=self.bundle.pitch_longitudinal,
-                layout=self.bundle.layout,
-                n_rows=self.bundle.n_rows,
                 props=outside_props,
                 euler_provider=euler_provider,
-                calculate_pressure_drop=False,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
             )
-            outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+            v_o = outside_thermal_dispatch.face_velocity
+            Re_o = outside_thermal_dispatch.reynolds_number
+            Pr_o = outside_thermal_dispatch.prandtl_number
+            alfa_o_calc = outside_thermal_dispatch.alpha_physical
+            outside_warnings = list(outside_thermal_dispatch.warnings)
+            outside_bank_hydraulic = evaluate_outside_hydraulics(
+                bundle=self.bundle,
                 m_dot=m_dot_outside,
-                face_area=A_frontal,
-                tube_outer_diameter=float(getattr(self.bundle.tube, "D_o")),
-                tube_pitch_transverse=self.bundle.pitch_transverse,
-                tube_pitch_longitudinal=self.bundle.pitch_longitudinal,
-                layout=self.bundle.layout,
-                n_rows=self.bundle.n_rows,
-                n_tubes_per_row=self.bundle.n_tubes_per_row,
-                provider=outside_provider,
+                property_provider=outside_provider,
                 temperature_in=outside_temperature_in,
                 temperature_out=outside_temperature_out,
                 pressure=outside_pressure,
                 euler_provider=euler_provider,
                 inlet_props=outside_props if outside_provider is None else None,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
             )
             dp_o = outside_bank_hydraulic.dp_total
         else:
+            if surface is TubeSurfaceType.CIRCULAR_FINNED:
+                raise ValueError(
+                    "CircularFinnedTube dry solve requires m_dot_outside and "
+                    "outside_props so Briggs-Young and Robinson-Briggs can be "
+                    "evaluated; an alfa_o-only bypass is unsupported."
+                )
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = (
                 float("nan"),
                 float("nan"),
@@ -782,11 +823,12 @@ class BareTubeHeatExchanger:
                 None,
             )
             outside_bank_hydraulic = None
+            outside_thermal_dispatch = None
 
         if alfa_o is not None:
             if alfa_o <= 0.0:
                 raise ValueError("alfa_o must be positive when provided.")
-            alfa_o_used = alfa_o
+            alfa_o_physical = alfa_o
         else:
             if alfa_o_calc is None:
                 raise ValueError(
@@ -794,13 +836,12 @@ class BareTubeHeatExchanger:
                     "- (m_dot_outside and outside_props) to compute alfa_o, or\n"
                     "- alfa_o directly as an override."
                 )
-            alfa_o_used = alfa_o_calc
+            alfa_o_physical = alfa_o_calc
 
-        outside_thermal = HXOutSideThermalResults(v=v_o, Re=Re_o, Pr=Pr_o, alfa=alfa_o_used)
         outside_hyd = HXOutSideHydraulicResults(
             dp_total=dp_o,
             Re=(
-                outside_bank_hydraulic.midpoint.reynolds
+                point_reynolds(outside_bank_hydraulic.midpoint)
                 if outside_bank_hydraulic is not None
                 else Re_o
             ),
@@ -815,15 +856,23 @@ class BareTubeHeatExchanger:
         # --------------------------------------------------------------
         # Overall UA
         # --------------------------------------------------------------
-        R_i = 1.0 / (alfa_i * A_i)
-        R_o = 1.0 / (alfa_o_used * A_o)
         R_w = self._tube_wall_resistance()
-
-        R_tot = R_i + R_w + R_o
-        if R_tot <= 0.0:
-            raise ValueError("Invalid total thermal resistance.")
-
-        UA = 1.0 / R_tot
+        resistance_network = calculate_resistance_network(
+            bundle=self.bundle,
+            alpha_inside=alfa_i,
+            outside_alpha_physical=alfa_o_physical,
+            resistance_core_wall=R_w,
+        )
+        # Generic exchanger-facing alfa is referenced to authoritative gross
+        # outside area and reconstructs the complete outside resistance.  For
+        # a plain tube it is exactly the physical film coefficient.
+        outside_thermal = HXOutSideThermalResults(
+            v=v_o,
+            Re=Re_o,
+            Pr=Pr_o,
+            alfa=resistance_network.outside_alpha_effective_gross,
+        )
+        UA = resistance_network.UA
 
         # --------------------------------------------------------------
         # Îµâ€“NTU thermal duty
@@ -886,6 +935,9 @@ class BareTubeHeatExchanger:
                     warnings_list.append(warning)
                     existing_outside_warning_ids.add((warning.source, warning.code))
 
+        if surface is TubeSurfaceType.CIRCULAR_FINNED:
+            warnings_list.extend(self.bundle.tube.geometry_warnings)
+
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
         if Re_i < 2300.0:
             warnings_list.append(
@@ -907,7 +959,11 @@ class BareTubeHeatExchanger:
             )
 
         # Outside-side regime diagnostics when outside flow is computed.
-        if have_outside and not math.isnan(Re_o):
+        if (
+            surface is TubeSurfaceType.PLAIN
+            and have_outside
+            and not math.isnan(Re_o)
+        ):
             if Re_o < 2300.0:
                 warnings_list.append(
                     make_warning(
@@ -978,6 +1034,18 @@ class BareTubeHeatExchanger:
                 warnings_list.append(warning)
                 existing_warning_ids.add((warning.source, warning.code))
 
+        finned_diagnostics = None
+        if outside_thermal_dispatch is not None:
+            geometry_warnings = tuple(
+                getattr(self.bundle.tube, "geometry_warnings", ())
+            )
+            finned_diagnostics = build_finned_tube_diagnostics(
+                network=resistance_network,
+                thermal=outside_thermal_dispatch,
+                hydraulic=outside_bank_hydraulic,
+                geometry_warnings=geometry_warnings,
+            )
+
         return HXResult(
             A_i=A_i,
             A_o=A_o,
@@ -994,6 +1062,7 @@ class BareTubeHeatExchanger:
             tube_side_pressure_drop=tube_side_pressure_drop,
             outside_side_pressure_drop=outside_side_pressure_drop,
             warnings=warnings_list if warnings_list else None,
+            finned_tube_diagnostics=finned_diagnostics,
         )
 
 
@@ -1010,6 +1079,8 @@ class BareTubeHeatExchanger:
         K_outlet: float = 1.0,
         K_turn: float = 1.5,
         euler_provider: str = "zukauskas",
+        finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+        finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
         max_iter: int = 30,
         temperature_tolerance_K: float = 0.05,
         relative_duty_tolerance: float = 1e-4,
@@ -1115,7 +1186,20 @@ class BareTubeHeatExchanger:
         if (
             is_inside_water_evaporation_case(inside, outside)
             and water_evaporation_reaches_saturation(
-                self, inside, outside, euler_provider=euler_provider
+                self,
+                inside,
+                outside,
+                euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
             )
         ):
             return apply_water_evaporation_simulation(
@@ -1127,6 +1211,8 @@ class BareTubeHeatExchanger:
                 K_outlet=K_outlet,
                 K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 max_iter=max_iter,
                 temperature_tolerance_K=temperature_tolerance_K,
                 relative_duty_tolerance=relative_duty_tolerance,
@@ -1144,6 +1230,8 @@ class BareTubeHeatExchanger:
                 K_outlet=K_outlet,
                 K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 max_iter=max_iter,
                 temperature_tolerance_K=temperature_tolerance_K,
                 relative_duty_tolerance=relative_duty_tolerance,
@@ -1181,6 +1269,8 @@ class BareTubeHeatExchanger:
                 K_outlet=K_outlet,
                 K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 max_iter=max_iter,
                 temperature_tolerance_K=temperature_tolerance_K,
                 relative_duty_tolerance=relative_duty_tolerance,
@@ -1206,7 +1296,11 @@ class BareTubeHeatExchanger:
         )
         return apply_phase_change(
             self, inside, outside, dry_result,
-            iterate=iterate, euler_provider=euler_provider, settings=settings,
+            iterate=iterate,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+            settings=settings,
         )
 
     def rate(
@@ -1221,6 +1315,8 @@ class BareTubeHeatExchanger:
         K_outlet: float = 1.0,
         K_turn: float = 1.5,
         euler_provider: str = "zukauskas",
+        finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+        finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
         include_simulation: bool = False,
         over_specified_tolerance: float = 1e-3,
         max_iterations: int = 25,
@@ -1325,6 +1421,8 @@ class BareTubeHeatExchanger:
                 flow_arrangement=flow_arrangement,
                 K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 include_simulation=include_simulation,
                 over_specified_tolerance=over_specified_tolerance,
                 max_iterations=max_iterations,
@@ -1340,6 +1438,8 @@ class BareTubeHeatExchanger:
                 flow_arrangement=flow_arrangement,
                 K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 include_simulation=include_simulation,
                 over_specified_tolerance=over_specified_tolerance,
                 max_iterations=max_iterations,
@@ -1355,6 +1455,8 @@ class BareTubeHeatExchanger:
                 flow_arrangement=flow_arrangement,
                 K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 include_simulation=include_simulation,
                 over_specified_tolerance=over_specified_tolerance,
                 max_iterations=max_iterations,
@@ -1379,6 +1481,7 @@ class BareTubeHeatExchanger:
         p_outside: float,
         flow_arrangement: str | None = None,
         euler_provider: str = "zukauskas",
+        finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
         max_iterations: int = 25,
         wall_temperature_tolerance_K: float = 0.05,
         relative_alfa_tolerance: float = 1e-3,
@@ -1409,6 +1512,7 @@ class BareTubeHeatExchanger:
             p_outside=p_outside,
             flow_arrangement=flow_arrangement,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
             max_iterations=max_iterations,
             wall_temperature_tolerance_K=wall_temperature_tolerance_K,
             relative_alfa_tolerance=relative_alfa_tolerance,

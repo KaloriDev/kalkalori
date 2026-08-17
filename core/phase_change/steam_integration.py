@@ -10,6 +10,13 @@ import math
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.outside_side import OutsideSideEvaluation, evaluate_outside_side
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    build_finned_tube_diagnostics,
+    calculate_resistance_network,
+)
+from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.thermal_iteration import (
     IterativeThermalState,
     ThermalIterationDiagnostics,
@@ -40,6 +47,9 @@ from core.phase_change.integration import (
     capability_only_result,
     evaluate_side_onset,
     apply_phase_change,
+)
+from core.phase_change.finned_tube_guard import (
+    reject_circular_finned_tube_wet_surface,
 )
 from core.phase_change.steam_heater import (
     SteamHeaterSolution,
@@ -125,12 +135,66 @@ def is_inside_water_evaporation_case(inside, outside) -> bool:
     )
 
 
-def water_evaporation_reaches_saturation(hx, inside, outside, *, euler_provider: str) -> bool:
+def water_evaporation_reaches_saturation(
+    hx,
+    inside,
+    outside,
+    *,
+    euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
+    surface_margin: float = 0.0,
+    iterate: bool = True,
+    flow_arrangement: str | None = None,
+    max_iter: int = 30,
+    temperature_tolerance_K: float = 0.05,
+    relative_duty_tolerance: float = 1.0e-4,
+    relaxation_factor: float = 0.5,
+    relative_alfa_tolerance: float = 1.0e-3,
+) -> bool:
     """Test whether full geometry can reach x=0 without invoking boiling HTC."""
     state = getattr(inside, "water_steam_state", None)
     if state is None or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
         return True
     saturated_liquid = water_steam_props_iapws97(p=state.p, x=0.0)
+    if (
+        getattr(hx.bundle.tube, "surface_type", None)
+        is TubeSurfaceType.CIRCULAR_FINNED
+    ):
+        # The legacy water-evaporator preheat probe evaluates its outside
+        # coefficient through the bare-tube helper. Do not enter that path for
+        # fins. A dry surface-aware Simulation gives the full-geometry sensible
+        # duty; compare the corresponding outlet enthalpy with saturated liquid.
+        from core.models.simulation import run_simulation
+
+        try:
+            dry = run_simulation(
+                hx,
+                inside,
+                outside,
+                euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
+                surface_margin=surface_margin,
+                iterate=iterate,
+                flow_arrangement=flow_arrangement,
+                max_iter=max_iter,
+                temperature_tolerance_K=temperature_tolerance_K,
+                relative_duty_tolerance=relative_duty_tolerance,
+                relaxation_factor=relaxation_factor,
+                relative_alfa_tolerance=relative_alfa_tolerance,
+            )
+        except ValueError as exc:
+            # The generic dry iteration can land numerically on the IAPWS
+            # saturation line before it has produced a duty. For this probe
+            # that is exactly the positive answer; let the public caller emit
+            # the dedicated finned wet-surface error instead of leaking the
+            # backend's ambiguous T+p exception.
+            if "T+p lies on the water saturation line" in str(exc):
+                return True
+            raise
+        trial_outlet_enthalpy = state.h + dry.q / inside.m_dot
+        return trial_outlet_enthalpy >= saturated_liquid.h - 1.0e-3
     try:
         boundary = rate_water_evaporator(
             hx,
@@ -269,6 +333,54 @@ def reject_outside_pure_water_evaporation_rating(outside, inside, *, Q) -> None:
         )
 
 
+def _reject_rating_outside_wet_finned_surface(
+    hx,
+    *,
+    outside,
+    outside_capability,
+    inside_active: bool,
+    result,
+    settings: PhaseChangeSettings,
+) -> None:
+    """Close the Rating counterpart of the Simulation outside-onset guard.
+
+    ``apply_water_evaporation_simulation``/``apply_water_steam_simulation``
+    evaluate outside onset and route an actually-active outside condensation
+    through ``apply_phase_change``, which calls
+    ``reject_circular_finned_tube_wet_surface`` before any wet-outside solver
+    could run. The dedicated pure-water/steam Rating paths only reject the
+    combined-active case by provider capability and mode, never by actual
+    onset, so a genuinely condensing outside surface on a ``CircularFinnedTube``
+    could otherwise pass through unrejected. This mirrors the Simulation
+    onset check using the same existing onset/guard contracts; when
+    ``inside_active`` is already true the earlier capability+mode check has
+    already raised ``MultiplePhaseChangeSidesError`` for the AUTO case, so
+    this only needs to act on the "outside alone" case.
+    """
+    if inside_active or outside_capability.provider_kind != "gas_mixture":
+        return
+    onset, *_ = evaluate_side_onset(
+        side="outside",
+        mode=outside.phase_change_mode,
+        capability=outside_capability,
+        p=outside.p,
+        thermal_state=result.thermal_state,
+        envelope=result.wall_temperature_envelope,
+        settings=settings,
+    )
+    outside_active = bool(
+        onset is not None
+        and onset.active
+        and outside.phase_change_mode is PhaseChangeMode.AUTO
+    )
+    if outside_active:
+        reject_circular_finned_tube_wet_surface(
+            hx,
+            outside_active=True,
+            context="wet-gas condensation",
+        )
+
+
 def apply_water_evaporation_simulation(
     hx,
     inside,
@@ -281,6 +393,8 @@ def apply_water_evaporation_simulation(
     K_outlet: float,
     K_turn: float,
     euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     max_iter: int,
     temperature_tolerance_K: float,
     relative_duty_tolerance: float,
@@ -302,6 +416,8 @@ def apply_water_evaporation_simulation(
         p_outside=outside.p,
         orientation=hx.bundle.tube.tube_orientation,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     full_solution = solve_water_evaporator(hx, **solve_kwargs)
     solution = full_solution
@@ -368,6 +484,8 @@ def apply_water_evaporation_simulation(
                 result,
                 iterate=True,
                 euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
                 settings=settings,
                 skip_inside_pure_steam_guard=True,
             )
@@ -387,6 +505,8 @@ def apply_water_steam_simulation(
     K_outlet: float,
     K_turn: float,
     euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     max_iter: int,
     temperature_tolerance_K: float,
     relative_duty_tolerance: float,
@@ -406,6 +526,9 @@ def apply_water_steam_simulation(
         T_in_outside=outside.T_in,
         p_outside=outside.p,
         orientation=hx.bundle.tube.tube_orientation,
+        euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     full_solution = solve_steam_heater(hx, **solve_kwargs)
     solution = full_solution
@@ -432,6 +555,8 @@ def apply_water_steam_simulation(
         p=outside.p,
         euler_provider=euler_provider,
         properties_mean=solution.outside_props_mean,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     outside_result = capability_only_result(
         "outside", outside.phase_change_mode, outside_capability
@@ -470,7 +595,11 @@ def apply_water_steam_simulation(
         if outside_active and not steam_result.active:
             wet_result = apply_phase_change(
                 hx, inside, outside, result,
-                iterate=True, euler_provider=euler_provider, settings=settings,
+                iterate=True,
+                euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                finned_pressure_drop_provider=finned_pressure_drop_provider,
+                settings=settings,
                 skip_inside_pure_steam_guard=True,
             )
             return replace(wet_result, inside_phase_change=steam_result)
@@ -489,6 +618,8 @@ def apply_water_steam_rating(
     K_outlet: float,
     K_turn: float,
     euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     include_simulation: bool,
     over_specified_tolerance: float,
     max_iterations: int,
@@ -519,6 +650,9 @@ def apply_water_steam_rating(
         p_outside=outside.p,
         orientation=hx.bundle.tube.tube_orientation,
         Q_total=Q_required,
+        euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     steam_result = _steam_result(solution, mode=inside.phase_change_mode)
     if inside.phase_change_mode is PhaseChangeMode.DISABLED and steam_result.active:
@@ -552,6 +686,8 @@ def apply_water_steam_rating(
         p=outside.p,
         euler_provider=euler_provider,
         properties_mean=solution.outside_props_mean,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     simulation = None
     Q_achievable = None
@@ -567,13 +703,15 @@ def apply_water_steam_rating(
             flow_arrangement=flow_arrangement,
             K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
         )
         Q_achievable = simulation.q
 
     outside_result = capability_only_result(
         "outside", outside.phase_change_mode, outside_capability
     )
-    return _rating_from_solution(
+    result = _rating_from_solution(
         hx,
         inside,
         outside,
@@ -588,6 +726,15 @@ def apply_water_steam_rating(
         inside_is_hot=True,
         two_phase_warning=_two_phase_dp_warning(),
     )
+    _reject_rating_outside_wet_finned_surface(
+        hx,
+        outside=outside,
+        outside_capability=outside_capability,
+        inside_active=steam_result.active,
+        result=result,
+        settings=settings,
+    )
+    return result
 
 
 def apply_water_evaporation_rating(
@@ -602,6 +749,8 @@ def apply_water_evaporation_rating(
     K_outlet: float,
     K_turn: float,
     euler_provider: str,
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     include_simulation: bool,
     over_specified_tolerance: float,
     max_iterations: int,
@@ -635,6 +784,8 @@ def apply_water_evaporation_rating(
         orientation=hx.bundle.tube.tube_orientation,
         Q_total=Q_required,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     water_result = _water_evaporation_result(
         solution,
@@ -681,13 +832,15 @@ def apply_water_evaporation_rating(
             K_outlet=K_outlet,
             K_turn=K_turn,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
         )
         Q_achievable = simulation.q
 
     outside_result = capability_only_result(
         "outside", outside.phase_change_mode, outside_capability
     )
-    return _rating_from_solution(
+    result = _rating_from_solution(
         hx,
         inside,
         outside,
@@ -702,6 +855,15 @@ def apply_water_evaporation_rating(
         inside_is_hot=False,
         two_phase_warning=_water_evaporation_two_phase_dp_warning(),
     )
+    _reject_rating_outside_wet_finned_surface(
+        hx,
+        outside=outside,
+        outside_capability=outside_capability,
+        inside_active=water_result.active,
+        result=result,
+        settings=settings,
+    )
+    return result
 
 
 def _simulation_from_solution(
@@ -891,6 +1053,20 @@ def _water_steam_diagnostics(
     warnings.extend(thermal_state.warnings)
     warnings.extend(envelope.warnings)
     warnings_result = _deduplicate_warnings(warnings)
+    resistance_network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=solution.inside_alpha_equivalent,
+        outside_alpha_physical=outside_evaluation.alpha_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
+    )
+    finned_diagnostics = build_finned_tube_diagnostics(
+        network=resistance_network,
+        thermal=outside_evaluation.outside_dispatch,
+        hydraulic=outside_evaluation.hydraulics,
+        geometry_warnings=tuple(
+            getattr(hx.bundle.tube, "geometry_warnings", ())
+        ),
+    )
     final_result = HXResult(
         A_i=hx.bundle.total_inner_area,
         A_o=hx.bundle.total_outer_area,
@@ -917,6 +1093,7 @@ def _water_steam_diagnostics(
         tube_side_pressure_drop=tube_pressure_drop,
         outside_side_pressure_drop=outside_pressure_drop,
         warnings=warnings_result,
+        finned_tube_diagnostics=finned_diagnostics,
     )
     return final_result, thermal_state, envelope, warnings_result
 
@@ -940,15 +1117,13 @@ def _water_steam_wall_diagnostics(
     """
     tube = hx.bundle.tube
     D_i = float(tube.D_i)
-    D_o = float(tube.D_o)
+    area_ratio = hx.bundle.total_outer_area / hx.bundle.total_inner_area
     T_i_mean = 0.5 * (solution.state_in.T + solution.state_out.T)
     T_o_mean = outside_evaluation.T_mean
 
     def probe(T_i: float, T_o: float) -> WallTemperatureProbe:
         heat_flux = solution.U_equivalent * (T_i - T_o)
-        T_wall_i = T_i - heat_flux * D_o / (
-            D_i * solution.inside_alpha_equivalent
-        )
+        T_wall_i = T_i - heat_flux * area_ratio / solution.inside_alpha_equivalent
         T_wall_o = T_o + heat_flux / solution.outside_alpha
         inside_nusselt = (
             solution.inside_alpha_equivalent * D_i / midpoint.transport.k
@@ -970,6 +1145,8 @@ def _water_steam_wall_diagnostics(
             outside_nusselt=outside_evaluation.nusselt_corrected,
             heat_rate_probe=heat_flux * hx.bundle.total_outer_area,
             residual=0.0,
+            outside_alpha_physical=outside_evaluation.alpha_physical,
+            outside_alpha_effective_gross=outside_evaluation.alpha_effective_gross,
         )
 
     probes = tuple(
@@ -1028,6 +1205,8 @@ def _water_steam_wall_diagnostics(
         converged=solution.converged,
         residual=0.0,
         diagnostics=diagnostics,
+        outside_alpha_physical=outside_evaluation.alpha_physical,
+        outside_alpha_effective_gross=outside_evaluation.alpha_effective_gross,
         inside_provider_name=type(inside.provider).__name__,
         outside_provider_name=type(outside.provider).__name__,
         warnings=(),

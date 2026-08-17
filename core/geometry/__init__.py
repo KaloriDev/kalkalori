@@ -5,7 +5,16 @@
 Geometric definitions for heat exchanger components.
 """
 
-from .tube import BaseTube, BareTube, TubeOrientation
+from .tube import (
+    BaseTube,
+    BareTube,
+    TubeOrientation,
+    TubeSurfaceType,
+)
+from .finned_tube import (
+    CircularFinnedTube,
+    EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD,
+)
 from .bundle import TubeBundle, TubePathType
 
 from .pressure_drop_stages import (
@@ -39,7 +48,10 @@ from .outside_pressure_drop_path import (
 __all__ = [
     "BaseTube",
     "BareTube",
+    "CircularFinnedTube",
     "TubeOrientation",
+    "TubeSurfaceType",
+    "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
     "TubeBundle",
     "TubePathType",
 

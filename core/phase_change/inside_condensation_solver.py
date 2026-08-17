@@ -14,6 +14,7 @@ from core.heat_transfer.thermal_iteration import (
     ThermalIterationDiagnostics,
     _evaluate_local_wall_state,
 )
+from core.heat_transfer.outside_dispatch import DEFAULT_FINNED_HT_PROVIDER
 from core.phase_change import warning_codes as WC
 from core.phase_change.condensation_solver_helpers import (
     condensate_enthalpy_flow,
@@ -99,6 +100,8 @@ def solve_inside_condensation(
     T_out_inside_init: float,
     T_out_outside_init: float,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object | None = None,
     lewis_number: float = 1.0,
     activation_band_K: float = 0.5,
     max_iterations: int = 50,
@@ -172,6 +175,7 @@ def solve_inside_condensation(
             inside_wall_temperature=T_wall_inside_prev,
             outside_wall_temperature=T_wall_outside_prev,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
         )
         warnings.extend(local.warnings)
 

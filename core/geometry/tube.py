@@ -22,6 +22,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import math
+from typing import ClassVar
+
+class TubeSurfaceType(str, Enum):
+    """Outside-surface geometry family used for correlation dispatch."""
+
+    PLAIN = "plain"
+    CIRCULAR_FINNED = "circular_finned"
 
 
 class TubeOrientation(str, Enum):
@@ -48,8 +55,14 @@ class BaseTube:
     - hydraulic_diameter [m]
     - area_inner [m^2] (heat transfer area, effective length)
     - area_outer [m^2] (heat transfer area, effective length)
+    - projected_blocking_area_per_length [m2/m] (outside-flow blockage)
     """
-    pass
+    surface_type: ClassVar[TubeSurfaceType]
+
+    @property
+    def projected_blocking_area_per_length(self) -> float:
+        """Flow-normal blockage per unit axial tube length [m2/m]."""
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -110,7 +123,20 @@ class BareTube(BaseTube):
     roughness_outer: float | None = None
     tube_orientation: TubeOrientation | None = None
 
+    # ClassVar deliberately keeps the historical dataclass constructor,
+    # repr, equality and positional-field order unchanged.
+    surface_type: ClassVar[TubeSurfaceType] = TubeSurfaceType.PLAIN
+
     def __post_init__(self) -> None:
+        for name, value in (
+            ("D_i", self.D_i),
+            ("D_o", self.D_o),
+            ("length_total", self.length_total),
+            ("length_effective", self.length_effective),
+            ("wall_k", self.wall_k),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite.")
         if self.D_i <= 0.0 or self.D_o <= 0.0:
             raise ValueError("Diameters must be positive.")
         if self.D_o <= self.D_i:
@@ -151,6 +177,11 @@ class BareTube(BaseTube):
         return math.pi * self.D_o * self.length_effective
 
     @property
+    def projected_blocking_area_per_length(self) -> float:
+        """Flow-normal blockage per unit axial tube length [m2/m]."""
+        return self.D_o
+
+    @property
     def relative_roughness_inner(self) -> float | None:
         """``roughness_inner / D_i``, or ``None`` if roughness_inner is unset."""
         if self.roughness_inner is None:
@@ -165,12 +196,30 @@ class BareTube(BaseTube):
         return self.roughness_outer / self.D_o
 
 
+# ``CircularFinnedTube`` moved to ``core.geometry.finned_tube``. Keep the
+# experimental import path lazy so both cold import orders remain cycle-free.
+def __getattr__(name: str) -> object:
+    if name in {
+        "CircularFinnedTube",
+        "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
+    }:
+        from core.geometry import finned_tube
+
+        return getattr(finned_tube, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(
+        {
+            *globals(),
+            "CircularFinnedTube",
+            "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
+        }
+    )
+
 def _validate_roughness(value: float | None, name: str) -> None:
     if value is None:
         return
     if not math.isfinite(value) or value < 0.0:
         raise ValueError(f"{name} must be None or a finite, non-negative value.")
-
-
-# TODO class FinnedTube(BaseTube):
-#     ...

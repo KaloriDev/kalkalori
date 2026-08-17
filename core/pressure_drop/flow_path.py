@@ -83,6 +83,9 @@ if TYPE_CHECKING:
     # core.heat_transfer. The tube-bank core stage is built from this
     # result's numeric fields via plain attribute access (duck-typed).
     from core.heat_transfer.outside_flow import OutsideTubeBankHydraulicResult
+    from core.pressure_drop.finned_tube_pressure_drop import (
+        FinnedTubeBankHydraulicResult,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -586,27 +589,40 @@ def build_tube_side_pressure_drop_result(
 # Outside-side aggregation
 # ---------------------------------------------------------------------------
 
-def _tube_bank_core_stage(tube_bank: "OutsideTubeBankHydraulicResult") -> PressureDropStageResult:
+def _tube_bank_core_stage(
+    tube_bank: "OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult",
+) -> PressureDropStageResult:
+    from core.pressure_drop.finned_tube_pressure_drop import (
+        FinnedTubeBankHydraulicResult,
+    )
+
+    is_finned = isinstance(tube_bank, FinnedTubeBankHydraulicResult)
+    metadata = getattr(tube_bank, "metadata", None)
+    finned_method = getattr(metadata, "method", "dedicated_provider")
     return PressureDropStageResult(
         stage_id="tube_bank",
-        stage_type="bare_tube_bank",
+        stage_type="circular_finned_tube_bank" if is_finned else "bare_tube_bank",
         status=PressureDropStageStatus.CALCULATED,
         dp_irreversible=tube_bank.dp_drag,
         delta_dynamic_pressure=tube_bank.dp_acceleration,
-        method="outside_tube_bank_hydraulics",
+        method=(
+            f"finned_tube_bank_hydraulics_{finned_method}"
+            if is_finned
+            else "outside_tube_bank_hydraulics"
+        ),
         warnings=tube_bank.warnings,
     )
 
 
 def build_outside_pressure_drop_result(
-    tube_bank: "OutsideTubeBankHydraulicResult | None",
+    tube_bank: "OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult | None",
     *,
     path: SpecifiedOutsidePressureDropPath | OutsidePressureDropDesignRequest | None = None,
 ) -> PressureDropPathResult:
     """Aggregate the outside-side flow path into a ``PressureDropPathResult``.
 
-    Groups are always, in order: ``inlet``, ``tube_bank`` (the existing
-    calculated bare tube-bank result), ``outlet``.
+    Groups are always, in order: ``inlet``, ``tube_bank`` (the calculated
+    plain- or circular-finned-tube-bank result), ``outlet``.
 
     When ``tube_bank`` is ``None`` (the outside side was not specified for
     this calculation), a NaN-valued result with no groups is returned,
@@ -626,7 +642,7 @@ def build_outside_pressure_drop_result(
             "OutsidePressureDropDesignRequest describes a future "
             "suggested-geometry sizing mode that is not implemented yet. "
             "Supply a SpecifiedOutsidePressureDropPath, or omit the path "
-            "to use the existing bare tube-bank result only."
+            "to use the existing calculated tube-bank result only."
         )
     if path is not None and not isinstance(path, SpecifiedOutsidePressureDropPath):
         raise TypeError(
@@ -833,7 +849,7 @@ def calculate_tube_side_pressure_drop_path(
 
 def calculate_outside_pressure_drop_path(
     *,
-    tube_bank: "OutsideTubeBankHydraulicResult",
+    tube_bank: "OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult",
     path: SpecifiedOutsidePressureDropPath,
     inlet_state: PressureDropFlowState,
     outlet_state: PressureDropFlowState,
@@ -843,8 +859,9 @@ def calculate_outside_pressure_drop_path(
 
     Mirrors ``calculate_tube_side_pressure_drop_path`` for the two-group
     (``inlet``, ``outlet``) outside-side flow path around the existing
-    calculated bare tube-bank core (``dp_core=tube_bank.dp_drag``), with the
-    tube-bank acceleration contribution reported separately.
+    calculated plain or circular-finned tube-bank core
+    (``dp_core=tube_bank.dp_drag``), with the tube-bank acceleration
+    contribution reported separately.
 
     Never invoked by the standard exchanger solver.
     """

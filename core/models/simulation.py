@@ -45,7 +45,8 @@ solve()`` passes. Concretely:
 
     1. ``solve_iterative_thermal_state(...)`` converges the mean bulk
        temperatures, both tube-wall surface temperatures, and the
-       wall/length-corrected ``alfa_i``, ``alfa_o``, ``U``, ``UA``.
+       wall/length-corrected ``alfa_i``, gross-area-effective ``alfa_o``,
+       ``U``, ``UA``.
     2. Achievable duty and outlet temperatures are computed from that
        converged ``UA`` via the existing epsilon-NTU relations
        (``effectiveness_ntu``/``heat_duty_from_effectiveness``) -- reused, not
@@ -132,6 +133,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
+from core.geometry.tube import TubeSurfaceType
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
@@ -155,9 +157,16 @@ from core.pressure_drop.flow_path import (
     build_tube_side_pressure_drop_result,
     build_outside_pressure_drop_result,
 )
-from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    FinnedTubeDiagnostics,
+    evaluate_outside_hydraulics,
+    merge_finned_tube_diagnostics,
+    point_reynolds,
+)
 
-from core.common.warnings import ModelWarning, make_warning
+from core.common.warnings import ModelWarning, deduplicate_warnings, make_warning
 from core.phase_change.types import (
     PhaseChangeMode,
     PhaseChangeResult,
@@ -289,7 +298,9 @@ class HXSimulationResult:
     For the ``iterate=False`` single-pass escape hatch, ``converged`` is True
     and ``iterations`` is 1, ``thermal_state`` is ``None``, and
     ``inside_alfa_mean``/``outside_alfa_mean``/``U_mean``/``UA`` are the plain
-    uncorrected coefficients from that single pass; the reported ``T_mean_*``
+    uncorrected coefficients from that single pass; ``outside_alfa_mean``
+    still uses the generic gross-area-effective outside basis (and therefore
+    equals the physical coefficient for a plain tube). The reported ``T_mean_*``
     are the bulk means of the computed outlet temperatures. Otherwise (the
     default, corrected path), ``inside_alfa_mean``/``outside_alfa_mean``/
     ``U_mean``/``UA`` are read from the converged ``thermal_state`` (wall/
@@ -330,6 +341,8 @@ class HXSimulationResult:
     # For multi-zone pure water/steam this is the resistance-consistent equivalent HTC;
     # for all other models its established semantics are unchanged.
     inside_alfa_mean: float    # == thermal_state.alfa_i when thermal_state is not None
+    # Gross-area effective outside coefficient. It equals the physical film
+    # HTC for a plain tube; physical finned HTC remains in diagnostics.
     outside_alfa_mean: float   # == thermal_state.alfa_o when thermal_state is not None
 
     # Overall performance (of the real, undegraded geometry)
@@ -375,6 +388,26 @@ class HXSimulationResult:
     # wet-gas H2O condensation result, but never both in one call.
     inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
+
+    @property
+    def finned_tube_diagnostics(self) -> FinnedTubeDiagnostics | None:
+        thermal = (
+            None
+            if self.thermal_state is None
+            else self.thermal_state.finned_tube_diagnostics
+        )
+        return merge_finned_tube_diagnostics(
+            thermal,
+            self.final_result.finned_tube_diagnostics,
+        )
+
+    @property
+    def finned_tube(self) -> FinnedTubeDiagnostics | None:
+        return self.finned_tube_diagnostics
+
+    @property
+    def tube_surface_type(self) -> TubeSurfaceType:
+        return self.final_result.tube_surface_type
 
     @property
     def phase_change_active(self) -> bool:
@@ -639,6 +672,8 @@ def run_simulation(
     K_turn: float = 1.5,
     # Outside pressure-drop provider selection:
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     # Convergence controls (defaults per v0.5.x spec; forwarded to
     # solve_iterative_thermal_state as max_iterations/wall_temperature_
     # tolerance_K/relaxation_factor -- same meaning/defaults as
@@ -649,7 +684,10 @@ def run_simulation(
     relaxation_factor: float = 0.5,
     relative_alfa_tolerance: float = 1e-3,
 ) -> HXSimulationResult:
-    """Simulate a bare-tube exchanger. Backing implementation of ``.simulate``.
+    """Simulate a plain- or circular-finned-tube exchanger.
+
+    This is the backing implementation of ``BareTubeHeatExchanger.simulate``;
+    that historical class name is retained for API compatibility.
 
     The default (``iterate=True``, for any property provider) calls
     ``solve_iterative_thermal_state`` to converge the mean-bulk and
@@ -720,6 +758,8 @@ def run_simulation(
             K_turn=K_turn,
             flow_arrangement=flow_arrangement,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
         )
 
         Q_full = result.Q
@@ -773,25 +813,20 @@ def run_simulation(
             result.tube_side_hydraulic,
             tube_bundle=bundle_hydraulic,
         )
-        outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+        outside_bank_hydraulic = evaluate_outside_hydraulics(
+            bundle=hx.bundle,
             m_dot=outside.m_dot,
-            face_area=hx.bundle.frontal_flow_area,
-            tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
-            tube_pitch_transverse=hx.bundle.pitch_transverse,
-            tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-            layout=hx.bundle.layout,
-            n_rows=hx.bundle.n_rows,
-            n_tubes_per_row=hx.bundle.n_tubes_per_row,
-            provider=outside.provider,
+            property_provider=outside.provider,
             temperature_in=outside.T_in,
             temperature_out=T_out_outside_calc,
             pressure=outside.p,
             euler_provider=euler_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
         )
         outside_hydraulic = replace(
             result.outside_side_hydraulic,
             dp_total=outside_bank_hydraulic.dp_total,
-            Re=outside_bank_hydraulic.midpoint.reynolds,
+            Re=point_reynolds(outside_bank_hydraulic.midpoint),
             v=outside_bank_hydraulic.midpoint.face_velocity,
             tube_bank=outside_bank_hydraulic,
         )
@@ -882,6 +917,7 @@ def run_simulation(
             p_inside=inside.p,
             p_outside=outside.p,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
             max_iterations=max_iter,
             wall_temperature_tolerance_K=temperature_tolerance_K,
             relative_alfa_tolerance=relative_alfa_tolerance,
@@ -906,6 +942,7 @@ def run_simulation(
                     severity="warning",
                 )
             )
+        warnings_list = deduplicate_warnings(warnings_list)
 
         return HXSimulationResult(
             converged=converged,
@@ -984,6 +1021,7 @@ def run_simulation(
         p_outside=outside.p,
         flow_arrangement=flow_arrangement,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
         max_iterations=max_iter,
         wall_temperature_tolerance_K=temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance,
@@ -1061,6 +1099,8 @@ def run_simulation(
         K_turn=K_turn,
         flow_arrangement=flow_arrangement,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
     # thermal_state.residual is a single wall-temperature residual [K] shared

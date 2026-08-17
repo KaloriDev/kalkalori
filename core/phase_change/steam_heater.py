@@ -24,14 +24,16 @@ from time import perf_counter
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeOrientation
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
-from core.heat_transfer.outside_flow import outside_flow_from_mass_flow
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    calculate_resistance_network,
+)
+from core.heat_transfer.outside_side import OutsideSideEvaluation, evaluate_outside_side
 from core.heat_transfer.tube_resistance import (
     equivalent_inside_alpha_outer_basis as _equivalent_inside_alpha_outer_basis,
-    fixed_outer_basis_resistances as _fixed_outer_basis_resistances,
-    outer_basis_resistance_components as _outer_basis_resistance_components,
-    overall_u_outer_basis as _overall_u_outer_basis,
 )
-from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
+from core.properties.adapters import to_internal_fluid_props
 from core.properties.common import FluidTransportProperties
 from core.properties.water import (
     WaterSteamPhase,
@@ -68,6 +70,7 @@ class SteamHeaterZoneResult:
     Q: float
     alpha_inside: float
     alpha_outside: float
+    alpha_outside_physical: float
     U: float
     area: float
     UA: float
@@ -104,6 +107,7 @@ class SteamHeaterSolution:
     inside_alpha_equivalent: float
     inside_alpha_area_weighted: float
     outside_alpha: float
+    outside_alpha_physical: float
     outside_props_mean: FluidTransportProperties
     U_equivalent: float
     zones: tuple[SteamHeaterZoneResult, ...]
@@ -165,7 +169,9 @@ class _TrialResult:
     required_area: float
     UA_total: float
     outside_alpha: float
+    outside_alpha_physical: float
     outside_props_mean: FluidTransportProperties
+    outside_evaluation: OutsideSideEvaluation
     mass_flux: float
     warnings: tuple[ModelWarning, ...]
 
@@ -210,6 +216,9 @@ def solve_steam_heater(
     p_outside: float,
     orientation: TubeOrientation | None,
     available_area: float | None = None,
+    euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     max_iterations: int = 80,
     relative_area_tolerance: float = 1.0e-8,
 ) -> SteamHeaterSolution:
@@ -262,6 +271,9 @@ def solve_steam_heater(
             orientation=orientation,
             Q_total=q,
             cache=cache,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
         )
 
     if orientation is None and inlet_state.h > saturation.hf:
@@ -331,6 +343,9 @@ def rate_steam_heater(
     orientation: TubeOrientation | None,
     outlet_state: WaterSteamProperties | None = None,
     Q_total: float | None = None,
+    euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
 ) -> SteamHeaterSolution:
     """Rating: calculate required zone areas for a specified outlet or duty."""
     started = perf_counter()
@@ -364,6 +379,9 @@ def rate_steam_heater(
         orientation=orientation,
         Q_total=Q_total,
         cache=cache,
+        euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     if not math.isfinite(trial.required_area):
         raise ValueError("Specified steam Rating violates a positive zone temperature difference.")
@@ -395,6 +413,9 @@ def _evaluate_duty(
     orientation: TubeOrientation | None,
     Q_total: float,
     cache: _SolveCache,
+    euler_provider: str,
+    finned_heat_transfer_provider: object,
+    finned_pressure_drop_provider: object,
 ) -> _TrialResult:
     h_out = inlet_state.h - Q_total / mass_flow_steam
     boundary_tolerance = max(
@@ -415,29 +436,28 @@ def _evaluate_duty(
     )
     T_mean_outside = 0.5 * (T_in_outside + T_out_outside)
     outside_props = cache.outside_state(T_mean_outside)
-    tube = hx.bundle.tube
-    _, _, _, alpha_outside, _, outside_warnings, _ = outside_flow_from_mass_flow(
-        m_dot=mass_flow_outside,
-        frontal_area=hx.bundle.frontal_flow_area,
-        tube_outer_diameter=float(tube.D_o),
-        tube_pitch_transverse=hx.bundle.pitch_transverse,
-        tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-        layout=hx.bundle.layout,
-        n_rows=hx.bundle.n_rows,
-        n_tubes_per_row=hx.bundle.n_tubes_per_row,
-        props=to_outside_fluid_props(outside_props),
-        calculate_pressure_drop=False,
+    outside = evaluate_outside_side(
+        hx,
+        provider=outside_provider,
+        mass_flow=mass_flow_outside,
+        T_in=T_in_outside,
+        T_out=T_out_outside,
+        p=p_outside,
+        euler_provider=euler_provider,
+        properties_mean=outside_props,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
     zones: list[SteamHeaterZoneResult] = []
-    trial_warnings: list[ModelWarning] = list(outside_warnings)
+    trial_warnings: list[ModelWarning] = list(outside.warnings)
     for spec in _partition_enthalpy(inlet_state.h, h_out, saturation):
         zone = _evaluate_zone(
             hx,
             spec=spec,
             saturation=saturation,
             mass_flow_steam=mass_flow_steam,
-            alpha_outside=alpha_outside,
+            alpha_outside_physical=outside.alpha_physical,
             T_mean_outside=T_mean_outside,
             orientation=orientation,
             cache=cache,
@@ -453,8 +473,10 @@ def _evaluate_duty(
         zones=tuple(zones),
         required_area=required_area,
         UA_total=UA_total,
-        outside_alpha=alpha_outside,
+        outside_alpha=outside.alpha_effective_gross,
+        outside_alpha_physical=outside.alpha_physical,
         outside_props_mean=outside_props,
+        outside_evaluation=outside,
         mass_flux=mass_flow_steam / hx.bundle.internal_flow_area_per_pass,
         warnings=tuple(_deduplicate_warnings(trial_warnings)),
     )
@@ -490,7 +512,7 @@ def _evaluate_zone(
     spec: _ZoneSpec,
     saturation: WaterSteamSaturationProperties,
     mass_flow_steam: float,
-    alpha_outside: float,
+    alpha_outside_physical: float,
     T_mean_outside: float,
     orientation: TubeOrientation | None,
     cache: _SolveCache,
@@ -533,13 +555,13 @@ def _evaluate_zone(
         T_out = cache.steam_state(spec.h_out).T
         warnings.extend(diagnostics.warnings)
 
-    U = _overall_u_outer_basis(
+    network = calculate_resistance_network(
+        bundle=hx.bundle,
         alpha_inside=alpha_inside,
-        alpha_outside=alpha_outside,
-        D_i=float(hx.bundle.tube.D_i),
-        D_o=float(hx.bundle.tube.D_o),
-        wall_k=float(hx.bundle.tube.wall_k),
+        outside_alpha_physical=alpha_outside_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
     )
+    U = network.U_gross_outside
     delta_T = 0.5 * (T_in + T_out) - T_mean_outside
     if delta_T <= 0.0 or not math.isfinite(delta_T):
         area = math.inf
@@ -555,7 +577,8 @@ def _evaluate_zone(
         T_out=T_out,
         Q=Q,
         alpha_inside=alpha_inside,
-        alpha_outside=alpha_outside,
+        alpha_outside=network.outside_alpha_effective_gross,
+        alpha_outside_physical=alpha_outside_physical,
         U=U,
         area=area,
         UA=UA,
@@ -621,12 +644,26 @@ def _build_solution(
         zone.alpha_inside * zone.area for zone in trial.zones
     ) / A_total
     U_equivalent = UA_total / A_total
-    inside_alpha_equivalent = _equivalent_inside_alpha_outer_basis(
-        U_equivalent=U_equivalent,
-        alpha_outside=trial.outside_alpha,
-        D_i=float(hx.bundle.tube.D_i),
-        D_o=float(hx.bundle.tube.D_o),
-        wall_k=float(hx.bundle.tube.wall_k),
+    reference_network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=1.0,
+        outside_alpha_physical=trial.outside_alpha_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
+    )
+    equivalent_inside_resistance = (
+        1.0 / (U_equivalent * hx.bundle.total_outer_area)
+        - hx.tube_wall_resistance()
+        - reference_network.resistance_outside
+    )
+    if (
+        not math.isfinite(equivalent_inside_resistance)
+        or equivalent_inside_resistance <= 0.0
+    ):
+        raise ValueError(
+            "Equivalent steam-side HTC leaves no positive inside resistance."
+        )
+    inside_alpha_equivalent = 1.0 / (
+        equivalent_inside_resistance * hx.bundle.total_inner_area
     )
     warnings = list(trial.warnings)
     warnings.append(
@@ -675,6 +712,7 @@ def _build_solution(
         inside_alpha_equivalent=inside_alpha_equivalent,
         inside_alpha_area_weighted=inside_alpha_area_weighted,
         outside_alpha=trial.outside_alpha,
+        outside_alpha_physical=trial.outside_alpha_physical,
         outside_props_mean=trial.outside_props_mean,
         U_equivalent=U_equivalent,
         zones=trial.zones,

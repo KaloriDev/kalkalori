@@ -21,12 +21,12 @@ from time import perf_counter
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeOrientation
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
-from core.heat_transfer.outside_side import OutsideSideEvaluation, evaluate_outside_side
-from core.heat_transfer.tube_resistance import (
-    equivalent_inside_alpha_outer_basis,
-    fixed_outer_basis_resistances,
-    overall_u_outer_basis,
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+    calculate_resistance_network,
 )
+from core.heat_transfer.outside_side import OutsideSideEvaluation, evaluate_outside_side
 from core.properties.adapters import to_internal_fluid_props
 from core.properties.common import FluidTransportProperties
 from core.properties.water import (
@@ -66,6 +66,7 @@ class WaterEvaporatorZoneResult:
     Q: float
     alpha_inside: float
     alpha_outside: float
+    alpha_outside_physical: float
     U: float
     area: float
     UA: float
@@ -111,6 +112,7 @@ class WaterEvaporatorSolution:
     inside_alpha_equivalent: float
     inside_alpha_area_weighted: float
     outside_alpha: float
+    outside_alpha_physical: float
     outside_props_mean: FluidTransportProperties
     outside_evaluation: OutsideSideEvaluation
     U_equivalent: float
@@ -233,6 +235,8 @@ def solve_water_evaporator(
     orientation: TubeOrientation | None,
     available_area: float | None = None,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     max_iterations: int = 80,
     relative_area_tolerance: float = 1.0e-8,
     heat_flux_max_iterations: int = 80,
@@ -305,6 +309,8 @@ def solve_water_evaporator(
             Q_total=q,
             cache=cache,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
             heat_flux_max_iterations=heat_flux_max_iterations,
             heat_flux_relative_tolerance=heat_flux_relative_tolerance,
         )
@@ -376,6 +382,8 @@ def rate_water_evaporator(
     outlet_state: WaterSteamProperties | None = None,
     Q_total: float | None = None,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     heat_flux_max_iterations: int = 80,
     heat_flux_relative_tolerance: float = 1.0e-8,
 ) -> WaterEvaporatorSolution:
@@ -414,6 +422,8 @@ def rate_water_evaporator(
         Q_total=Q_total,
         cache=cache,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
         heat_flux_max_iterations=heat_flux_max_iterations,
         heat_flux_relative_tolerance=heat_flux_relative_tolerance,
     )
@@ -448,6 +458,8 @@ def _evaluate_duty(
     Q_total: float,
     cache: _SolveCache,
     euler_provider: str,
+    finned_heat_transfer_provider: object,
+    finned_pressure_drop_provider: object,
     heat_flux_max_iterations: int,
     heat_flux_relative_tolerance: float,
 ) -> _TrialResult:
@@ -477,6 +489,8 @@ def _evaluate_duty(
         p=p_outside,
         euler_provider=euler_provider,
         properties_mean=outside_props,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
     zones: list[WaterEvaporatorZoneResult] = []
@@ -487,7 +501,7 @@ def _evaluate_duty(
             spec=spec,
             saturation=saturation,
             mass_flow_water=mass_flow_water,
-            alpha_outside=outside.alpha_corrected,
+            alpha_outside_physical=outside.alpha_physical,
             T_mean_outside=T_mean_outside,
             orientation=orientation,
             cache=cache,
@@ -538,7 +552,7 @@ def _evaluate_zone(
     spec: _ZoneSpec,
     saturation: WaterSteamSaturationProperties,
     mass_flow_water: float,
-    alpha_outside: float,
+    alpha_outside_physical: float,
     T_mean_outside: float,
     orientation: TubeOrientation | None,
     cache: _SolveCache,
@@ -565,7 +579,7 @@ def _evaluate_zone(
         if delta_T <= 0.0 or not math.isfinite(delta_T):
             return _infinite_zone(
                 spec=spec, state_in=state_in, state_out=state_out, Q=Q,
-                alpha_outside=alpha_outside, quality_in=quality_in,
+                alpha_outside=alpha_outside_physical, quality_in=quality_in,
                 quality_out=quality_out,
             )
         (
@@ -584,7 +598,7 @@ def _evaluate_zone(
             quality_in=quality_in,
             quality_out=quality_out,
             orientation=boiling_orientation,
-            alpha_outside=alpha_outside,
+            alpha_outside_physical=alpha_outside_physical,
             delta_T=delta_T,
             Q=Q,
             max_iterations=heat_flux_max_iterations,
@@ -619,19 +633,25 @@ def _evaluate_zone(
         )
         alpha_inside = diagnostics.alfa_corrected
         warnings.extend(diagnostics.warnings)
-        U = overall_u_outer_basis(
+        network = calculate_resistance_network(
+            bundle=hx.bundle,
             alpha_inside=alpha_inside,
-            alpha_outside=alpha_outside,
-            D_i=float(hx.bundle.tube.D_i),
-            D_o=float(hx.bundle.tube.D_o),
-            wall_k=float(hx.bundle.tube.wall_k),
+            outside_alpha_physical=alpha_outside_physical,
+            resistance_core_wall=hx.tube_wall_resistance(),
         )
+        U = network.U_gross_outside
         delta_T = T_mean_outside - 0.5 * (T_in + T_out)
         if delta_T <= 0.0 or not math.isfinite(delta_T):
             area = math.inf
         else:
             area = Q / (U * delta_T)
 
+    network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=alpha_inside,
+        outside_alpha_physical=alpha_outside_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
+    )
     UA = U * area if math.isfinite(area) else math.inf
     return WaterEvaporatorZoneResult(
         kind=spec.kind,
@@ -643,7 +663,8 @@ def _evaluate_zone(
         T_out=T_out,
         Q=Q,
         alpha_inside=alpha_inside,
-        alpha_outside=alpha_outside,
+        alpha_outside=network.outside_alpha_effective_gross,
+        alpha_outside_physical=alpha_outside_physical,
         U=U,
         area=area,
         UA=UA,
@@ -667,7 +688,7 @@ def _solve_boiling_heat_flux(
     quality_in: float,
     quality_out: float,
     orientation: TubeOrientation,
-    alpha_outside: float,
+    alpha_outside_physical: float,
     delta_T: float,
     Q: float,
     max_iterations: int,
@@ -675,15 +696,17 @@ def _solve_boiling_heat_flux(
 ):
     if max_iterations <= 0 or relative_tolerance <= 0.0:
         raise ValueError("Heat-flux iteration controls must be positive.")
-    tube = hx.bundle.tube
-    D_i, D_o, wall_k = float(tube.D_i), float(tube.D_o), float(tube.wall_k)
-    wall_R, outside_R = fixed_outer_basis_resistances(
-        alpha_outside=alpha_outside, D_i=D_i, D_o=D_o, wall_k=wall_k
+    # With an effectively infinite inside film, the topology-aware wall and
+    # dry outside network gives a strict upper bound on inner-area heat flux.
+    # ``A_o/A_i`` reduces to D_o/D_i for the historical plain-tube case.
+    limiting_network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=1.0e15,
+        outside_alpha_physical=alpha_outside_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
     )
-    # With infinite inside HTC, wall+outside resistance gives a strict
-    # physical upper bound on inner-area heat flux. This brackets the
-    # fixed point without freezing an arbitrary engineering q'' value.
-    q_high = delta_T * (D_o / D_i) / (wall_R + outside_R)
+    area_ratio = hx.bundle.total_outer_area / hx.bundle.total_inner_area
+    q_high = delta_T * limiting_network.U_gross_outside * area_ratio
     q_low = max(1e-12, q_high * 1e-12)
     final = None
     converged = False
@@ -702,14 +725,14 @@ def _solve_boiling_heat_flux(
             orientation=orientation,
             saturation=saturation,
         )
-        U = overall_u_outer_basis(
+        network = calculate_resistance_network(
+            bundle=hx.bundle,
             alpha_inside=evaporation.zone_alpha_evaporation,
-            alpha_outside=alpha_outside,
-            D_i=D_i,
-            D_o=D_o,
-            wall_k=wall_k,
+            outside_alpha_physical=alpha_outside_physical,
+            resistance_core_wall=hx.tube_wall_resistance(),
         )
-        target = U * delta_T * D_o / D_i
+        U = network.U_gross_outside
+        target = U * delta_T * area_ratio
         residual = (q_mid - target) / max(q_mid, target)
         final = (evaporation, U, q_mid, target)
         if abs(residual) <= relative_tolerance:
@@ -750,6 +773,7 @@ def _infinite_zone(
         Q=Q,
         alpha_inside=math.inf,
         alpha_outside=alpha_outside,
+        alpha_outside_physical=alpha_outside,
         U=math.inf,
         area=math.inf,
         UA=math.inf,
@@ -829,12 +853,26 @@ def _build_solution(
         zone.alpha_inside * zone.area for zone in trial.zones
     ) / A_total
     U_equivalent = UA_total / A_total
-    alpha_equivalent = equivalent_inside_alpha_outer_basis(
-        U_equivalent=U_equivalent,
-        alpha_outside=trial.outside.alpha_corrected,
-        D_i=float(hx.bundle.tube.D_i),
-        D_o=float(hx.bundle.tube.D_o),
-        wall_k=float(hx.bundle.tube.wall_k),
+    reference_network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=1.0,
+        outside_alpha_physical=trial.outside.alpha_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
+    )
+    equivalent_inside_resistance = (
+        1.0 / (U_equivalent * hx.bundle.total_outer_area)
+        - hx.tube_wall_resistance()
+        - reference_network.resistance_outside
+    )
+    if (
+        not math.isfinite(equivalent_inside_resistance)
+        or equivalent_inside_resistance <= 0.0
+    ):
+        raise ValueError(
+            "Equivalent water-side HTC leaves no positive inside resistance."
+        )
+    alpha_equivalent = 1.0 / (
+        equivalent_inside_resistance * hx.bundle.total_inner_area
     )
     evaporation_zone = zone_map.get(WaterEvaporatorZoneKind.EVAPORATION)
     heat_flux_converged = all(zone.heat_flux_converged for zone in trial.zones)
@@ -896,7 +934,8 @@ def _build_solution(
         zone_U_superheat=value(WaterEvaporatorZoneKind.SUPERHEAT, "U", None),
         inside_alpha_equivalent=alpha_equivalent,
         inside_alpha_area_weighted=alpha_area_weighted,
-        outside_alpha=trial.outside.alpha_corrected,
+        outside_alpha=trial.outside.alpha_effective_gross,
+        outside_alpha_physical=trial.outside.alpha_physical,
         outside_props_mean=trial.outside.properties_mean,
         outside_evaluation=trial.outside,
         U_equivalent=U_equivalent,

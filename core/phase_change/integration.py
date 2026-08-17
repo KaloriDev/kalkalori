@@ -47,6 +47,10 @@ from core.heat_transfer.thermal_iteration import (
     estimate_wall_temperature_envelope,
     solve_iterative_thermal_state,
 )
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_DP_PROVIDER,
+    DEFAULT_FINNED_HT_PROVIDER,
+)
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 from core.properties.averaging import mean_temperature
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
@@ -74,6 +78,9 @@ from core.phase_change.regime import (
     validate_onset_settings,
 )
 from core.phase_change.types import PhaseChangeCapability, PhaseChangeDirection, PhaseChangeMode, PhaseChangeResult
+from core.phase_change.finned_tube_guard import (
+    reject_circular_finned_tube_wet_surface,
+)
 from core.phase_change.water_equilibrium import is_frost_regime, water_dew_point, water_partial_pressure
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
@@ -259,6 +266,8 @@ def apply_phase_change(
     *,
     iterate: bool,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     settings: PhaseChangeSettings | None = None,
     skip_inside_pure_steam_guard: bool = False,
 ):
@@ -319,6 +328,13 @@ def apply_phase_change(
         outside_onset is not None and outside_onset.active and outside.phase_change_mode is PhaseChangeMode.AUTO
     )
 
+    reject_circular_finned_tube_wet_surface(
+        hx,
+        inside_active=inside_auto_possible,
+        outside_active=outside_auto_possible,
+        context="wet-gas condensation",
+    )
+
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=iterate)
 
     if inside_auto_possible:
@@ -342,6 +358,8 @@ def apply_phase_change(
             outside_wall_mean=outside_wall_mean,
             outside_wall_max=outside_wall_max,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
             settings=settings,
         )
 
@@ -797,6 +815,8 @@ def _apply_inside_condensation(
     outside_wall_mean: float | None,
     outside_wall_max: float | None,
     euler_provider: str,
+    finned_heat_transfer_provider: object,
+    finned_pressure_drop_provider: object,
     settings: PhaseChangeSettings,
 ):
     """Apply the active inside wet-gas solution to a dry Simulation result."""
@@ -865,6 +885,8 @@ def _apply_inside_condensation(
             T_out_inside_init=dry_result.T_out_inside,
             T_out_outside_init=dry_result.T_out_outside,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
             lewis_number=settings.lewis_number,
             activation_band_K=settings.activation_band_K,
             max_iterations=settings.max_iterations,
@@ -1081,6 +1103,8 @@ def _apply_inside_condensation(
         outside_pressure=outside.p,
         flow_arrangement=None,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
     from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
@@ -1137,6 +1161,7 @@ def _apply_inside_condensation(
         p_inside=inside.p,
         p_outside=outside.p,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
     )
     wet_thermal_state = IterativeThermalState(
         inside_bulk_temperature=T_mean_inside,
@@ -1155,6 +1180,12 @@ def _apply_inside_condensation(
         converged=solution.converged,
         residual=solution.residuals.get("T_wall_inside_K", math.inf),
         diagnostics=solution.diagnostics,
+        outside_alpha_physical=(
+            solution.alfa_o
+            if final_result.finned_tube_diagnostics is None
+            else final_result.finned_tube_diagnostics.outside_alpha_physical
+        ),
+        outside_alpha_effective_gross=solution.alfa_o,
         inside_provider_name=type(inside_provider_mid).__name__,
         outside_provider_name=type(outside.provider).__name__,
         warnings=solution.warnings,
@@ -1204,10 +1235,11 @@ def raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
         return
     state = getattr(inside, "water_steam_state", None)
     provider_kind = pure_water_provider_kind(inside.provider)
+    T_out_inside = getattr(dry_result, "T_out_inside", None)
+    if T_out_inside is None:
+        closed_balance = getattr(dry_result, "closed_balance", None)
+        T_out_inside = None if closed_balance is None else closed_balance.inside.T_out
     if provider_kind != "iapws97":
-        T_out_inside = getattr(dry_result, "T_out_inside", None)
-        if T_out_inside is None:
-            T_out_inside = dry_result.closed_balance.inside.T_out
         if (
             inside.T_in > T_sat + 1.0e-6
             and T_out_inside <= T_sat + 1.0e-6
@@ -1223,7 +1255,8 @@ def raise_if_inside_pure_steam_condensation(inside, dry_result) -> None:
     if (
         state is not None
         and state.phase is WaterSteamPhase.SUBCOOLED_LIQUID
-        and dry_result.T_out_inside >= T_sat - 1.0e-6
+        and T_out_inside is not None
+        and T_out_inside >= T_sat - 1.0e-6
     ):
         from core.phase_change.steam_heater import SteamEvaporationNotSupportedError
 
