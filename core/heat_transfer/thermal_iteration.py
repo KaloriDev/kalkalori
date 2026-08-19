@@ -258,6 +258,17 @@ class WallTemperatureProbe:
 
     A multi-zone steam probe carries the whole-exchanger equivalent ``alfa_i``;
     it is not a local coefficient for any one phase zone.
+
+    ``outside_wall_temperature`` is the existing outside/core-wall network
+    node (see module docstring): for a :class:`~core.geometry.tube.BareTube`
+    this already *is* the exposed outside surface, but for a
+    :class:`~core.geometry.finned_tube.CircularFinnedTube` it sits upstream
+    of the actually exposed primary/fin metal -- see
+    ``outside_primary_surface_temperature``/``fin_base_temperature``/
+    ``fin_tip_temperature`` below, which are the physically exposed extended-
+    surface temperatures. Those three (and the derived skin extrema) are
+    ``None``/NaN for a bare tube, where the outside wall node already covers
+    the same ground.
     """
 
     inside_bulk_temperature: float
@@ -279,11 +290,26 @@ class WallTemperatureProbe:
     residual: float = math.inf
     outside_alpha_physical: float = math.nan
     outside_alpha_effective_gross: float = math.nan
+    outside_primary_surface_temperature: float | None = None
+    fin_base_temperature: float | None = None
+    fin_tip_temperature: float | None = None
+    fin_tip_temperature_ratio: float | None = None
+    outside_skin_temperature_min: float = math.nan
+    outside_skin_temperature_max: float = math.nan
 
 
 @dataclass(frozen=True)
 class WallTemperatureEnvelope:
-    """Estimated wall-temperature extrema from four independent 0D probes."""
+    """Estimated wall-temperature extrema from four independent 0D probes.
+
+    ``outside_min``/``outside_max`` keep their historical meaning: the
+    extrema of the existing outside/core-wall network node (see
+    :class:`WallTemperatureProbe`). ``outside_skin_min``/``outside_skin_max``
+    are the extrema of the actually exposed outside metal (primary surface,
+    fin base, fin tip for a finned tube; identical to ``outside_min``/
+    ``outside_max`` for a bare tube). ``fin_base_min``/``fin_base_max``/
+    ``fin_tip_min``/``fin_tip_max`` are NaN for a bare tube.
+    """
 
     inside_min: float
     inside_max: float
@@ -294,6 +320,56 @@ class WallTemperatureEnvelope:
     warnings: tuple[ModelWarning, ...] = ()
     inside_mean: float = math.nan
     outside_mean: float = math.nan
+    outside_skin_min: float = math.nan
+    outside_skin_max: float = math.nan
+    fin_base_min: float = math.nan
+    fin_base_max: float = math.nan
+    fin_tip_min: float = math.nan
+    fin_tip_max: float = math.nan
+
+
+def fin_surface_temperatures(
+    *,
+    network: ThermalResistanceNetwork,
+    outside_wall_temperature: float,
+    outside_bulk_temperature: float,
+    heat_rate: float,
+) -> tuple[float, float, float, float, float]:
+    """Return ``(primary_surface, fin_base, fin_tip, skin_min, skin_max)``.
+
+    ``outside_wall_temperature`` is the existing outside/core-wall network
+    node (``T_core``); ``heat_rate`` is the signed total outside heat rate,
+    positive when heat flows from that node toward the outside bulk. Uses
+    the network's declared contact topology (see
+    ``core.heat_transfer.outside_dispatch.calculate_resistance_network``):
+    for a welded fin (``"fin_branch_only"``, ``D_root == D_o``) the exposed
+    primary surface bypasses the fin/contact resistance entirely, while a
+    continuous root layer (``"series_before_primary_and_fin_parallel_branches"``)
+    puts the *whole* outside heat rate through the common root/contact
+    resistance before the primary/fin branches split -- so it is never
+    applied twice. Only valid for a finned (non-``PLAIN``) network.
+    """
+    fin_result = network.fin_efficiency_result
+    if fin_result is None:
+        raise ValueError(
+            "fin_surface_temperatures requires a finned resistance network "
+            "(network.fin_efficiency_result is None for a plain tube)."
+        )
+    T_core = outside_wall_temperature
+    T_bulk = outside_bulk_temperature
+    if network.contact_topology == "fin_branch_only":
+        q_fin = network.conductance_fin_outside * (T_core - T_bulk)
+        primary_surface = T_core
+        fin_base = T_core - q_fin * network.resistance_contact
+    else:
+        R_common = network.resistance_root + network.resistance_contact
+        root_surface = T_core - heat_rate * R_common
+        primary_surface = root_surface
+        fin_base = root_surface
+    fin_tip = T_bulk + fin_result.tip_temperature_ratio * (fin_base - T_bulk)
+    skin_min = min(primary_surface, fin_base, fin_tip)
+    skin_max = max(primary_surface, fin_base, fin_tip)
+    return primary_surface, fin_base, fin_tip, skin_min, skin_max
 
 
 @dataclass(frozen=True)
@@ -317,6 +393,12 @@ class _LocalWallEvaluation:
     resistance_network: ThermalResistanceNetwork
     finned_tube_diagnostics: FinnedTubeDiagnostics | None
     warnings: tuple[ModelWarning, ...]
+    outside_primary_surface_temperature: float | None = None
+    fin_base_temperature: float | None = None
+    fin_tip_temperature: float | None = None
+    fin_tip_temperature_ratio: float | None = None
+    outside_skin_temperature_min: float = math.nan
+    outside_skin_temperature_max: float = math.nan
 
     @property
     def alfa_o(self) -> float:
@@ -414,6 +496,23 @@ def _evaluate_local_wall_state(
         geometry_warnings=geometry_warnings,
     )
 
+    # ``resistance_outside`` is the complete core-wall-to-outside-bulk path.
+    # For a continuous root it includes the common root/contact series terms
+    # as well as the downstream convection branches.
+    outside_wall_temperature_value = (
+        outside_bulk_temperature + heat_rate * network.resistance_outside
+    )
+    primary_surface = fin_base = fin_tip = fin_tip_ratio = None
+    skin_min = skin_max = outside_wall_temperature_value
+    if network.fin_efficiency_result is not None:
+        primary_surface, fin_base, fin_tip, skin_min, skin_max = fin_surface_temperatures(
+            network=network,
+            outside_wall_temperature=outside_wall_temperature_value,
+            outside_bulk_temperature=outside_bulk_temperature,
+            heat_rate=heat_rate,
+        )
+        fin_tip_ratio = network.fin_efficiency_result.tip_temperature_ratio
+
     return _LocalWallEvaluation(
         inside_bulk_props=bulk_i,
         inside_wall_props=wall_i,
@@ -427,18 +526,19 @@ def _evaluate_local_wall_state(
         inside_wall_temperature=(
             inside_bulk_temperature - heat_rate * network.resistance_inside
         ),
-        # ``resistance_outside`` is the complete core-wall-to-outside-bulk
-        # path.  For a continuous root it includes the common root/contact
-        # series terms as well as the downstream convection branches.
-        outside_wall_temperature=(
-            outside_bulk_temperature + heat_rate * network.resistance_outside
-        ),
+        outside_wall_temperature=outside_wall_temperature_value,
         heat_rate=heat_rate,
         internal_diagnostics=internal,
         outside_nusselt_base=Nu_o_base,
         outside_wall_property_correction=outside_dispatch.wall_property_correction,
         outside_dispatch=outside_dispatch,
         resistance_network=network,
+        outside_primary_surface_temperature=primary_surface,
+        fin_base_temperature=fin_base,
+        fin_tip_temperature=fin_tip,
+        fin_tip_temperature_ratio=fin_tip_ratio,
+        outside_skin_temperature_min=skin_min,
+        outside_skin_temperature_max=skin_max,
         finned_tube_diagnostics=finned_diagnostics,
         warnings=tuple(warnings),
     )
@@ -560,6 +660,12 @@ def _solve_wall_temperature_probe(
         residual=residual,
         outside_alpha_physical=final.alfa_o_physical,
         outside_alpha_effective_gross=final.alfa_o_effective_gross,
+        outside_primary_surface_temperature=final.outside_primary_surface_temperature,
+        fin_base_temperature=final.fin_base_temperature,
+        fin_tip_temperature=final.fin_tip_temperature,
+        fin_tip_temperature_ratio=final.fin_tip_temperature_ratio,
+        outside_skin_temperature_min=final.outside_skin_temperature_min,
+        outside_skin_temperature_max=final.outside_skin_temperature_max,
     )
 
 
@@ -646,6 +752,10 @@ def estimate_wall_temperature_envelope(
     inside_max = max((p.inside_wall_temperature for p in valid), default=math.nan)
     outside_min = min((p.outside_wall_temperature for p in valid), default=math.nan)
     outside_max = max((p.outside_wall_temperature for p in valid), default=math.nan)
+    outside_skin_min = min((p.outside_skin_temperature_min for p in valid), default=math.nan)
+    outside_skin_max = max((p.outside_skin_temperature_max for p in valid), default=math.nan)
+    fin_base_values = [p.fin_base_temperature for p in valid if p.fin_base_temperature is not None]
+    fin_tip_values = [p.fin_tip_temperature for p in valid if p.fin_tip_temperature is not None]
     return WallTemperatureEnvelope(
         inside_min=inside_min,
         inside_max=inside_max,
@@ -655,6 +765,12 @@ def estimate_wall_temperature_envelope(
         warnings=tuple(warnings),
         inside_mean=0.5 * (inside_min + inside_max),
         outside_mean=0.5 * (outside_min + outside_max),
+        outside_skin_min=outside_skin_min,
+        outside_skin_max=outside_skin_max,
+        fin_base_min=min(fin_base_values, default=math.nan),
+        fin_base_max=max(fin_base_values, default=math.nan),
+        fin_tip_min=min(fin_tip_values, default=math.nan),
+        fin_tip_max=max(fin_tip_values, default=math.nan),
     )
 
 

@@ -22,6 +22,7 @@ from core.heat_transfer.thermal_iteration import (
     ThermalIterationDiagnostics,
     WallTemperatureEnvelope,
     WallTemperatureProbe,
+    fin_surface_temperatures,
 )
 from core.models.bare_tube import (
     HXOutSideHydraulicResults,
@@ -1067,6 +1068,12 @@ def _water_steam_diagnostics(
     if active:
         warnings.append(two_phase_warning)
 
+    resistance_network = calculate_resistance_network(
+        bundle=hx.bundle,
+        alpha_inside=solution.inside_alpha_equivalent,
+        outside_alpha_physical=outside_evaluation.alpha_physical,
+        resistance_core_wall=hx.tube_wall_resistance(),
+    )
     thermal_state, envelope = _water_steam_wall_diagnostics(
         hx,
         inside,
@@ -1074,18 +1081,13 @@ def _water_steam_diagnostics(
         solution,
         midpoint=midpoint,
         outside_evaluation=outside_evaluation,
+        resistance_network=resistance_network,
         UA=UA,
         active=active,
     )
     warnings.extend(thermal_state.warnings)
     warnings.extend(envelope.warnings)
     warnings_result = _deduplicate_warnings(warnings)
-    resistance_network = calculate_resistance_network(
-        bundle=hx.bundle,
-        alpha_inside=solution.inside_alpha_equivalent,
-        outside_alpha_physical=outside_evaluation.alpha_physical,
-        resistance_core_wall=hx.tube_wall_resistance(),
-    )
     finned_diagnostics = build_finned_tube_diagnostics(
         network=resistance_network,
         thermal=outside_evaluation.outside_dispatch,
@@ -1133,6 +1135,7 @@ def _water_steam_wall_diagnostics(
     *,
     midpoint,
     outside_evaluation: OutsideSideEvaluation,
+    resistance_network,
     UA: float,
     active: bool,
 ):
@@ -1141,22 +1144,39 @@ def _water_steam_wall_diagnostics(
     A reported inside Nusselt number, when representative transport exists,
     is only the dimensionless form of that equivalent HTC. It is not a local
     Shah value or the Nusselt number of any individual steam zone.
+
+    ``resistance_network`` is the same whole-exchanger equivalent-HTC network
+    also used for ``finned_tube_diagnostics``; its declared contact topology
+    drives the fin-surface temperatures at each probe (see
+    ``core.heat_transfer.thermal_iteration.fin_surface_temperatures``).
     """
     tube = hx.bundle.tube
     D_i = float(tube.D_i)
     area_ratio = hx.bundle.total_outer_area / hx.bundle.total_inner_area
     T_i_mean = 0.5 * (solution.state_in.T + solution.state_out.T)
     T_o_mean = outside_evaluation.T_mean
+    is_finned = resistance_network.fin_efficiency_result is not None
 
     def probe(T_i: float, T_o: float) -> WallTemperatureProbe:
         heat_flux = solution.U_equivalent * (T_i - T_o)
         T_wall_i = T_i - heat_flux * area_ratio / solution.inside_alpha_equivalent
         T_wall_o = T_o + heat_flux / solution.outside_alpha
+        heat_rate_probe = heat_flux * hx.bundle.total_outer_area
         inside_nusselt = (
             solution.inside_alpha_equivalent * D_i / midpoint.transport.k
             if midpoint.transport is not None
             else None
         )
+        primary_surface = fin_base = fin_tip = fin_tip_ratio = None
+        skin_min = skin_max = T_wall_o
+        if is_finned:
+            primary_surface, fin_base, fin_tip, skin_min, skin_max = fin_surface_temperatures(
+                network=resistance_network,
+                outside_wall_temperature=T_wall_o,
+                outside_bulk_temperature=T_o,
+                heat_rate=heat_rate_probe,
+            )
+            fin_tip_ratio = resistance_network.fin_efficiency_result.tip_temperature_ratio
         return WallTemperatureProbe(
             inside_bulk_temperature=T_i,
             outside_bulk_temperature=T_o,
@@ -1170,10 +1190,16 @@ def _water_steam_wall_diagnostics(
             outside_bulk_props=outside_evaluation.properties_mean,
             inside_nusselt=inside_nusselt,
             outside_nusselt=outside_evaluation.nusselt_corrected,
-            heat_rate_probe=heat_flux * hx.bundle.total_outer_area,
+            heat_rate_probe=heat_rate_probe,
             residual=0.0,
             outside_alpha_physical=outside_evaluation.alpha_physical,
             outside_alpha_effective_gross=outside_evaluation.alpha_effective_gross,
+            outside_primary_surface_temperature=primary_surface,
+            fin_base_temperature=fin_base,
+            fin_tip_temperature=fin_tip,
+            fin_tip_temperature_ratio=fin_tip_ratio,
+            outside_skin_temperature_min=skin_min,
+            outside_skin_temperature_max=skin_max,
         )
 
     probes = tuple(
@@ -1191,6 +1217,8 @@ def _water_steam_wall_diagnostics(
         source="thermal_iteration",
         severity="info",
     )
+    fin_base_values = [p.fin_base_temperature for p in probes if p.fin_base_temperature is not None]
+    fin_tip_values = [p.fin_tip_temperature for p in probes if p.fin_tip_temperature is not None]
     envelope = WallTemperatureEnvelope(
         inside_min=min(item.inside_wall_temperature for item in probes),
         inside_max=max(item.inside_wall_temperature for item in probes),
@@ -1200,6 +1228,12 @@ def _water_steam_wall_diagnostics(
         warnings=(envelope_warning,),
         inside_mean=probe(T_i_mean, T_o_mean).inside_wall_temperature,
         outside_mean=probe(T_i_mean, T_o_mean).outside_wall_temperature,
+        outside_skin_min=min(item.outside_skin_temperature_min for item in probes),
+        outside_skin_max=max(item.outside_skin_temperature_max for item in probes),
+        fin_base_min=min(fin_base_values, default=math.nan),
+        fin_base_max=max(fin_base_values, default=math.nan),
+        fin_tip_min=min(fin_tip_values, default=math.nan),
+        fin_tip_max=max(fin_tip_values, default=math.nan),
     )
     mean_probe = probe(T_i_mean, T_o_mean)
     inside_nusselt = mean_probe.inside_nusselt

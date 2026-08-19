@@ -244,11 +244,49 @@ class HXRatingResult:
 
     @property
     def outside_wall_temperature_min_estimate(self) -> float:
+        """The existing outside/core-wall network node (see
+        ``core.heat_transfer.thermal_iteration.WallTemperatureProbe``); for a
+        bare tube this already is the exposed skin, but for a circular
+        finned tube it is *not* the minimum fin/skin metal temperature --
+        use ``outside_skin_temperature_min_estimate`` for that."""
         return self.wall_temperature_envelope.outside_min
 
     @property
     def outside_wall_temperature_max_estimate(self) -> float:
         return self.wall_temperature_envelope.outside_max
+
+    @property
+    def outside_skin_temperature_min_estimate(self) -> float:
+        """Minimum actually-exposed outside metal temperature (primary
+        surface / fin base / fin tip for a finned tube; identical to
+        ``outside_wall_temperature_min_estimate`` for a bare tube)."""
+        return self.wall_temperature_envelope.outside_skin_min
+
+    @property
+    def outside_skin_temperature_max_estimate(self) -> float:
+        return self.wall_temperature_envelope.outside_skin_max
+
+    @property
+    def fin_base_temperature_min_estimate(self) -> float | None:
+        """``None`` for a bare tube (no fin base exists)."""
+        value = self.wall_temperature_envelope.fin_base_min
+        return None if math.isnan(value) else value
+
+    @property
+    def fin_base_temperature_max_estimate(self) -> float | None:
+        value = self.wall_temperature_envelope.fin_base_max
+        return None if math.isnan(value) else value
+
+    @property
+    def fin_tip_temperature_min_estimate(self) -> float | None:
+        """``None`` for a bare tube (no fin tip exists)."""
+        value = self.wall_temperature_envelope.fin_tip_min
+        return None if math.isnan(value) else value
+
+    @property
+    def fin_tip_temperature_max_estimate(self) -> float | None:
+        value = self.wall_temperature_envelope.fin_tip_max
+        return None if math.isnan(value) else value
 
     @property
     def tube_side_hydraulic(self):
