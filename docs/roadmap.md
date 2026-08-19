@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.1`
+**Current version:** `v0.7.2`
 **Model level:** MVP_0D  
 **Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
 and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
@@ -47,58 +47,6 @@ return losses remain future work.
 
 ---
 
-### v0.6.x — Phase Change (0D)
-
-**Goal:**
-Support phase-change phenomena within a lumped-parameter framework.
-
-**Notes:**
-This is a major functional extension, but **not** a new modelling paradigm.
-The line is closed at `v0.6.3`.
-
-#### v0.6.0 — Outside wet-gas water condensation — IMPLEMENTED
-
-- Partial H2O condensation from a water-containing gas outside bare tubes.
-- Automatic outside condensation detection and partial wet-surface handling.
-
-#### v0.6.1 — Inside wet-gas water condensation — IMPLEMENTED
-
-- Partial H2O condensation from wet gas inside bare tubes.
-- Automatic inside condensation detection.
-- Inside wet-surface estimation.
-- Wet-wall-temperature heat and mass transfer.
-- Gas composition and gas-phase mass-flow update.
-- Gas-phase hydraulic-state update.
-- One active phase-changing side per call.
-
-#### v0.6.2 — Pure water/steam cooling and condensation inside tubes — IMPLEMENTED / ready for validation
-
-- Superheated-steam desuperheating.
-- Saturated-steam condensation.
-- Two-phase steam/condensate inlet with vapor quality `0 < x < 1`.
-- Partial and complete condensation.
-- Saturated-liquid state handling.
-- Optional condensate subcooling.
-- Automatic allocation of surface between vapor, condensation and liquid zones.
-- Gravity-aware Shah (2009) condensation at low, medium and high mass flux.
-- Shared Simulation/Rating zone physics with final pressure/enthalpy endpoint states.
-- Pure-steam condensation outside tubes is outside planned scope.
-
-#### v0.6.3 — Pure-water heating and evaporation inside tubes — IMPLEMENTED / ready for validation
-
-- Subcooled-liquid preheating to saturated liquid.
-- Partial and complete pure-water evaporation inside bare tubes.
-- Wet pure-water/steam inlets with increasing vapor quality.
-- Optional superheating after complete evaporation.
-- Shah (1982) saturated flow boiling with self-consistent heat flux.
-- Shared Simulation/Rating p-h zone physics and final IAPWS endpoint states.
-- One active phase-changing side and explicit unsupported two-phase pressure
-  drop status.
-
-**Deferred without an assigned release:** evaporation of liquid water carried
-by a gas. Droplets, mist, wall films and other explicit dispersed-liquid
-inventories require a separate interphase-transfer and liquid-inventory
-model; they are not part of v0.6.3.
 
 ### Deferred and unassigned work
 
@@ -151,46 +99,6 @@ selection remain outside the solver's scope.
 
 **Outside planned scope:** pure-steam condensation outside tubes.
 
----
-
-### v0.7.0 — Dry Circular Finned Tubes — RELEASE CANDIDATE — PENDING INDEPENDENT REFERENCE VALIDATION
-
-**Delivered scope:**
-
-- circular annular fins with constant thickness or linear taper;
-- welded (`D_root == D_o`) and continuous-root (`D_root > D_o`) topology,
-  fin conductivity, and explicit or ideal contact resistance;
-- dry outside forced convection using Briggs--Young within its declared
-  applicability, plus verified-scope finned-bank pressure loss;
-- public `solve`, Simulation and Rating workflows, including the established
-  inside-side phase-change models when the finned outside surface remains dry.
-
-**Explicitly excluded:** wet/condensing finned outside surfaces, frost/ice,
-condensate retention, serrated or longitudinal fins, non-circular finned
-geometries, and unsupported tube-bank layouts or correlation extrapolation.
-
----
-
-### v0.7.1 — Rating-derived steam mass flow — RELEASE CANDIDATE / pending validation
-
-**Delivered scope:**
-
-- for a tube-side pure water/steam Rating, ``inside.m_dot`` may be left
-  unknown; the required steam mass flow is then derived from an
-  independently known total duty (explicit `Q`, or a fully specified
-  opposing-side temperature program) and the requested steam outlet target;
-- the steam outlet target defaults to saturated liquid (`quality_out=0.0`)
-  when unknown mass flow is combined with no explicit outlet state;
-- explicit `quality_out`/`h_out`/`T_out` targets take precedence over the
-  default and share the existing IAPWS outlet-state machinery;
-- unaffected: known-steam-mass-flow Rating, Simulation, and every v0.6.x/
-  v0.7.0 physical model (contact/root topology, physical/effective outside
-  alpha, Briggs--Young, Robinson--Briggs, the constant-fin and tapered-fin
-  solvers, and the multi-zone phase-change solvers).
-
-**Explicitly excluded:** simultaneously unknown inside and outside mass
-flow, derived unknown mass flow for water evaporation (inside heating), and
-effectiveness-only steam Rating targets.
 
 ---
 
@@ -216,6 +124,57 @@ This stage explicitly anticipates **commercial extensions** based on
 manufacturer data and experimental correlations.
 
 ---
+## v0.9.x — Supercritical CO₂
+
+Initial support for **supercritical CO₂ (sCO₂) inside smooth circular tubes**.
+
+The first implementation will focus on establishing the thermodynamic and model infrastructure required for future high-accuracy segmented calculations, while providing a limited 0D calculation capability for operating conditions sufficiently far from the pseudocritical region.
+
+### Scope
+
+* pure CO₂ on the tube side
+* smooth circular tubes
+* supercritical single-phase operation
+* heating and cooling
+* CoolProp/HEOS as the default open property backend
+* generic thermodynamic property-provider interface supporting both integrated and external providers
+* optional compatibility with REFPROP or other proprietary/external property providers
+* thermodynamic state evaluation using both `T-p` and `p-h` inputs
+* energy balance based on enthalpy rather than constant or mean heat capacity
+* representative 0D state based on mean pressure and enthalpy
+* conventional smooth-tube turbulent heat-transfer correlation as a baseline model
+* supercritical-state detection
+* detection of pseudocritical-region crossing and excessive property variation
+* applicability warnings where the 0D approximation is not considered reliable
+
+### Limitations of the 0D implementation
+
+The 0D model will not attempt to accurately represent heat transfer where strong variations of density, heat capacity, viscosity or thermal conductivity occur across the exchanger.
+
+Cases with significant pseudocritical effects should return an applicability warning such as:
+
+`SCO2_SEGMENTATION_REQUIRED`
+
+rather than extrapolating the standard smooth-tube correlation outside its reliable range.
+
+### Deferred to segmented calculation
+
+Advanced sCO₂ modelling will be implemented together with the segmented heat-exchanger solver, including:
+
+* local `p-h` state tracking
+* local thermophysical properties
+* wall-temperature-dependent properties
+* dedicated supercritical heat-transfer correlations
+* Krasnoshchekov–Protopopov-type models
+* Jackson-type models
+* buoyancy effects
+* flow-acceleration effects
+* acceleration pressure drop
+* adaptive segmentation through the pseudocritical region
+* validation against published experimental sCO₂ heat-transfer datasets
+
+---
+
 
 ## v1.0.0 — Production-Ready 0D Engine
 

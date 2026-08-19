@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [0.7.x]
 
 ### Added
 
@@ -29,6 +29,13 @@ The project follows **Semantic Versioning (SemVer)**:
   Simulation/Rating properties. Reporting-only; no fin efficiency, contact
   topology, or thermal-result change. See
   `docs/steam_heater_zone_driving_force.md`.
+- Added a practical dimensionless ``fin_contact_efficiency`` fin/root contact
+  input (``0 < value <= 1``) on ``CircularFinnedTube``, alongside the
+  existing physically explicit ``fin_contact_resistance``. Precedence is
+  explicit resistance (even ``0.0``) over efficiency over the ideal-contact
+  default; the equivalent areal resistance implied by an efficiency is
+  resolved per operating point, not fixed at geometry-construction time. See
+  `docs/finned_tube_model.md`.
 
 ### Changed
 
@@ -51,6 +58,19 @@ The project follows **Semantic Versioning (SemVer)**:
   efficiency, contact topology, alpha semantics, pressure drop, and the
   derived steam-mass-flow Rating path are unchanged. See
   `docs/steam_heater_zone_driving_force.md`.
+- Simplified ordinary finned-tube example/validation configuration to set
+  ``fin_contact_efficiency = 1.0`` (ideal contact) instead of an areal
+  ``fin_contact_resistance``; the advanced physical input remains fully
+  supported and is still used by cases with deliberate non-ideal contact.
+  Removed the old diagnostic warning that fired merely because
+  ``fin_contact_resistance`` was left unspecified, since ideal contact is
+  now the documented default. ``FinnedTubeDiagnostics``/
+  ``ThermalResistanceNetwork`` gained ``contact_input_mode``,
+  ``fin_contact_efficiency_input``/``_effective`` and
+  ``contact_resistance_equivalent_areal``; ``contact_resistance_used`` now
+  reports the network's resolved areal equivalent instead of only mirroring
+  an unset explicit resistance. Explicit ``fin_contact_resistance`` numerics
+  are unchanged.
 
 ---
 

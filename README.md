@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.1)
+## Current Capabilities (v0.7.2)
 
 - Rating can derive the required tube-side pure-steam mass flow from an
   independently known duty (explicit `Q`, or a fully specified opposing-side
@@ -63,7 +63,9 @@ and serialization**, enabling both open collaboration and commercial adoption.
 - Bare tube heat exchangers
 - Dry circular-finned-tube exchangers. `CircularFinnedTube` composes a
   `BareTube` core and supports constant or linearly tapered annular fins,
-  welded or continuous-root construction, explicit/ideal fin contact,
+  welded or continuous-root construction, ideal contact by default, and
+  either a practical dimensionless `fin_contact_efficiency` or the advanced
+  physical `fin_contact_resistance` for non-ideal fin/root contact,
   Briggs--Young dry outside heat transfer, verified-scope Robinson--Briggs
   pressure loss, Simulation, Rating, and the established inside-side phase
   change paths when the finned outside surface remains dry. See

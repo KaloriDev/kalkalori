@@ -1,9 +1,13 @@
-# Circular-Finned-Tube Model (v0.7.0)
+# Circular-Finned-Tube Model (v0.7.0; fin/root contact input extended in v0.7.2)
 
 This document describes the v0.7.0 release-candidate dry
 circular-finned-tube model pending independent reference validation.
 It is a 0D engineering model with explicitly declared geometry and
-correlation boundaries.
+correlation boundaries. v0.7.2 adds a practical dimensionless
+`fin_contact_efficiency` alternative to the explicit `fin_contact_resistance`
+input; see [Fin/root contact input](#finroot-contact-input) below. It is not
+a new correlation and does not change the fin-efficiency, root-conduction,
+Briggs--Young or Robinson--Briggs physics described here.
 
 ## Scope
 
@@ -36,7 +40,11 @@ keeps one source of truth for core-tube validation and tube-side hydraulics.
 The additional SI inputs are:
 
 - `fin_k` [W/(m K)];
-- `fin_contact_resistance` [m2 K/W] or `None`;
+- `fin_contact_resistance` [m2 K/W] or `None` -- advanced, physically
+  explicit areal contact resistance;
+- `fin_contact_efficiency`, dimensionless, `0 < value <= 1`, or `None` --
+  practical contact-conductance-degradation input added in v0.7.2; see
+  [Fin/root contact input](#finroot-contact-input);
 - `D_fin`, `D_root` [m];
 - `fin_thickness_root`, optional `fin_thickness_tip` [m];
 - `fin_pitch` [m], centre-to-centre in the axial direction;
@@ -187,10 +195,144 @@ U_out,gross = UA/A_out,gross
 ```
 
 This is an explicit 0D equivalent network, not a detailed joint-mechanics
-model. `fin_contact_resistance=0.0` means known ideal contact; `None` uses
-zero but produces a warning that data were not supplied.
+model. `R_contact''` above is the *resolved* areal contact resistance,
+produced by the precedence rule in
+[Fin/root contact input](#finroot-contact-input): an explicit
+`fin_contact_resistance` (even `0.0`, meaning known ideal contact) is used
+directly; otherwise a supplied `fin_contact_efficiency` is converted to an
+equivalent `R_contact''` at the current operating point; otherwise (both
+omitted) `R_contact''=0` with no diagnostic warning -- ideal contact is the
+documented default, not an unspecified/uncertain state.
 
 Fin efficiency and contact resistance are each applied exactly once.
+
+## Fin/root contact input
+
+v0.7.2 adds a practical, dimensionless alternative to the existing
+physically explicit `fin_contact_resistance`. Both inputs describe the same
+additional fin/root contact loss; they are mutually exclusive in physics,
+but the constructor accepts both fields and resolves one authoritative
+value by precedence.
+
+### Two input styles
+
+- **`fin_contact_resistance`** [m2 K/W] -- the advanced, physically explicit
+  areal interface resistance from [Periodic areas and volume](#periodic-areas-and-volume)
+  onward. It is a material/interface property supplied directly by the
+  caller and is used exactly as before.
+- **`fin_contact_efficiency`** -- dimensionless, `0 < value <= 1`, added in
+  v0.7.2 for callers who cannot estimate an areal resistance. `1.0` is ideal
+  contact; `0.95`/`0.80` mean 95%/80% contact efficiency. Percent notation
+  (`95`) is rejected, not silently divided by 100. It is defined as
+
+  ```text
+  eta_contact = G_actual / G_ideal
+  ```
+
+  the conductance of the contact-affected path *with* contact loss, divided
+  by the conductance of the same path with ideal contact, at the current
+  operating point. `eta_contact` is **not** `eta_fin` and **not**
+  `eta_overall`; it is a separate, additional thermal loss applied on top of
+  fin efficiency, never multiplied into it.
+
+### Precedence
+
+```text
+explicit fin_contact_resistance (even 0.0)
+    > fin_contact_efficiency
+    > ideal-contact default (R_contact'' = 0)
+```
+
+`None` on either field is an input-selection sentinel, not a declaration of
+uncertainty. Leaving both `None` selects the documented ideal-contact
+default without a diagnostic warning -- the pre-v0.7.2 behaviour of warning
+whenever `fin_contact_resistance` was unset has been removed, because ideal
+contact is now the normal, documented default rather than an unspecified
+state. Supplying both fields together does not raise a warning either: the
+resolution is deterministic (explicit resistance wins), and one `info`-level
+diagnostic (`circular_finned_tube_contact_efficiency_ignored`) records that
+`fin_contact_efficiency` was ignored.
+
+### Converting efficiency to an equivalent resistance
+
+Unlike `fin_contact_resistance`, `fin_contact_efficiency` is **not**
+converted into one fixed `R_contact''` at geometry-construction time. The
+equivalent resistance it implies depends on the ideal (contact-free)
+conductance of the contact-affected path at the current operating point --
+`h_o`, `eta_fin`, the relevant areas and, for a continuous root layer, root
+conduction -- so it is resolved only inside the resistance-network
+calculation, after those quantities are known:
+
+- welded fin (`D_root=D_o`, only the fin branch is contact-affected):
+
+  ```text
+  G_fin,ideal      = h_o eta_fin A_fin
+  R_contact,equiv  = (1/eta_contact - 1) / G_fin,ideal
+  ```
+
+- continuous root layer (`D_root>D_o`, the whole downstream path is
+  contact-affected):
+
+  ```text
+  R_branches,ideal = 1/[h_o (A_primary + eta_fin A_fin)]
+  R_path,ideal     = R_root + R_branches,ideal
+  R_contact,equiv  = (1/eta_contact - 1) R_path,ideal
+  ```
+
+`eta_contact=1` gives `R_contact,equiv=0` exactly in both cases. The
+resulting `R_contact,equiv` is then folded into `R_contact''` above exactly
+like an explicit resistance would be -- welded fins penalise only the fin
+branch, a continuous root layer treats it as a common series term. Because
+`R_contact,equiv` depends on the operating point, its areal equivalent
+(`contact_resistance_equivalent_areal` in the diagnostics below) must not be
+read as a fixed material constant the way an explicit `fin_contact_resistance`
+is; it is a resolved value for the current `h_o`/`eta_fin`/geometry, not an
+interface property that transfers unchanged to a different operating point
+or a different tube.
+
+### Diagnostics
+
+`ThermalResistanceNetwork` and `FinnedTubeDiagnostics` expose:
+
+- `contact_input_mode`: `"ideal_default"`, `"explicit_resistance"` or
+  `"contact_efficiency"`.
+- `fin_contact_efficiency_input`: the caller-declared efficiency, or `None`.
+- `fin_contact_efficiency_effective`: the actual conductance ratio implied
+  by the resolved network (`1.0` for ideal contact; reproduces
+  `fin_contact_efficiency_input` to numerical tolerance in efficiency mode;
+  computed from the actual resistance in explicit-resistance mode).
+- `contact_resistance_equivalent_areal`: the resolved areal equivalent
+  [m2 K/W] -- the exact supplied value in explicit-resistance mode, the
+  operating-point equivalent above in efficiency mode, `0.0` for the ideal
+  default.
+- `resistance_contact`: unchanged in meaning -- the actual absolute [K/W]
+  contact resistance used by the network.
+- `contact_resistance_used`: now reports the network's resolved areal
+  equivalent (identical to `contact_resistance_equivalent_areal`) rather
+  than only mirroring an unset explicit resistance, so it is never
+  misleading in efficiency mode; explicit-resistance cases keep the same
+  numeric value as before v0.7.2.
+
+### Practical guidance for fin/tube contact
+
+KalKalori does **not** choose a contact resistance or efficiency from
+material name, fin type, manufacturing method or temperature; the ideal
+default remains `fin_contact_efficiency=1.0`. The table below is published
+engineering guidance for a caller deciding what to enter -- not a predictive
+model and not applied automatically.
+
+| Source | Reported quantity | Approx. range | Context |
+|---|---|---|---|
+| Caruso, Giannetti & Naviglio (2014), *Heat Transfer Engineering* 36(2), 212--221, DOI: 10.1080/01457632.2014.909224 | Thermal contact conductance `h_c`; reciprocal `R''=1/h_c` | `h_c` approx. 3500--11000 W/(m2 K), i.e. `R''` approx. 9.1e-5--2.9e-4 m2 K/W (larger `h_c` gives smaller `R''`) | Mechanically bound annular finned tubes; the same study reports contact resistance contributing roughly 30--50% of total air-side resistance *for their tubes* -- a study-specific observation, not a generic design recommendation |
+| Jeong, Kim, Youn & Kim (2004), *Int. J. Heat and Fluid Flow* 25(6), 1006--1014, DOI: 10.1016/j.ijheatfluidflow.2004.03.005 | Correlation between thermal contact conductance and joint factors | Not reduced to one scalar here | Tube expansion ratio, fin type, fin spacing and fin coating are all reported to materially affect contact conductance |
+| Jeong, Kim & Youn (2005), *Int. J. Heat and Mass Transfer* 49(7--8), 1547--1555, DOI: 10.1016/j.ijheatmasstransfer.2005.10.042 | Thermal contact conductance, 7 mm tube | Not reduced to one scalar here | Further evidence that fin type and tube manufacturing method shift contact conductance; supports treating contact resistance as geometry/process-dependent rather than a universal constant |
+| Cheng & Madhusudana (2006), *Applied Thermal Engineering* 26(17--18), 2119--2131, DOI: 10.1016/j.applthermaleng.2006.04.016 | Effect of electroplating on fin-tube interface conductance | Qualitative only | Interface treatment/plating and interstitial medium affect contact conductance |
+
+These are reported scalar ranges and qualitative conclusions from the cited
+studies, not a universal recommended default and not proprietary/vendor
+data. Use project-specific engineering judgement, or the explicit
+`fin_contact_resistance` input with a project-derived value, when ideal
+contact is not an adequate assumption.
 
 ## Physical film HTC vs effective gross-area HTC vs overall U
 
