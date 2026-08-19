@@ -27,8 +27,8 @@ inlet/outlet outside temperatures, shared unchanged across all three zones.
 For a condensing zone at high pressure this collapses toward the difference
 between the (isothermal) saturation temperature and the whole-exchanger mean
 outside temperature — for a representative 17 bara steam/air case this
-produces an EMTD around 71–72 K, well above what a zone-resolved
-counterflow-consistent driving force gives for the same terminal states.
+produces an EMTD around 71–72 K, well above what the corrected zone-resolved
+driving-force model gives for the same terminal states.
 
 ### 1.2 The corrected model
 

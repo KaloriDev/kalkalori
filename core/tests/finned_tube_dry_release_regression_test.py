@@ -4,7 +4,7 @@
 
 The case intentionally sits inside the declared Briggs-Young and
 Robinson-Briggs applicability envelopes.  It is suitable for carrying the
-same inputs into a manual HTRI/reference-calculation comparison: compare a
+same inputs into an independent reference-calculation comparison: compare a
 film HTC with ``outside_alpha_physical``, never the extended-surface effective
 coefficient or overall U.
 """

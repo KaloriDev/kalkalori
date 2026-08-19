@@ -1,7 +1,7 @@
 # Circular-Finned-Tube Model (v0.7.0)
 
 This document describes the v0.7.0 release-candidate dry
-circular-finned-tube model pending manual HTRI validation.
+circular-finned-tube model pending independent reference validation.
 It is a 0D engineering model with explicitly declared geometry and
 correlation boundaries.
 
@@ -200,7 +200,8 @@ different meanings and must not be compared interchangeably.
 - `outside_alpha_physical` is the physical mean film HTC returned directly by
   Briggs--Young. It has no fin-efficiency, area-enhancement, contact, or
   root-conduction adjustment. Use it to validate the heat-transfer
-  correlation against literature, vendor output, or HTRI film HTC.
+  correlation against published literature or an independent physical
+  film-HTC reference.
 - `outside_alpha_effective_gross` is the equivalent outside-side coefficient
   referenced to the authoritative gross outside area `A_outside_gross`. It
   is calculated from the complete topology-aware outside path, including a

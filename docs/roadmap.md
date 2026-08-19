@@ -153,7 +153,7 @@ selection remain outside the solver's scope.
 
 ---
 
-### v0.7.0 — Dry Circular Finned Tubes — RELEASE CANDIDATE — PENDING MANUAL HTRI VALIDATION
+### v0.7.0 — Dry Circular Finned Tubes — RELEASE CANDIDATE — PENDING INDEPENDENT REFERENCE VALIDATION
 
 **Delivered scope:**
 
@@ -242,7 +242,7 @@ This release marks the **maturity of the 0D modelling approach**.
 - local temperature and property variation
 - dry/wet coil regions
 - series, parallel, and longitudinal arrangements
-- iterative solvers (HTRI-like capability)
+- iterative solvers (row-wise / segmented industrial heat-exchanger capability)
 
 **Impact:**
 - breaking API changes
