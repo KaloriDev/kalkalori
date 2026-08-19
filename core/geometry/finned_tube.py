@@ -52,6 +52,22 @@ class CircularFinnedTube(BaseTube):
     wall data, roughness and orientation come directly from ``core_tube``.
     ``external_area_per_length`` can override the gross outside area used by
     a solver, but never changes fin shape, flow blockage or fin efficiency.
+
+    Fin/root contact loss has two alternative, mutually exclusive inputs:
+    ``fin_contact_resistance`` [m2 K/W], the explicit physical areal contact
+    resistance, and ``fin_contact_efficiency`` (dimensionless, ``0 <
+    fin_contact_efficiency <= 1``), a practical operating-point conductance
+    ratio (``eta_contact = 1`` is ideal contact). ``None`` on either field is
+    an input-selection sentinel, not a declaration of uncertainty: leaving
+    both ``None`` selects the documented ideal-contact default (``R_contact
+    == 0``), not a warning. Precedence is ``fin_contact_resistance`` (even an
+    explicit ``0.0``) over ``fin_contact_efficiency`` over the ideal
+    default; see ``contact_input_mode``. ``fin_contact_efficiency`` is
+    resolved into an equivalent resistance only inside
+    ``core.heat_transfer.outside_dispatch.calculate_resistance_network``,
+    once the operating-point outside HTC and fin efficiency are known --
+    never at geometry-construction time -- because the equivalent areal
+    resistance it implies is operating-point dependent.
     """
 
     core_tube: BareTube
@@ -61,6 +77,7 @@ class CircularFinnedTube(BaseTube):
     fin_thickness_root: float
     fin_pitch: float
     fin_contact_resistance: float | None = None
+    fin_contact_efficiency: float | None = None
     fin_thickness_tip: float | None = None
     external_area_per_length: float | None = None
 
@@ -100,6 +117,18 @@ class CircularFinnedTube(BaseTube):
             ):
                 raise ValueError(
                     "fin_contact_resistance must be None or a finite, non-negative value."
+                )
+
+        if self.fin_contact_efficiency is not None:
+            if (
+                not math.isfinite(self.fin_contact_efficiency)
+                or self.fin_contact_efficiency <= 0.0
+                or self.fin_contact_efficiency > 1.0
+            ):
+                raise ValueError(
+                    "fin_contact_efficiency must be None or a finite value with "
+                    "0 < fin_contact_efficiency <= 1 (e.g. 0.95 for 95% contact "
+                    "efficiency; percent values such as 95 are not accepted)."
                 )
 
         if self.external_area_per_length is not None:
@@ -375,7 +404,17 @@ class CircularFinnedTube(BaseTube):
 
     @property
     def contact_resistance_used(self) -> float:
-        """Areal contact resistance used by calculations [m2 K/W]."""
+        """Explicit-input areal contact resistance at geometry level [m2 K/W].
+
+        This reflects only ``fin_contact_resistance`` (0.0 when it is
+        ``None``, regardless of ``fin_contact_efficiency``) because a
+        geometry object has no outside operating point. The resolved,
+        operating-point-aware equivalent -- which also covers
+        ``fin_contact_efficiency`` -- is
+        ``ThermalResistanceNetwork.contact_resistance_used`` /
+        ``FinnedTubeDiagnostics.contact_resistance_used``, produced by
+        ``calculate_resistance_network``.
+        """
         return 0.0 if self.fin_contact_resistance is None else self.fin_contact_resistance
 
     @property
@@ -409,6 +448,21 @@ class CircularFinnedTube(BaseTube):
         return "series_before_primary_and_fin_parallel_branches"
 
     @property
+    def contact_input_mode(self) -> str:
+        """Which contact input is resolved, by declared precedence.
+
+        ``"explicit_resistance"`` when ``fin_contact_resistance`` is not
+        ``None`` (even an explicit ``0.0``); else ``"contact_efficiency"``
+        when ``fin_contact_efficiency`` is not ``None``; else
+        ``"ideal_default"``.
+        """
+        if self.fin_contact_resistance is not None:
+            return "explicit_resistance"
+        if self.fin_contact_efficiency is not None:
+            return "contact_efficiency"
+        return "ideal_default"
+
+    @property
     def contact_thermal_resistance_per_tube(self) -> float:
         return self.contact_resistance_used / self.contact_area_per_tube
 
@@ -431,16 +485,18 @@ class CircularFinnedTube(BaseTube):
     @property
     def geometry_warnings(self) -> tuple[ModelWarning, ...]:
         warnings: list[ModelWarning] = []
-        if self.fin_contact_resistance is None:
+        if self.fin_contact_resistance is not None and self.fin_contact_efficiency is not None:
             warnings.append(
                 make_warning(
-                    code="circular_finned_tube_contact_resistance_unspecified",
+                    code="circular_finned_tube_contact_efficiency_ignored",
                     message=(
-                        "CircularFinnedTube: fin_contact_resistance is None; "
-                        "the resistance helper assumes ideal contact (0 m2 K/W)."
+                        "CircularFinnedTube: both fin_contact_resistance and "
+                        "fin_contact_efficiency were supplied; explicit "
+                        "fin_contact_resistance has precedence and "
+                        "fin_contact_efficiency is ignored."
                     ),
                     source="circular_finned_tube_geometry",
-                    severity="warning",
+                    severity="info",
                 )
             )
 
