@@ -499,6 +499,35 @@ def test_public_steam_rating_uses_equivalent_alpha_without_internal_leakage():
     assert not hasattr(steam, "runtime_s")
 
 
+def test_public_steam_result_exposes_raw_zone_driving_force_diagnostics():
+    from core.phase_change.steam_heater import SteamHeaterZoneKind
+
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
+        T_in=520.0, T_out=350.0,
+    )
+    outside = BalanceSideSpec(
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=100.0, T_in=300.0,
+    )
+    result = _hx().rate(inside, outside)
+    steam = result.inside_phase_change
+    assert tuple(zone.kind for zone in steam.zones) == (
+        SteamHeaterZoneKind.SUPERHEAT,
+        SteamHeaterZoneKind.CONDENSATION,
+        SteamHeaterZoneKind.SUBCOOLING,
+    )
+    for zone in steam.zones:
+        assert math.isfinite(zone.outside_T_in)
+        assert math.isfinite(zone.outside_T_out)
+        assert math.isfinite(zone.delta_T_terminal_in)
+        assert math.isfinite(zone.delta_T_terminal_out)
+        assert zone.driving_force_method in (
+            "isothermal_lmtd", "epsilon_ntu_crossflow",
+        )
+    assert sum(zone.UA for zone in steam.zones) == pytest.approx(steam.UA_total, rel=1.0e-9)
+    assert result.EMTD == pytest.approx(steam.Q_total / steam.UA_total, rel=1.0e-9)
+
+
 def test_multizone_wall_diagnostics_use_equivalent_resistance_and_remain_0d():
     hx = _hx()
     result = hx.simulate(_inside_sim(T_in=520.0, m_dot=0.25), _outside_sim())

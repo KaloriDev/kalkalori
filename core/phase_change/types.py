@@ -332,6 +332,13 @@ class WaterSteamPhaseChangeResult:
     heat_flux_residual: float = 0.0
     cache_hits: int = 0
 
+    # Additive v0.7.1 diagnostic: the raw per-zone solver results (each a
+    # ``SteamHeaterZoneResult`` for condensation, or a
+    # ``WaterEvaporatorZoneResult`` for evaporation), for callers/reports
+    # that need per-zone driving-force fields (e.g. ``outside_T_in``,
+    # ``driving_force_method``) beyond the aggregated per-kind scalars above.
+    zones: tuple = ()
+
     @property
     def Q_sensible(self) -> float:
         if self.direction is PhaseChangeDirection.EVAPORATION:

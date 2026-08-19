@@ -1371,6 +1371,7 @@ def _steam_result(
         assumptions=solution.assumptions,
         inside_alpha_equivalent=solution.inside_alpha_equivalent,
         inside_alpha_area_weighted=solution.inside_alpha_area_weighted,
+        zones=solution.zones,
     )
 
 
@@ -1490,6 +1491,7 @@ def _water_evaporation_result(
         heat_flux_iterations=solution.heat_flux_iterations,
         heat_flux_residual=solution.heat_flux_residual,
         cache_hits=solution.cache_hits,
+        zones=solution.zones,
     )
 
 

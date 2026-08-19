@@ -20,6 +20,15 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added an analytical fast path for constant-thickness circular fins.
 - Added deterministic release regressions for dry water/air finned banks,
   geometry, efficiency, correlation bounds, and inside phase-change routes.
+- Added fin-surface temperature diagnostics distinct from the existing
+  outside/core-wall network node: ``FinnedTubeDiagnostics.fin_tip_temperature_ratio``,
+  ``WallTemperatureProbe``/``WallTemperatureEnvelope`` primary-surface/fin-base/
+  fin-tip/outside-skin fields, and the corresponding public
+  ``outside_skin_temperature_*_estimate`` /
+  ``fin_base_temperature_*_estimate`` / ``fin_tip_temperature_*_estimate``
+  Simulation/Rating properties. Reporting-only; no fin efficiency, contact
+  topology, or thermal-result change. See
+  `docs/steam_heater_zone_driving_force.md`.
 
 ### Changed
 
@@ -30,6 +39,18 @@ The project follows **Semantic Versioning (SemVer)**:
 - Enabled supported inside evaporation and condensation paths opposite a dry
   circular-finned outside surface; wet/condensing finned outside paths remain
   controlled unsupported cases.
+- Corrected steam-heater phase-zone driving forces: each desuperheat/
+  condensation/subcooling zone now sizes against its own thermodynamic
+  driving force (exact terminal LMTD for the isothermal condensation zone,
+  the established epsilon-NTU inversion for sensible zones) over an
+  equivalent 0D series-marched opposing-stream temperature path, instead of
+  one shared arithmetic opposing-stream mean temperature. Whole-exchanger
+  EMTD remains the single derived identity ``Q_total / UA_total``. Required
+  area/UA/EMTD/overdesign for a steam Rating are expected to change for the
+  same geometry; actual area/UA, Briggs--Young, Robinson--Briggs, fin
+  efficiency, contact topology, alpha semantics, pressure drop, and the
+  derived steam-mass-flow Rating path are unchanged. See
+  `docs/steam_heater_zone_driving_force.md`.
 
 ---
 
