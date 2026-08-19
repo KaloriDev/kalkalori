@@ -220,8 +220,11 @@ def test_rating_reuses_same_zone_physics(inlet_kwargs, outlet_kwargs, expected_p
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
         **inlet_kwargs, **outlet_kwargs,
     )
+    # m_dot=100.0 (rather than a tighter historical 30.0) keeps the
+    # equivalent zone-by-zone outside-stream path from crossing the deeply
+    # subcooled steam outlet used by the T_out=350.0 fixtures above.
     outside = BalanceSideSpec(
-        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=100.0, T_in=300.0,
     )
     result = _hx().rate(inside, outside)
     steam = result.inside_phase_change
@@ -479,8 +482,11 @@ def test_public_steam_rating_uses_equivalent_alpha_without_internal_leakage():
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
         T_in=520.0, T_out=350.0,
     )
+    # m_dot=100.0 (rather than a tighter historical 30.0) keeps the
+    # equivalent zone-by-zone outside-stream path from crossing the deeply
+    # subcooled steam outlet (T_out=350.0) used by this fixture.
     outside = BalanceSideSpec(
-        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=30.0, T_in=300.0,
+        provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=100.0, T_in=300.0,
     )
     result = _hx().rate(inside, outside)
     steam = result.inside_phase_change
