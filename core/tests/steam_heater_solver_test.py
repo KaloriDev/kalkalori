@@ -3,13 +3,15 @@ import math
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, CircularFinnedTube
+from core.heat_transfer.ntu import ntu_from_effectiveness
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.phase_change.steam_condensation import SteamTubeOrientation
 from core.phase_change.steam_heater import (
     SteamEvaporationNotSupportedError,
     SteamHeaterZoneKind,
     _equivalent_inside_alpha_outer_basis,
+    _log_mean_temperature_difference,
     rate_steam_heater,
     solve_steam_heater,
 )
@@ -38,11 +40,15 @@ def _hx(n_rows=10, n_tubes_per_row=10):
     )
 
 
-def _rate(inlet, outlet, *, hx=None, m_dot=1.0):
+def _rate(inlet, outlet, *, hx=None, m_dot=1.0, mass_flow_outside=100.0):
+    # mass_flow_outside=100.0 (rather than a tighter historical 30.0) keeps
+    # the equivalent zone-by-zone outside-stream path (see steam_heater's
+    # per-zone driving-force allocation) from crossing the deeply subcooled
+    # steam outlet used by several of these fixtures.
     return rate_steam_heater(
         hx or _hx(), inlet_state=inlet, outlet_state=outlet,
         mass_flow_steam=m_dot, outside_provider=OUTSIDE,
-        mass_flow_outside=30.0, T_in_outside=300.0, p_outside=101325.0,
+        mass_flow_outside=mass_flow_outside, T_in_outside=300.0, p_outside=101325.0,
         orientation=SteamTubeOrientation.VERTICAL_DOWNWARD,
     )
 
@@ -260,3 +266,152 @@ def test_low_g_simulation_remains_finite_with_many_parallel_tubes():
     assert result.zone_alpha_condensation > 1000.0
     assert math.isfinite(result.Q_total)
     assert all(math.isfinite(value) for value in (result.A_total, result.UA_total, result.U_equivalent))
+
+
+# ---------------------------------------------------------------------------
+# Zone driving-force model (corrected steam-heater zone driving forces)
+# ---------------------------------------------------------------------------
+
+def _finned_hx(n_rows=10, n_tubes_per_row=10):
+    core = BareTube(
+        D_i=0.020, D_o=0.024, length_total=4.0, length_effective=4.0, wall_k=16.0,
+    )
+    finned = CircularFinnedTube(
+        core_tube=core, fin_k=200.0, D_fin=0.045, D_root=0.024,
+        fin_thickness_root=0.0005, fin_pitch=0.0024, fin_contact_resistance=None,
+    )
+    pitch_transverse = 0.06
+    return BareTubeHeatExchanger(
+        TubeBundle(
+            tube=finned, n_rows=n_rows, n_tubes_per_row=n_tubes_per_row,
+            pitch_transverse=pitch_transverse,
+            pitch_longitudinal=pitch_transverse * math.sqrt(3.0) / 2.0,
+            layout="staggered", n_passes_tube=1, flow_arrangement="crossflow",
+        )
+    )
+
+
+def test_pure_condensation_zone_matches_independent_terminal_lmtd():
+    """T1: the condensation-zone driving force is the exact terminal LMTD.
+
+    The expected value is computed here from first principles, not by
+    calling the production ``_log_mean_temperature_difference`` helper.
+    """
+    result = _rate(
+        water_steam_props_iapws97(p=P, x=1.0),
+        water_steam_props_iapws97(p=P, x=0.0),
+    )
+    assert tuple(zone.kind for zone in result.zones) == (SteamHeaterZoneKind.CONDENSATION,)
+    zone = result.zones[0]
+    Tsat = result.saturation.Tsat
+    dT1 = Tsat - zone.outside_T_in
+    dT2 = Tsat - zone.outside_T_out
+    lmtd = (dT1 - dT2) / math.log(dT1 / dT2)
+    assert zone.driving_force_method == "isothermal_lmtd"
+    assert zone.effective_mean_temperature_difference == pytest.approx(lmtd, rel=1.0e-12)
+    assert zone.UA == pytest.approx(zone.Q / lmtd, rel=1.0e-12)
+    assert zone.area == pytest.approx(zone.UA / zone.U, rel=1.0e-12)
+
+
+@pytest.mark.parametrize(
+    ("delta_T_in", "delta_T_out"),
+    [(50.0, 50.0), (50.0, 50.0 + 1.0e-7), (50.0 - 1.0e-8, 50.0)],
+)
+def test_lmtd_helper_equal_terminal_difference_limit(delta_T_in, delta_T_out):
+    """T2: no NaN / division-by-zero at (or near) equal terminal differences."""
+    value = _log_mean_temperature_difference(delta_T_in, delta_T_out)
+    assert math.isfinite(value)
+    assert value == pytest.approx(0.5 * (delta_T_in + delta_T_out), rel=1.0e-6)
+
+
+def test_lmtd_helper_rejects_non_positive_terminal_difference():
+    with pytest.raises(ValueError):
+        _log_mean_temperature_difference(0.0, 10.0)
+    with pytest.raises(ValueError):
+        _log_mean_temperature_difference(10.0, -1.0)
+
+
+def test_condensation_zone_non_positive_approach_rejects_finite_solution():
+    """T3: Tsat <= T_air_zone_out must reject a finite solution, not fake one."""
+    inlet = water_steam_props_iapws97(p=P, x=1.0)
+    outlet = water_steam_props_iapws97(p=P, x=0.0)
+    Tsat = water_steam_props_iapws97(p=P, x=0.5).T
+    with pytest.raises(ValueError, match="positive zone temperature difference"):
+        rate_steam_heater(
+            _hx(), inlet_state=inlet, outlet_state=outlet,
+            mass_flow_steam=1.0, outside_provider=OUTSIDE,
+            # A small outside mass flow drives the equivalent outside-path
+            # temperature at zone-out up past Tsat itself.
+            mass_flow_outside=0.05, T_in_outside=Tsat - 5.0, p_outside=101325.0,
+            orientation=SteamTubeOrientation.VERTICAL_DOWNWARD,
+        )
+
+
+def test_mixed_superheat_condensation_zone_path_is_contiguous_and_sums_to_emtd():
+    """T4: contiguous equivalent outside path; EMTD_total == Q_total/UA_total."""
+    result = _rate(
+        water_steam_props_iapws97(T=520.0, p=P),
+        water_steam_props_iapws97(p=P, x=0.5),
+    )
+    assert tuple(zone.kind for zone in result.zones) == (
+        SteamHeaterZoneKind.SUPERHEAT, SteamHeaterZoneKind.CONDENSATION,
+    )
+    assert result.zones[0].outside_T_in == pytest.approx(300.0)
+    assert result.zones[-1].outside_T_out == pytest.approx(result.T_out_outside)
+    for earlier, later in zip(result.zones, result.zones[1:]):
+        assert earlier.outside_T_out == pytest.approx(later.outside_T_in)
+    assert sum(zone.Q for zone in result.zones) == pytest.approx(result.Q_total)
+    assert sum(zone.UA for zone in result.zones) == pytest.approx(result.UA_total)
+    assert result.Q_total / result.UA_total == pytest.approx(result.EMTD, rel=1.0e-12)
+
+
+def test_steam_rating_emtd_invariant_holds():
+    """Section 4E invariant: result.EMTD == result.Q_required / result.UA_required."""
+    result = _rate(
+        water_steam_props_iapws97(T=520.0, p=P),
+        water_steam_props_iapws97(T=350.0, p=P),
+    )
+    assert result.EMTD == pytest.approx(result.Q_total / result.UA_total, rel=1.0e-12)
+
+
+def test_sensible_zone_ua_matches_public_ntu_contract():
+    """T5: cross-check the SUPERHEAT zone UA against the public NTU API."""
+    result = _rate(
+        water_steam_props_iapws97(T=520.0, p=P),
+        water_steam_props_iapws97(T=480.0, p=P),
+    )
+    assert tuple(zone.kind for zone in result.zones) == (SteamHeaterZoneKind.SUPERHEAT,)
+    zone = result.zones[0]
+    C_inside = zone.Q / abs(zone.T_in - zone.T_out)
+    C_outside = zone.Q / abs(zone.outside_T_out - zone.outside_T_in)
+    C_min = min(C_inside, C_outside)
+    eps = zone.Q / (C_min * (zone.T_in - zone.outside_T_in))
+    NTU = ntu_from_effectiveness(
+        eps, C_inside, C_outside,
+        flow_arrangement="crossflow", C_inside=C_inside, C_outside=C_outside,
+    )
+    assert zone.driving_force_method == "epsilon_ntu_crossflow"
+    assert zone.UA == pytest.approx(NTU * C_min, rel=1.0e-9)
+    assert zone.area == pytest.approx(zone.UA / zone.U, rel=1.0e-9)
+
+
+def test_bare_vs_finned_driving_force_independence():
+    """T6: identical thermodynamic terminals give identical zone driving
+    forces (and UA) for bare vs. finned geometry; only U and area differ."""
+    inlet = water_steam_props_iapws97(T=520.0, p=P)
+    outlet = water_steam_props_iapws97(T=350.0, p=P)
+    bare_result = _rate(inlet, outlet, hx=_hx())
+    finned_result = _rate(inlet, outlet, hx=_finned_hx())
+    assert tuple(z.kind for z in bare_result.zones) == tuple(z.kind for z in finned_result.zones)
+    for bare_zone, finned_zone in zip(bare_result.zones, finned_result.zones):
+        assert bare_zone.T_in == pytest.approx(finned_zone.T_in)
+        assert bare_zone.T_out == pytest.approx(finned_zone.T_out)
+        assert bare_zone.outside_T_in == pytest.approx(finned_zone.outside_T_in)
+        assert bare_zone.outside_T_out == pytest.approx(finned_zone.outside_T_out)
+        assert bare_zone.driving_force_method == finned_zone.driving_force_method
+        assert bare_zone.effective_mean_temperature_difference == pytest.approx(
+            finned_zone.effective_mean_temperature_difference, rel=1.0e-9
+        )
+        assert bare_zone.UA == pytest.approx(finned_zone.UA, rel=1.0e-6)
+        assert bare_zone.U != pytest.approx(finned_zone.U)
+        assert bare_zone.area != pytest.approx(finned_zone.area)

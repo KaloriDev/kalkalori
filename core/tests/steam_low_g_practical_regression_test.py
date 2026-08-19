@@ -160,7 +160,7 @@ def test_practical_low_g_condensation_matches_independent_shah_reference(
         mass_flux=mass_flux,
         diameter=float(hx.bundle.tube.D_i),
     )
-    assert expected == pytest.approx(14862.94502166246, rel=2.0e-10)
+    assert expected == pytest.approx(14625.31680202385, rel=2.0e-10)
     assert steam.zone_alpha_condensation == pytest.approx(expected, rel=2.0e-12)
     warning_codes = {warning.code for warning in steam.warnings}
     assert "STEAM_CONDENSATION_SHAH_2009_OUTSIDE_RANGE" in warning_codes

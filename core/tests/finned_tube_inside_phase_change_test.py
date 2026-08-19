@@ -213,6 +213,42 @@ def test_dry_finned_outside_supports_inside_steam_condensation_in_simulation_and
     )
 
 
+def test_dry_finned_outside_supports_unknown_steam_mass_flow_rating() -> None:
+    """v0.7.1: Rating derives required steam m_dot through the finned path.
+
+    Uses the established finned dry-outside topology/alpha semantics
+    unchanged; only the tube-side mass flow is left for Rating to solve.
+    """
+    hx = _hx(orientation=TubeOrientation.VERTICAL_DOWNWARD)
+    heat_provider = _CountingHeatTransferProvider()
+    pressure_provider = _CountingPressureDropProvider()
+    inside = BalanceSideSpec(
+        provider=IAPWS97WaterSteamProvider(),
+        p=P_WATER,
+        m_dot=None,
+        T_in=520.0,
+        quality_out=0.0,
+    )
+    outside = BalanceSideSpec(
+        provider=COLD_AIR, p=P_AIR, m_dot=5.0, T_in=290.0, T_out=310.0,
+    )
+    rating = hx.rate(
+        inside,
+        outside,
+        finned_heat_transfer_provider=heat_provider,
+        finned_pressure_drop_provider=pressure_provider,
+    )
+    assert rating.inside_phase_change.direction is PhaseChangeDirection.CONDENSATION
+    assert rating.inside_phase_change.active is True
+    assert rating.inside_phase_change.quality_out == pytest.approx(0.0, abs=1e-9)
+    assert rating.closed_balance.inside.m_dot == pytest.approx(
+        rating.inside_phase_change.mass_flow_total
+    )
+    assert rating.closed_balance.inside.m_dot > 0.0
+    assert inside.m_dot is None
+    _assert_dry_finned_result(rating)
+
+
 def test_dry_finned_outside_supports_inside_wet_gas_condensation_in_simulation_and_rating() -> None:
     hx = _hx(orientation=TubeOrientation.VERTICAL_DOWNWARD)
     heat_provider = _CountingHeatTransferProvider()

@@ -171,6 +171,7 @@ class FinnedTubeDiagnostics:
     resistance_total: float
     UA: float
     U_gross_outside: float
+    fin_tip_temperature_ratio: float
     face_velocity: float
     reference_velocity: float
     reynolds_number: float
@@ -599,6 +600,7 @@ def build_finned_tube_diagnostics(
     warnings = _deduplicate_warnings(
         (*geometry_warnings, *thermal.warnings, *((bank.warnings) if bank else ()))
     )
+    assert network.fin_efficiency_result is not None
     return FinnedTubeDiagnostics(
         tube_surface_type=TubeSurfaceType.CIRCULAR_FINNED,
         area_inside=network.area_inside,
@@ -626,6 +628,7 @@ def build_finned_tube_diagnostics(
         resistance_total=network.resistance_total,
         UA=network.UA,
         U_gross_outside=network.U_gross_outside,
+        fin_tip_temperature_ratio=network.fin_efficiency_result.tip_temperature_ratio,
         face_velocity=thermal.face_velocity,
         reference_velocity=thermal.reference_velocity,
         reynolds_number=thermal.reynolds_number,

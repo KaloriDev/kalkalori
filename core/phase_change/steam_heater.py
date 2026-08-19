@@ -9,9 +9,16 @@ desuperheating, condensation, and condensate subcooling. Each zone owns its
 inside coefficient, overall U, required area, and UA. The authoritative
 whole-exchanger conductance is always ``sum(U_zone * A_zone)``.
 
-This remains a lumped 0D allocation. The opposing stream uses one overall
-temperature program and a shared representative bulk temperature; it is not
-artificially marched in series through phase zones for crossflow geometry.
+This remains a lumped 0D allocation. Each steam zone gets its own
+thermodynamic driving force: an equivalent opposing-stream temperature path
+is marched in series, in the same order as the steam zones themselves
+(desuperheat -> condensation -> subcooling), using the existing outside
+cp/property convention one zone at a time. Condensation zones (isothermal
+steam side) size on the exact terminal log-mean driving force; sensible
+zones (desuperheat/subcooling) size on the existing epsilon-NTU inversion
+for the exchanger's declared flow arrangement. This equivalent series
+allocation is still a 0D bookkeeping device, not a claim about the physical
+axial location of phase fronts in a two-dimensional crossflow bundle.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ from time import perf_counter
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeOrientation
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
+from core.heat_transfer.ntu import ntu_from_effectiveness
 from core.heat_transfer.outside_dispatch import (
     DEFAULT_FINNED_DP_PROVIDER,
     DEFAULT_FINNED_HT_PROVIDER,
@@ -60,6 +68,18 @@ class SteamEvaporationNotSupportedError(RuntimeError):
     warning_code = "STEAM_EVAPORATION_NOT_SUPPORTED"
 
 
+DRIVING_FORCE_ISOTHERMAL_LMTD = "isothermal_lmtd"
+DRIVING_FORCE_EPSILON_NTU_COUNTERFLOW = "epsilon_ntu_counterflow"
+DRIVING_FORCE_EPSILON_NTU_COCURRENTFLOW = "epsilon_ntu_cocurrentflow"
+DRIVING_FORCE_EPSILON_NTU_CROSSFLOW = "epsilon_ntu_crossflow"
+
+_EPSILON_NTU_DRIVING_FORCE_METHOD_BY_ARRANGEMENT = {
+    "counterflow": DRIVING_FORCE_EPSILON_NTU_COUNTERFLOW,
+    "cocurrentflow": DRIVING_FORCE_EPSILON_NTU_COCURRENTFLOW,
+    "crossflow": DRIVING_FORCE_EPSILON_NTU_CROSSFLOW,
+}
+
+
 @dataclass(frozen=True)
 class SteamHeaterZoneResult:
     kind: SteamHeaterZoneKind
@@ -74,6 +94,12 @@ class SteamHeaterZoneResult:
     U: float
     area: float
     UA: float
+    outside_T_in: float
+    outside_T_out: float
+    delta_T_terminal_in: float
+    delta_T_terminal_out: float
+    effective_mean_temperature_difference: float
+    driving_force_method: str
     quality_in: float | None = None
     quality_out: float | None = None
     condensation: SteamCondensationZoneResult | None = None
@@ -140,6 +166,16 @@ class SteamHeaterSolution:
     def inside_alfa_mean(self) -> float:
         """Historical spelling for the resistance-consistent equivalent HTC."""
         return self.inside_alpha_equivalent
+
+    @property
+    def EMTD(self) -> float:
+        """Authoritative whole-exchanger driving force: ``Q_total / UA_total``.
+
+        This is the single source of truth; it is never recomputed from
+        arithmetic mean temperatures, a separate whole-exchanger LMTD, or a
+        bare/finned epsilon-NTU shortcut.
+        """
+        return self.Q_total / self.UA_total
 
     @property
     def zone_fraction_desuperheat(self) -> float:
@@ -449,21 +485,57 @@ def _evaluate_duty(
         finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
+    # Equivalent 0D series allocation: march the opposing (outside) stream
+    # through the steam zones in the same order the steam itself passes
+    # through them (desuperheat -> condensation -> subcooling), reusing the
+    # exact same outside cp/property convention as the whole-exchanger
+    # T_out_outside above. This is a thermal bookkeeping device, not a claim
+    # about axial phase-front position; see STEAM_HEATER_ZONE_ALLOCATION_0D_ESTIMATE.
+    flow_arrangement = hx.bundle.flow_arrangement
     zones: list[SteamHeaterZoneResult] = []
     trial_warnings: list[ModelWarning] = list(outside.warnings)
+    outside_T_zone_in = T_in_outside
     for spec in _partition_enthalpy(inlet_state.h, h_out, saturation):
+        Q_zone = mass_flow_steam * (spec.h_in - spec.h_out)
+        outside_T_zone_out = _outside_outlet_temperature(
+            Q_total=Q_zone,
+            mass_flow_outside=mass_flow_outside,
+            T_in_outside=outside_T_zone_in,
+            cache=cache,
+        )
         zone = _evaluate_zone(
             hx,
             spec=spec,
             saturation=saturation,
             mass_flow_steam=mass_flow_steam,
             alpha_outside_physical=outside.alpha_physical,
-            T_mean_outside=T_mean_outside,
+            outside_T_in=outside_T_zone_in,
+            outside_T_out=outside_T_zone_out,
+            flow_arrangement=flow_arrangement,
             orientation=orientation,
             cache=cache,
         )
         zones.append(zone)
         trial_warnings.extend(zone.warnings)
+        outside_T_zone_in = outside_T_zone_out
+
+    if zones:
+        # The single-shot T_out_outside above and this zone-marched value are
+        # two independent fixed-point evaluations of the same outside-stream
+        # energy balance (one coarse pass over the whole duty vs. several
+        # finer passes over each zone's sub-duty); they need not be
+        # bit-identical for a strongly temperature-dependent outside cp, only
+        # mutually consistent to a physically tight tolerance.
+        if not math.isclose(
+            outside_T_zone_in, T_out_outside,
+            rel_tol=2.0e-3, abs_tol=1.0e-3,
+        ):
+            raise ValueError(
+                "Steam-heater equivalent outside-stream zone path "
+                f"({outside_T_zone_in:.6g} K) did not close onto the "
+                f"whole-exchanger outside outlet temperature "
+                f"({T_out_outside:.6g} K)."
+            )
 
     required_area = sum(zone.area for zone in zones)
     UA_total = sum(zone.UA for zone in zones)
@@ -506,6 +578,29 @@ def _partition_enthalpy(
     return tuple(specs)
 
 
+def _log_mean_temperature_difference(delta_T_in: float, delta_T_out: float) -> float:
+    """Exact terminal LMTD for an isothermal-side (condensing) zone.
+
+    Uses the mathematically correct equal-difference limit
+    (``LMTD -> delta_T_in`` as ``delta_T_out -> delta_T_in``) instead of the
+    ``0/0`` closed form, so it stays finite and NaN-free at and near equal
+    terminal differences.
+    """
+    if (
+        not math.isfinite(delta_T_in)
+        or not math.isfinite(delta_T_out)
+        or delta_T_in <= 0.0
+        or delta_T_out <= 0.0
+    ):
+        raise ValueError(
+            "Log-mean temperature difference requires two finite, positive "
+            "terminal temperature differences."
+        )
+    if math.isclose(delta_T_in, delta_T_out, rel_tol=1.0e-9, abs_tol=1.0e-12):
+        return 0.5 * (delta_T_in + delta_T_out)
+    return (delta_T_in - delta_T_out) / math.log(delta_T_in / delta_T_out)
+
+
 def _evaluate_zone(
     hx,
     *,
@@ -513,7 +608,9 @@ def _evaluate_zone(
     saturation: WaterSteamSaturationProperties,
     mass_flow_steam: float,
     alpha_outside_physical: float,
-    T_mean_outside: float,
+    outside_T_in: float,
+    outside_T_out: float,
+    flow_arrangement: str,
     orientation: TubeOrientation | None,
     cache: _SolveCache,
 ) -> SteamHeaterZoneResult:
@@ -562,13 +659,61 @@ def _evaluate_zone(
         resistance_core_wall=hx.tube_wall_resistance(),
     )
     U = network.U_gross_outside
-    delta_T = 0.5 * (T_in + T_out) - T_mean_outside
-    if delta_T <= 0.0 or not math.isfinite(delta_T):
-        area = math.inf
-        UA = math.inf
+
+    delta_T_terminal_in = T_in - outside_T_in
+    delta_T_terminal_out = T_out - outside_T_out
+
+    if spec.kind is SteamHeaterZoneKind.CONDENSATION:
+        driving_force_method = DRIVING_FORCE_ISOTHERMAL_LMTD
+        if delta_T_terminal_in <= 0.0 or delta_T_terminal_out <= 0.0:
+            EMTD = math.nan
+            area = math.inf
+            UA = math.inf
+        else:
+            # Exact terminal LMTD for an isothermal condensing side; this is
+            # the Cr -> 0 epsilon-NTU limit (eps = 1 - exp(-NTU)), not the
+            # generic finite-Cr inversion used for the sensible zones below.
+            EMTD = _log_mean_temperature_difference(
+                delta_T_terminal_in, delta_T_terminal_out
+            )
+            UA = Q / EMTD
+            area = UA / U
     else:
-        area = Q / (U * delta_T)
-        UA = U * area
+        driving_force_method = _EPSILON_NTU_DRIVING_FORCE_METHOD_BY_ARRANGEMENT.get(
+            flow_arrangement.lower()
+        )
+        if driving_force_method is None:
+            raise ValueError(f"Unsupported flow_arrangement: {flow_arrangement!r}")
+        # Effective zone capacity rates, reconstructed from the actual zone
+        # duty and terminal temperatures (steam is always the hot/inside
+        # stream for this exchanger direction).
+        C_inside_zone = Q / abs(T_in - T_out)
+        C_outside_zone = Q / abs(outside_T_out - outside_T_in)
+        C_min = min(C_inside_zone, C_outside_zone)
+        Q_max_zone = C_min * delta_T_terminal_in
+        EMTD = math.nan
+        UA = math.inf
+        area = math.inf
+        if math.isfinite(Q_max_zone) and Q_max_zone > 0.0:
+            eps_zone = Q / Q_max_zone
+            if 0.0 <= eps_zone < 1.0:
+                try:
+                    NTU_zone = ntu_from_effectiveness(
+                        eps_zone,
+                        C_inside_zone,
+                        C_outside_zone,
+                        flow_arrangement=flow_arrangement,
+                        C_inside=C_inside_zone,
+                        C_outside=C_outside_zone,
+                    )
+                except ValueError:
+                    NTU_zone = None
+                if NTU_zone is not None and math.isfinite(NTU_zone) and NTU_zone > 0.0:
+                    UA_zone = NTU_zone * C_min
+                    EMTD = Q / UA_zone
+                    area = UA_zone / U
+                    UA = UA_zone
+
     return SteamHeaterZoneResult(
         kind=spec.kind,
         h_in=spec.h_in,
@@ -582,6 +727,12 @@ def _evaluate_zone(
         U=U,
         area=area,
         UA=UA,
+        outside_T_in=outside_T_in,
+        outside_T_out=outside_T_out,
+        delta_T_terminal_in=delta_T_terminal_in,
+        delta_T_terminal_out=delta_T_terminal_out,
+        effective_mean_temperature_difference=EMTD,
+        driving_force_method=driving_force_method,
         quality_in=quality_in,
         quality_out=quality_out,
         condensation=condensation,
@@ -670,8 +821,10 @@ def _build_solution(
         make_warning(
             code="STEAM_HEATER_ZONE_ALLOCATION_0D_ESTIMATE",
             message=(
-                "Steam phase-front areas are a 0D thermal allocation using a "
-                "shared opposing-stream mean temperature, not axial front locations."
+                "Steam phase-zone sizing uses an equivalent 0D series allocation "
+                "of the opposing-stream enthalpy rise. Zone driving forces are "
+                "thermodynamically resolved but do not represent spatial "
+                "phase-front locations in a two-dimensional crossflow bundle."
             ),
             source="steam_heater",
             severity="info",
@@ -725,7 +878,7 @@ def _build_solution(
         warnings=tuple(_deduplicate_warnings(warnings)),
         assumptions=(
             "constant_nominal_steam_pressure",
-            "shared_opposing_stream_0d_mean_temperature",
+            "equivalent_0d_series_zone_allocation",
             "zone_UA_sum_is_authoritative",
             "two_phase_pressure_drop_not_supported",
         ),
