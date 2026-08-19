@@ -362,13 +362,52 @@ def test_external_area_override_is_authoritative_but_does_not_change_flow_geomet
     )
 
 
-def test_unspecified_contact_warns_and_uses_documented_ideal_contact_default() -> None:
+def test_unspecified_contact_uses_documented_ideal_contact_default_without_warning() -> None:
     tube = _extruded()
+    assert tube.fin_contact_resistance is None
+    assert tube.fin_contact_efficiency is None
+    assert tube.contact_input_mode == "ideal_default"
     assert tube.contact_resistance_used == 0.0
     assert tube.contact_thermal_resistance_per_tube == 0.0
-    assert [warning.code for warning in tube.geometry_warnings] == [
-        "circular_finned_tube_contact_resistance_unspecified"
+    assert tube.geometry_warnings == ()
+
+
+def test_contact_input_mode_precedence_and_ignored_efficiency_diagnostic() -> None:
+    explicit_only = _extruded(fin_contact_resistance=1.0e-4, fin_contact_efficiency=None)
+    assert explicit_only.contact_input_mode == "explicit_resistance"
+    assert explicit_only.geometry_warnings == ()
+
+    efficiency_only = _extruded(fin_contact_resistance=None, fin_contact_efficiency=0.8)
+    assert efficiency_only.contact_input_mode == "contact_efficiency"
+    assert efficiency_only.geometry_warnings == ()
+
+    explicit_zero_wins = _extruded(fin_contact_resistance=0.0, fin_contact_efficiency=0.8)
+    assert explicit_zero_wins.contact_input_mode == "explicit_resistance"
+    assert [warning.code for warning in explicit_zero_wins.geometry_warnings] == [
+        "circular_finned_tube_contact_efficiency_ignored"
     ]
+    assert explicit_zero_wins.geometry_warnings[0].severity == "info"
+
+    both_positive = _extruded(fin_contact_resistance=1.0e-4, fin_contact_efficiency=0.8)
+    assert both_positive.contact_input_mode == "explicit_resistance"
+    assert [warning.code for warning in both_positive.geometry_warnings] == [
+        "circular_finned_tube_contact_efficiency_ignored"
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0.0, -0.1, 1.0000001, math.nan, math.inf, -math.inf],
+)
+def test_invalid_fin_contact_efficiency_is_rejected(value: float) -> None:
+    with pytest.raises(ValueError, match="fin_contact_efficiency"):
+        _extruded(fin_contact_efficiency=value)
+
+
+def test_fin_contact_efficiency_boundary_one_is_accepted() -> None:
+    tube = _extruded(fin_contact_efficiency=1.0)
+    assert tube.fin_contact_efficiency == 1.0
+    assert tube.contact_input_mode == "contact_efficiency"
 
 
 def test_root_and_contact_resistance_helpers_scale_for_parallel_tubes() -> None:

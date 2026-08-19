@@ -104,6 +104,22 @@ class ThermalResistanceNetwork:
     area_outside_gross)``.  In particular, finite fin contact and a continuous
     root layer are part of ``resistance_outside`` rather than hidden in the
     total-resistance sum.
+
+    ``contact_input_mode`` records which of the two mutually exclusive
+    contact inputs was resolved (``"explicit_resistance"``,
+    ``"contact_efficiency"`` or ``"ideal_default"``; ``"not_applicable"`` for
+    a plain tube). ``resistance_contact`` is always the actual absolute
+    [K/W] contact resistance used by the network, however it was resolved.
+    ``contact_resistance_used`` is the corresponding *areal* [m2 K/W]
+    equivalent actually used by this network -- for explicit-resistance mode
+    it equals the supplied ``fin_contact_resistance`` exactly;  for
+    efficiency mode it is the operating-point-derived equivalent; for the
+    ideal default it is ``0.0``. ``contact_resistance_equivalent_areal`` is
+    an explicitly-named alias of the same resolved value.
+    ``fin_contact_efficiency_effective`` is the actual contact-affected-path
+    conductance ratio implied by ``resistance_contact`` (``1.0`` for ideal
+    contact); for efficiency mode it reproduces
+    ``fin_contact_efficiency_input`` to numerical tolerance.
     """
 
     surface_type: TubeSurfaceType
@@ -120,6 +136,10 @@ class ThermalResistanceNetwork:
     resistance_inside: float
     resistance_core_wall: float
     resistance_root: float
+    contact_input_mode: str
+    fin_contact_efficiency_input: float | None
+    fin_contact_efficiency_effective: float
+    contact_resistance_equivalent_areal: float
     contact_resistance_used: float
     resistance_contact: float
     contact_area: float
@@ -143,6 +163,12 @@ class FinnedTubeDiagnostics:
     separately named ``outside_alpha_effective_gross`` is the generic
     gross-area coefficient reconstructed from the full outside resistance,
     including the declared contact/root topology.
+
+    ``contact_input_mode``, ``fin_contact_efficiency_input``,
+    ``fin_contact_efficiency_effective`` and
+    ``contact_resistance_equivalent_areal`` audit which contact input was
+    resolved and its operating-point equivalent; see
+    ``ThermalResistanceNetwork`` for their exact definitions.
     """
 
     tube_surface_type: TubeSurfaceType
@@ -159,6 +185,10 @@ class FinnedTubeDiagnostics:
     resistance_inside: float
     resistance_core_wall: float
     resistance_root: float
+    contact_input_mode: str
+    fin_contact_efficiency_input: float | None
+    fin_contact_efficiency_effective: float
+    contact_resistance_equivalent_areal: float
     contact_resistance_used: float
     resistance_contact: float
     contact_area: float
@@ -439,6 +469,68 @@ def evaluate_outside_hydraulics(
     )
 
 
+def _resolve_contact_input(
+    *,
+    tube: CircularFinnedTube,
+    bundle: TubeBundle,
+    contact_area: float,
+    ideal_path_resistance: float,
+) -> tuple[str, float, float]:
+    """Resolve the declared contact input into an absolute resistance.
+
+    Returns ``(contact_input_mode, resistance_contact, contact_resistance_
+    equivalent_areal)``. ``resistance_contact`` is the whole-bundle absolute
+    [K/W] resistance the caller must fold into the network exactly as the
+    legacy explicit-resistance term was folded in. ``ideal_path_resistance``
+    is the *contact-affected path's* ideal-contact resistance at the current
+    operating point: ``1/G_fin_ideal`` for a welded fin (``fin_branch_
+    only``) or ``R_root + R_branches`` for a continuous root layer -- see
+    ``calculate_resistance_network``.
+
+    Precedence: explicit ``fin_contact_resistance`` (even ``0.0``) over
+    ``fin_contact_efficiency`` over the ideal default (``R_contact == 0``).
+    """
+    mode = tube.contact_input_mode
+    if mode == "explicit_resistance":
+        # Unchanged from the pre-v0.7.2 explicit-resistance path: the areal
+        # equivalent reported is exactly the supplied value, and the
+        # absolute resistance folded into the network is bit-for-bit the
+        # same computation as before efficiency mode existed.
+        return mode, bundle.fin_contact_thermal_resistance, tube.fin_contact_resistance
+
+    if mode == "contact_efficiency":
+        eta_contact = tube.fin_contact_efficiency
+        if eta_contact >= 1.0 or not math.isfinite(ideal_path_resistance):
+            # eta_contact == 1 is required exactly, not just to numerical
+            # tolerance. A non-finite ideal_path_resistance means the
+            # contact-affected path has zero ideal conductance (e.g. an
+            # external-area override that removes the fin branch entirely);
+            # there is then no contact-affected conductance for the
+            # efficiency to degrade, so it is inert rather than a 0 * inf
+            # indeterminate form.
+            resistance_contact = 0.0
+        else:
+            resistance_contact = (1.0 / eta_contact - 1.0) * ideal_path_resistance
+        areal = 0.0 if contact_area == 0.0 else resistance_contact * contact_area
+        return mode, resistance_contact, areal
+
+    return mode, 0.0, 0.0
+
+
+def _effective_contact_efficiency(
+    *, resistance_contact: float, ideal_path_resistance: float
+) -> float:
+    """Conductance ratio of the contact-affected path implied by the network.
+
+    ``eta = G_actual / G_ideal = R_ideal / (R_ideal + R_contact)``. Equals
+    ``1.0`` exactly for ideal contact, and reproduces the requested
+    ``fin_contact_efficiency`` to numerical tolerance in efficiency mode.
+    """
+    if resistance_contact <= 0.0 or not math.isfinite(ideal_path_resistance):
+        return 1.0
+    return ideal_path_resistance / (ideal_path_resistance + resistance_contact)
+
+
 def calculate_resistance_network(
     *,
     bundle: TubeBundle,
@@ -479,6 +571,10 @@ def calculate_resistance_network(
         eta_fin = 1.0
         eta_overall = 1.0
         resistance_root = 0.0
+        contact_input_mode = "not_applicable"
+        fin_contact_efficiency_input = None
+        fin_contact_efficiency_effective = 1.0
+        contact_resistance_equivalent_areal = 0.0
         contact_resistance_used = 0.0
         resistance_contact = 0.0
         contact_area = 0.0
@@ -502,17 +598,30 @@ def calculate_resistance_network(
         eta_fin = fin_result.fin_efficiency
         eta_overall = area_effective / area_gross
         resistance_root = bundle.root_conduction_resistance
-        contact_resistance_used = tube.contact_resistance_used
-        resistance_contact = bundle.fin_contact_thermal_resistance
         contact_area = tube.contact_area_per_tube * bundle.n_tubes_total
         contact_area_basis = tube.contact_area_basis
         contact_topology = tube.contact_topology
+        fin_contact_efficiency_input = tube.fin_contact_efficiency
         conductance_primary = outside_alpha_physical * area_primary
         ideal_fin_conductance = outside_alpha_physical * eta_fin * area_fin
         if tube.D_root == tube.D_o:
             # Welded fins contact only beneath their roots. The exposed
             # primary cylinder is a genuine parallel bypass and must not be
-            # penalised by the fin/root contact resistance.
+            # penalised by the fin/root contact resistance. The ideal
+            # (contact-free) resistance of that same branch is the basis for
+            # both the efficiency-mode conversion and the reported effective
+            # efficiency.
+            ideal_path_resistance = (
+                math.inf if ideal_fin_conductance == 0.0 else 1.0 / ideal_fin_conductance
+            )
+            contact_input_mode, resistance_contact, contact_resistance_equivalent_areal = (
+                _resolve_contact_input(
+                    tube=tube,
+                    bundle=bundle,
+                    contact_area=contact_area,
+                    ideal_path_resistance=ideal_path_resistance,
+                )
+            )
             conductance_fin = (
                 0.0
                 if ideal_fin_conductance == 0.0
@@ -524,9 +633,33 @@ def calculate_resistance_network(
             # A continuous root layer covers the core/root interface, so its
             # conduction and contact terms are common to both outside
             # branches. Their parallel convection remains represented by the
-            # effective-area conductance below.
+            # effective-area conductance below. The ideal (contact-free)
+            # resistance of the *complete* downstream path -- root
+            # conduction plus the parallel branches -- is the basis for both
+            # the efficiency-mode conversion and the reported effective
+            # efficiency.
             conductance_fin = ideal_fin_conductance
+            ideal_path_resistance = resistance_root + 1.0 / (
+                conductance_primary + ideal_fin_conductance
+            )
+            contact_input_mode, resistance_contact, contact_resistance_equivalent_areal = (
+                _resolve_contact_input(
+                    tube=tube,
+                    bundle=bundle,
+                    contact_area=contact_area,
+                    ideal_path_resistance=ideal_path_resistance,
+                )
+            )
             common_root_contact = resistance_root + resistance_contact
+        fin_contact_efficiency_effective = _effective_contact_efficiency(
+            resistance_contact=resistance_contact,
+            ideal_path_resistance=ideal_path_resistance,
+        )
+        # ``contact_resistance_used`` now carries the network's resolved
+        # value (identical to ``contact_resistance_equivalent_areal``) so it
+        # is never misleading in efficiency mode; explicit-resistance mode
+        # keeps it numerically identical to the pre-v0.7.2 field.
+        contact_resistance_used = contact_resistance_equivalent_areal
 
     outside_conductance = conductance_primary + conductance_fin
     if not math.isfinite(outside_conductance) or outside_conductance <= 0.0:
@@ -567,6 +700,10 @@ def calculate_resistance_network(
         resistance_inside=resistance_i,
         resistance_core_wall=resistance_core_wall,
         resistance_root=resistance_root,
+        contact_input_mode=contact_input_mode,
+        fin_contact_efficiency_input=fin_contact_efficiency_input,
+        fin_contact_efficiency_effective=fin_contact_efficiency_effective,
+        contact_resistance_equivalent_areal=contact_resistance_equivalent_areal,
         contact_resistance_used=contact_resistance_used,
         resistance_contact=resistance_contact,
         contact_area=contact_area,
@@ -616,6 +753,10 @@ def build_finned_tube_diagnostics(
         resistance_inside=network.resistance_inside,
         resistance_core_wall=network.resistance_core_wall,
         resistance_root=network.resistance_root,
+        contact_input_mode=network.contact_input_mode,
+        fin_contact_efficiency_input=network.fin_contact_efficiency_input,
+        fin_contact_efficiency_effective=network.fin_contact_efficiency_effective,
+        contact_resistance_equivalent_areal=network.contact_resistance_equivalent_areal,
         contact_resistance_used=network.contact_resistance_used,
         resistance_contact=network.resistance_contact,
         contact_area=network.contact_area,

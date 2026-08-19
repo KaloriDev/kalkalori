@@ -192,6 +192,10 @@ def _assert_finned_diagnostics(result) -> None:
     )
     assert diagnostics.contact_resistance_used == 0.0
     assert diagnostics.resistance_contact == 0.0
+    assert diagnostics.contact_input_mode == "ideal_default"
+    assert diagnostics.fin_contact_efficiency_input is None
+    assert diagnostics.fin_contact_efficiency_effective == 1.0
+    assert diagnostics.contact_resistance_equivalent_areal == 0.0
     assert diagnostics.alpha == diagnostics.outside_alpha_physical
     assert diagnostics.alpha_physical == diagnostics.outside_alpha_physical
     assert diagnostics.outside_htc == diagnostics.outside_alpha_physical
@@ -211,7 +215,7 @@ def _assert_finned_diagnostics(result) -> None:
     assert diagnostics.pressure_drop_coefficient_definition == (
         "delta_p/(2*n_rows*rho*V_max^2)"
     )
-    assert any(
+    assert not any(
         warning.code == "circular_finned_tube_contact_resistance_unspecified"
         for warning in diagnostics.warnings
     )
