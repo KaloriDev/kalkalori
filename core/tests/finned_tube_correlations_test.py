@@ -347,6 +347,158 @@ def test_correlation_row_extensions_are_explicit_and_drag_scales_per_row() -> No
     } >= {"robinson_briggs_1966_row_count_secondary_extension"}
 
 
+@pytest.mark.parametrize("n_rows", [1, 2, 3])
+def test_briggs_young_small_row_counts_calculate_with_dedicated_warning(
+    n_rows: int,
+) -> None:
+    bundle = _published_range_bundle(n_rows=n_rows)
+    props = _published_range_properties()
+
+    result = calculate_finned_tube_outside_heat_transfer(3.0, bundle, props)
+
+    assert math.isfinite(result.colburn_j_factor)
+    assert math.isfinite(result.nusselt_number)
+    assert math.isfinite(result.alpha)
+    assert result.colburn_j_factor > 0.0
+    assert result.nusselt_number > 0.0
+    assert result.alpha > 0.0
+
+    row_warnings = [
+        warning
+        for warning in result.warnings
+        if warning.code.startswith("briggs_young_1963_")
+        and "row" in warning.code
+    ]
+    assert [warning.code for warning in row_warnings] == [
+        "briggs_young_1963_small_row_count_extrapolation"
+    ]
+    assert row_warnings[0].severity == "warning"
+    assert row_warnings[0].source == "finned_tube_outside_ht"
+    assert "six-row banks" in row_warnings[0].message
+    assert "at least four rows" in row_warnings[0].message
+    assert "unvalidated small-row-count extrapolation" in row_warnings[0].message
+    assert "no row correction has been applied" in row_warnings[0].message
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "expected_code"),
+    [
+        (4, "briggs_young_1963_row_count_secondary_extension"),
+        (5, "briggs_young_1963_row_count_secondary_extension"),
+        (6, None),
+        (7, "briggs_young_1963_row_count_secondary_extension"),
+    ],
+)
+def test_briggs_young_row_count_diagnostics_follow_applicability_tiers(
+    n_rows: int,
+    expected_code: str | None,
+) -> None:
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    request = replace(_heat_request(bundle, props, 3.0), n_rows=n_rows)
+
+    result = BriggsYoung1963Provider().evaluate(request)
+    row_warnings = [
+        warning
+        for warning in result.warnings
+        if warning.code.startswith("briggs_young_1963_")
+        and "row" in warning.code
+    ]
+
+    if expected_code is None:
+        assert row_warnings == []
+    else:
+        assert [warning.code for warning in row_warnings] == [expected_code]
+        assert row_warnings[0].severity == "info"
+        assert row_warnings[0].source == "finned_tube_outside_ht"
+        assert "six-row banks" in row_warnings[0].message
+        assert "secondary extension" in row_warnings[0].message
+        assert "no row-count correction" in row_warnings[0].message
+    assert not any(
+        warning.code == "briggs_young_1963_small_row_count_extrapolation"
+        for warning in result.warnings
+    )
+
+
+def test_briggs_young_small_row_count_uses_uncorrected_equation() -> None:
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    request = replace(_heat_request(bundle, props, 3.0), n_rows=1)
+
+    result = BriggsYoung1963Provider().evaluate(request)
+
+    t_mean = 0.5 * (request.fin_thickness_root + request.fin_thickness_tip)
+    spacing = request.fin_pitch - t_mean
+    height = 0.5 * (request.D_fin - request.D_root)
+    reynolds = (
+        request.m_dot
+        / request.minimum_free_flow_area
+        * request.D_root
+        / request.mu
+    )
+    prandtl = request.cp * request.mu / request.k
+    expected_j = (
+        0.134
+        * reynolds ** -0.319
+        * (spacing / height) ** 0.2
+        * (spacing / t_mean) ** 0.1134
+    )
+    expected_nusselt = expected_j * reynolds * prandtl ** (1.0 / 3.0)
+    expected_alpha = expected_nusselt * request.k / request.D_root
+
+    assert result.colburn_j_factor == pytest.approx(expected_j)
+    assert result.nusselt_number == pytest.approx(expected_nusselt)
+    assert result.alpha == pytest.approx(expected_alpha)
+
+
+def test_briggs_young_small_row_warning_coexists_with_other_diagnostics() -> None:
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    request = replace(
+        _heat_request(bundle, props, 3.0),
+        n_rows=2,
+        fluid_family="nitrogen",
+    )
+
+    result = BriggsYoung1963Provider().evaluate(request)
+    warning_keys = [(warning.source, warning.code) for warning in result.warnings]
+
+    assert warning_keys.count(
+        (
+            "finned_tube_outside_ht",
+            "briggs_young_1963_small_row_count_extrapolation",
+        )
+    ) == 1
+    assert (
+        "finned_tube_outside_ht",
+        "briggs_young_1963_non_air_source_extrapolation",
+    ) in warning_keys
+    assert len(warning_keys) == len(set(warning_keys))
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "error_type"),
+    [
+        (0, ValueError),
+        (-1, ValueError),
+        (1.0, TypeError),
+        (1.5, TypeError),
+        (False, TypeError),
+        (True, TypeError),
+    ],
+)
+def test_finned_heat_transfer_request_rejects_invalid_row_counts(
+    n_rows: object,
+    error_type: type[Exception],
+) -> None:
+    bundle = _published_range_bundle()
+    props = _published_range_properties()
+    request = _heat_request(bundle, props, 3.0)
+
+    with pytest.raises(error_type):
+        replace(request, n_rows=n_rows)
+
+
 def test_metadata_states_diameter_velocity_area_and_row_bases() -> None:
     bundle, props, m_dot = _benchmark_state()
     htc = calculate_finned_tube_outside_heat_transfer(m_dot, bundle, props)
@@ -358,7 +510,21 @@ def test_metadata_states_diameter_velocity_area_and_row_bases() -> None:
     assert "fin-root" in htc.reference_diameter
     assert "fin efficiency separately" in htc.area_basis
     assert "six-row" in htc.row_basis
+    assert "1-3 rows" in htc.row_basis
     assert htc.applicability
+    applicability = {item.name: item for item in htc.applicability}
+    source_rows = applicability["source_test_rows"]
+    recommended_rows = applicability["secondary_recommended_rows"]
+    assert (source_rows.lower, source_rows.upper, source_rows.units) == (
+        6.0,
+        6.0,
+        "rows",
+    )
+    assert (
+        recommended_rows.lower,
+        recommended_rows.upper,
+        recommended_rows.units,
+    ) == (4.0, None, "rows")
 
     assert pressure.method == "robinson_briggs_1966"
     assert pressure.coefficient_definition == ROBINSON_BRIGGS_COEFFICIENT_BASIS
@@ -373,15 +539,15 @@ def test_metadata_states_diameter_velocity_area_and_row_bases() -> None:
     assert pressure.applicability
 
 
-def test_briggs_young_hard_rejects_inline_fewer_rows_and_isosceles() -> None:
+def test_briggs_young_hard_rejects_inline_and_isosceles() -> None:
     bundle, props, m_dot = _benchmark_state()
-    request = _heat_request(bundle, props, m_dot)
+    request = replace(_heat_request(bundle, props, m_dot), n_rows=1)
     provider = BriggsYoung1963Provider()
 
     with pytest.raises(ValueError, match="staggered"):
         provider.evaluate(replace(request, layout="inline"))
-    with pytest.raises(ValueError, match="at least four"):
-        provider.evaluate(replace(request, n_rows=3))
+    with pytest.raises(ValueError, match="solid circular-finned"):
+        provider.evaluate(replace(request, geometry_family="unsupported"))
     with pytest.raises(ValueError, match="equilateral"):
         provider.evaluate(
             replace(request, pitch_longitudinal=1.40 * INCH)

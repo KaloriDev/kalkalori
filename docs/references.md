@@ -191,6 +191,12 @@ Schmidt, VDI, Genić and Nir were reviewed as extended-surface or comparative
 references; their correlations are not blended into the two implemented
 Briggs--Young/Robinson--Briggs empirical models.
 
+The Briggs--Young source experiments used six-row banks, while later
+references recommend applying the correlation to banks with at least four
+rows. In v0.7.4, one- to three-row banks remain calculable as explicitly
+unvalidated extrapolations of the unchanged equation. No empirical row-count
+correction is applied.
+
 Used for the v0.7.0 implementation described in
 [`finned_tube_model.md`](finned_tube_model.md):
 

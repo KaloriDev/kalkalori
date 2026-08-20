@@ -5,98 +5,147 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [0.7.x]
-
-### Added
-
-- Rating can derive the required tube-side pure-steam mass flow from the
-  opposing-side heat balance (or explicit duty) and a requested steam outlet
-  state. Unknown steam flow defaults to complete condensation
-  (``quality_out=0.0``) when no outlet target is supplied.
-- Added dry circular-finned-tube geometry, annular-fin efficiency, and
-  topology-aware root/contact thermal resistance.
-- Added Briggs--Young dry outside heat transfer and verified-scope
-  Robinson--Briggs finned-bank pressure loss to Simulation and Rating.
-- Added an analytical fast path for constant-thickness circular fins.
-- Added deterministic release regressions for dry water/air finned banks,
-  geometry, efficiency, correlation bounds, and inside phase-change routes.
-- Added fin-surface temperature diagnostics distinct from the existing
-  outside/core-wall network node: ``FinnedTubeDiagnostics.fin_tip_temperature_ratio``,
-  ``WallTemperatureProbe``/``WallTemperatureEnvelope`` primary-surface/fin-base/
-  fin-tip/outside-skin fields, and the corresponding public
-  ``outside_skin_temperature_*_estimate`` /
-  ``fin_base_temperature_*_estimate`` / ``fin_tip_temperature_*_estimate``
-  Simulation/Rating properties. Reporting-only; no fin efficiency, contact
-  topology, or thermal-result change. See
-  `docs/steam_heater_zone_driving_force.md`.
-- Added a practical dimensionless ``fin_contact_efficiency`` fin/root contact
-  input (``0 < value <= 1``) on ``CircularFinnedTube``, alongside the
-  existing physically explicit ``fin_contact_resistance``. Precedence is
-  explicit resistance (even ``0.0``) over efficiency over the ideal-contact
-  default; the equivalent areal resistance implied by an efficiency is
-  resolved per operating point, not fixed at geometry-construction time. See
-  `docs/finned_tube_model.md`.
-- **v0.7.3 — Transverse passes.** Added ``TubeBundle.n_passes_transverse``
-  (default ``None``, preserving every pre-v0.7.3 bundle's interpretation and
-  numerical results) describing how the total tube-side passes are grouped
-  into longitudinal sections of the outside tube bank, plus the derived
-  topology diagnostics ``n_passes_transverse_resolved``,
-  ``n_sections_longitudinal``, ``n_rows_per_section``,
-  ``n_tubes_per_pass_effective``, and ``pass_partition_is_exact``. The
-  complete hydraulic length still uses the total pass count
-  (``n_passes_tube * tube.length_total``) and the complete outside tube bank
-  geometry (frontal area, minimum free-flow area, total heat-transfer areas,
-  row count) is unaffected by the transverse-pass topology. No segmented
-  thermal solver was introduced; ``flow_arrangement`` continues to describe
-  one global 0D thermal element. See the ``TubeBundle`` docstring in
-  `core/geometry/bundle.py`.
+## [0.7.4] — Briggs–Young small-row applicability
 
 ### Changed
 
-- **v0.7.3.** Removed the MVP restriction that total tube count divide
-  exactly by the tube-side pass count. ``TubeBundle`` now accepts unequal
-  integer tube counts among passes and represents them with an effective
-  average parallel tube count per pass, ``n_tubes_total / n_passes_tube``
-  (not rounded), used as the authoritative tube-side flow area for
-  velocity, Reynolds number, heat-transfer coefficient, and pressure drop.
-  ``n_tubes_per_pass`` is now a float (the same effective average) instead
-  of a floored integer; for every previously exactly-divisible bundle the
-  numeric value is unchanged (e.g. ``24`` becomes ``24.0``) and all
-  downstream hydraulic/thermal results are unchanged within floating-point
-  tolerance.
+- `BriggsYoung1963Provider` now evaluates valid circular-finned banks with
+  any positive row count instead of rejecting banks with fewer than four rows.
+- One- to three-row banks return the
+  `briggs_young_1963_small_row_count_extrapolation` warning because they are
+  outside the later recommended range. The uncorrected Briggs–Young equation
+  is still used; no row-count correction is applied.
+- Existing hard validation for invalid inputs, unsupported geometries and
+  unsupported layouts remains unchanged.
 
-- Clarified physical and effective outside heat-transfer coefficients for
-  extended surfaces.
-- Refined circular-finned-tube geometry boundaries and limited the built-in
-  Robinson--Briggs pressure-drop model to verified equilateral staggered banks.
-- Enabled supported inside evaporation and condensation paths opposite a dry
-  circular-finned outside surface; wet/condensing finned outside paths remain
-  controlled unsupported cases.
-- Corrected steam-heater phase-zone driving forces: each desuperheat/
-  condensation/subcooling zone now sizes against its own thermodynamic
-  driving force (exact terminal LMTD for the isothermal condensation zone,
-  the established epsilon-NTU inversion for sensible zones) over an
-  equivalent 0D series-marched opposing-stream temperature path, instead of
-  one shared arithmetic opposing-stream mean temperature. Whole-exchanger
-  EMTD remains the single derived identity ``Q_total / UA_total``. Required
-  area/UA/EMTD/overdesign for a steam Rating are expected to change for the
-  same geometry; actual area/UA, Briggs--Young, Robinson--Briggs, fin
-  efficiency, contact topology, alpha semantics, pressure drop, and the
-  derived steam-mass-flow Rating path are unchanged. See
-  `docs/steam_heater_zone_driving_force.md`.
-- Simplified ordinary finned-tube example/validation configuration to set
-  ``fin_contact_efficiency = 1.0`` (ideal contact) instead of an areal
-  ``fin_contact_resistance``; the advanced physical input remains fully
-  supported and is still used by cases with deliberate non-ideal contact.
-  Removed the old diagnostic warning that fired merely because
-  ``fin_contact_resistance`` was left unspecified, since ideal contact is
-  now the documented default. ``FinnedTubeDiagnostics``/
-  ``ThermalResistanceNetwork`` gained ``contact_input_mode``,
-  ``fin_contact_efficiency_input``/``_effective`` and
-  ``contact_resistance_equivalent_areal``; ``contact_resistance_used`` now
-  reports the network's resolved areal equivalent instead of only mirroring
-  an unset explicit resistance. Explicit ``fin_contact_resistance`` numerics
-  are unchanged.
+---
+
+## [0.7.3] — Transverse tube-pass topology
+
+### Added
+
+- Added `TubeBundle.n_passes_transverse` to describe how tube-side passes are
+  grouped into longitudinal sections of the outside tube bank. Its default of
+  `None` preserves the interpretation and numerical results of earlier bundles.
+- Added the derived topology diagnostics
+  `n_passes_transverse_resolved`, `n_sections_longitudinal`,
+  `n_rows_per_section`, `n_tubes_per_pass_effective` and
+  `pass_partition_is_exact`.
+
+### Changed
+
+- Removed the requirement that the total tube count divide exactly by the
+  tube-side pass count. Unequal integer pass populations are represented by
+  the unrounded effective average `n_tubes_total / n_passes_tube`.
+- Changed `n_tubes_per_pass` from a floored integer to the effective floating-
+  point average used for tube-side flow area, velocity, Reynolds number, heat
+  transfer and pressure drop. Previously exact divisions retain unchanged
+  hydraulic and thermal results within floating-point tolerance.
+
+### Notes
+
+- Hydraulic length continues to use the total tube-side pass count, while the
+  complete outside-bank geometry and heat-transfer area remain unchanged.
+- The transverse-pass topology does not introduce thermal segmentation;
+  `flow_arrangement` still describes one global 0D thermal element.
+
+---
+
+## [0.7.2] — Fin-contact efficiency input
+
+### Added
+
+- Added the dimensionless `CircularFinnedTube.fin_contact_efficiency` input
+  (`0 < value <= 1`) as a practical alternative to the physically explicit
+  `fin_contact_resistance`.
+- Added `contact_input_mode`, `fin_contact_efficiency_input`,
+  `fin_contact_efficiency_effective` and
+  `contact_resistance_equivalent_areal` diagnostics.
+- Documented the contact-input precedence and published engineering guidance
+  in `docs/finned_tube_model.md`.
+
+### Changed
+
+- Defined contact-input precedence as explicit `fin_contact_resistance`
+  (including `0.0`), then `fin_contact_efficiency`, then ideal contact.
+- Resolved the equivalent areal resistance implied by
+  `fin_contact_efficiency` at each operating point rather than fixing it at
+  geometry construction.
+- Simplified ordinary finned-tube examples and validation cases to use
+  `fin_contact_efficiency = 1.0` for ideal contact while retaining explicit
+  resistance inputs for deliberately non-ideal cases.
+- Removed the warning previously emitted when `fin_contact_resistance` was
+  omitted, because ideal contact is now the documented default. Supplying both
+  contact inputs reports that efficiency is ignored.
+- Changed `contact_resistance_used` to report the resolved equivalent areal
+  resistance. Existing calculations with explicit `fin_contact_resistance`
+  remain numerically unchanged.
+
+---
+
+## [0.7.1] — Steam-heater rating and surface diagnostics
+
+### Added
+
+- Added Rating support for deriving the required tube-side pure-steam mass
+  flow from the opposing-side heat balance or an explicit duty and requested
+  steam outlet state. When no outlet target is supplied, unknown steam flow
+  defaults to complete condensation (`quality_out = 0.0`).
+- Added fin-surface temperature diagnostics distinct from the existing
+  outside/core-wall network node, including primary-surface, fin-base,
+  fin-tip and outside-skin estimates in `FinnedTubeDiagnostics`,
+  `WallTemperatureProbe`, `WallTemperatureEnvelope`, Simulation and Rating.
+- Added public access to raw per-zone steam results and their driving-force
+  diagnostics.
+
+### Changed
+
+- Corrected steam-heater phase-zone driving forces so desuperheating,
+  condensation and subcooling are each sized against their own thermodynamic
+  driving force over an equivalent 0D series-marched opposing-stream path.
+- Used exact terminal LMTD for the isothermal condensation zone and the
+  established ε–NTU inversion for sensible zones. Whole-exchanger EMTD remains
+  the derived identity `Q_total / UA_total`.
+- The corrected driving forces may change required area, UA, EMTD and
+  overdesign for the same Rating geometry. Actual area and UA, outside
+  correlations, fin efficiency, contact topology, pressure drop and the
+  derived steam-flow path are unchanged.
+
+### Notes
+
+- The added fin-surface temperatures are reporting-only and do not change fin
+  efficiency, contact topology or thermal results.
+
+---
+
+## [0.7.0] — Dry circular-finned tubes
+
+### Added
+
+- Added `CircularFinnedTube` geometry with constant or linearly tapered
+  annular fins, explicit root geometry and fin/root contact resistance.
+- Added annular-fin efficiency, topology-aware root/contact thermal resistance
+  and an analytical fast path for constant-thickness fins.
+- Added Briggs–Young (1963) dry outside heat transfer and the verified-scope
+  Robinson–Briggs finned-bank pressure-drop model.
+- Integrated dry circular-finned tubes into Simulation and Rating.
+- Added deterministic regressions for dry water/air finned banks, geometry,
+  efficiency, correlation applicability and supported inside phase-change
+  routes.
+
+### Changed
+
+- Clarified the distinction between physical and effective-gross outside
+  heat-transfer coefficients for extended surfaces.
+- Refined circular-finned geometry boundaries and restricted the built-in
+  Robinson–Briggs model to verified equilateral staggered banks.
+- Enabled supported inside evaporation and condensation opposite a dry
+  circular-finned outside surface.
+
+### Notes
+
+- Wet or condensing circular-finned outside surfaces remain controlled
+  unsupported cases.
 
 ---
 
