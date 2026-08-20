@@ -36,8 +36,34 @@ The project follows **Semantic Versioning (SemVer)**:
   default; the equivalent areal resistance implied by an efficiency is
   resolved per operating point, not fixed at geometry-construction time. See
   `docs/finned_tube_model.md`.
+- **v0.7.3 — Transverse passes.** Added ``TubeBundle.n_passes_transverse``
+  (default ``None``, preserving every pre-v0.7.3 bundle's interpretation and
+  numerical results) describing how the total tube-side passes are grouped
+  into longitudinal sections of the outside tube bank, plus the derived
+  topology diagnostics ``n_passes_transverse_resolved``,
+  ``n_sections_longitudinal``, ``n_rows_per_section``,
+  ``n_tubes_per_pass_effective``, and ``pass_partition_is_exact``. The
+  complete hydraulic length still uses the total pass count
+  (``n_passes_tube * tube.length_total``) and the complete outside tube bank
+  geometry (frontal area, minimum free-flow area, total heat-transfer areas,
+  row count) is unaffected by the transverse-pass topology. No segmented
+  thermal solver was introduced; ``flow_arrangement`` continues to describe
+  one global 0D thermal element. See the ``TubeBundle`` docstring in
+  `core/geometry/bundle.py`.
 
 ### Changed
+
+- **v0.7.3.** Removed the MVP restriction that total tube count divide
+  exactly by the tube-side pass count. ``TubeBundle`` now accepts unequal
+  integer tube counts among passes and represents them with an effective
+  average parallel tube count per pass, ``n_tubes_total / n_passes_tube``
+  (not rounded), used as the authoritative tube-side flow area for
+  velocity, Reynolds number, heat-transfer coefficient, and pressure drop.
+  ``n_tubes_per_pass`` is now a float (the same effective average) instead
+  of a floored integer; for every previously exactly-divisible bundle the
+  numeric value is unchanged (e.g. ``24`` becomes ``24.0``) and all
+  downstream hydraulic/thermal results are unchanged within floating-point
+  tolerance.
 
 - Clarified physical and effective outside heat-transfer coefficients for
   extended surfaces.

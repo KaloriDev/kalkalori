@@ -75,13 +75,32 @@ class TubeBundle:
         How successive passes are connected; see ``TubePathType``. Defaults
         to ``STRAIGHT``, preserving the interpretation used by models that
         do not specify it.
+    n_passes_transverse : int | None
+        Number of tube-side passes contained within one longitudinal
+        section of the tube bank (v0.7.3). For example
+        ``n_passes_tube=18, n_passes_transverse=6`` describes 3
+        longitudinal sections of 6 transverse passes each. ``None`` (the
+        default) means the topology is not separately partitioned into
+        longitudinal sections: all tube-side passes are treated as
+        belonging to one effective longitudinal section, which preserves
+        every pre-v0.7.3 bundle's interpretation and numerical results.
 
     Notes
     -----
     - No defaults are imposed for geometric definition; all key geometric parameters
       must be provided explicitly.
-    - MVP assumes equal partitioning of tubes among passes.
-      Future: support explicit pass partition map (unequal passes).
+    - Exact integer tube partitioning among passes is not required or modeled.
+      The current 0D model uses the effective average parallel tube count per
+      pass, ``n_tubes_total / n_passes_tube`` (see ``n_tubes_per_pass_effective``),
+      which is authoritative for tube-side flow area, velocity, Reynolds
+      number, heat-transfer coefficient, and pressure drop. Individual real
+      passes may contain slightly different integer tube counts; an explicit
+      circuit/pass map remains future scope.
+    - ``n_passes_transverse`` describes circuit topology only (how the total
+      tube-side passes are grouped into longitudinal sections of the outside
+      tube bank). It does not alter total heat-transfer area, outside-flow
+      geometry, or the global 0D flow-arrangement thermal model: v0.7.3 does
+      not introduce row/section-wise thermal segmentation.
     """
 
     tube: BaseTube
@@ -93,6 +112,7 @@ class TubeBundle:
     n_passes_tube: int
     flow_arrangement: str
     tube_path_type: TubePathType = TubePathType.STRAIGHT
+    n_passes_transverse: int | None = None
 
     def __post_init__(self) -> None:
         if self.n_rows <= 0 or self.n_tubes_per_row <= 0:
@@ -113,17 +133,39 @@ class TubeBundle:
         if self.flow_arrangement.lower() not in ("crossflow", "counterflow", "cocurrentflow"):
             raise ValueError("flow_arrangement must be 'crossflow', 'counterflow', or 'cocurrentflow'.")
 
-        if self.n_tubes_total % self.n_passes_tube != 0:
-            raise ValueError(
-                "For MVP, total tube count must be divisible by n_passes_tube "
-                "(equal tube partitioning per pass)."
-            )
-
         if self.tube_path_type == TubePathType.U_TUBE and self.n_passes_tube < 2:
             raise ValueError(
                 "tube_path_type=U_TUBE requires at least two tube passes "
                 "(a single-pass bundle has no U-bend). Bend arc length and "
                 "bend pressure loss are not yet included in any tube path type."
+            )
+
+        if self.n_passes_transverse is not None:
+            if self.n_passes_transverse <= 0:
+                raise ValueError("n_passes_transverse must be a positive integer.")
+            if self.n_passes_transverse > self.n_passes_tube:
+                raise ValueError(
+                    "n_passes_transverse must not exceed n_passes_tube "
+                    f"(got n_passes_transverse={self.n_passes_transverse}, "
+                    f"n_passes_tube={self.n_passes_tube})."
+                )
+            if self.n_passes_tube % self.n_passes_transverse != 0:
+                raise ValueError(
+                    "n_passes_tube must be an exact integer multiple of "
+                    "n_passes_transverse (equal transverse pass count in "
+                    f"every longitudinal section); got n_passes_tube="
+                    f"{self.n_passes_tube}, n_passes_transverse="
+                    f"{self.n_passes_transverse}."
+                )
+
+        if self.n_rows % self.n_sections_longitudinal != 0:
+            raise ValueError(
+                "n_rows must be an exact integer multiple of "
+                "n_sections_longitudinal (n_passes_tube // "
+                "n_passes_transverse_resolved); the current v0.7.3 "
+                "transverse-pass topology requires equal integer row counts "
+                f"in every longitudinal section, got n_rows={self.n_rows}, "
+                f"n_sections_longitudinal={self.n_sections_longitudinal}."
             )
 
         if isinstance(self.tube, CircularFinnedTube):
@@ -138,9 +180,53 @@ class TubeBundle:
         return self.n_rows * self.n_tubes_per_row
 
     @property
-    def n_tubes_per_pass(self) -> int:
-        """Number of tubes in parallel within a single pass (MVP equal split)."""
-        return self.n_tubes_total // self.n_passes_tube
+    def n_tubes_per_pass(self) -> float:
+        """Effective average number of parallel tubes per tube-side pass."""
+        return self.n_tubes_per_pass_effective
+
+    @property
+    def n_tubes_per_pass_effective(self) -> float:
+        """Effective average parallel tube count per pass, ``total / passes``.
+
+        This is the authoritative 0D approximation for tube-side flow area,
+        velocity, Reynolds number, heat-transfer coefficient, and pressure
+        drop (v0.7.3). Real circuiting may assign slightly different integer
+        tube counts to individual passes; that exact distribution is not
+        modeled here (see ``pass_partition_is_exact``).
+        """
+        return self.n_tubes_total / self.n_passes_tube
+
+    @property
+    def pass_partition_is_exact(self) -> bool:
+        """Whether ``n_tubes_total`` divides evenly by ``n_passes_tube``.
+
+        Diagnostic only: an unequal (non-integer) partition is an accepted,
+        intentional 0D approximation and never rejects bundle construction.
+        """
+        return self.n_tubes_total % self.n_passes_tube == 0
+
+    @property
+    def n_passes_transverse_resolved(self) -> int:
+        """Transverse passes per longitudinal section, with legacy default.
+
+        ``n_passes_transverse=None`` means the topology is not separately
+        partitioned into longitudinal sections: it resolves to
+        ``n_passes_tube``, i.e. one effective longitudinal section, which is
+        exactly the pre-v0.7.3 interpretation.
+        """
+        if self.n_passes_transverse is None:
+            return self.n_passes_tube
+        return self.n_passes_transverse
+
+    @property
+    def n_sections_longitudinal(self) -> int:
+        """Number of longitudinal sections the tube-side passes are grouped into."""
+        return self.n_passes_tube // self.n_passes_transverse_resolved
+
+    @property
+    def n_rows_per_section(self) -> int:
+        """Outside-flow rows contained in each longitudinal section."""
+        return self.n_rows // self.n_sections_longitudinal
 
     @property
     def n_turns(self) -> int:
@@ -206,7 +292,7 @@ class TubeBundle:
     @property
     def internal_flow_area_per_pass(self) -> float:
         """Total internal flow area within a single pass [m^2]."""
-        return self.n_tubes_per_pass * self.tube.flow_area
+        return self.n_tubes_per_pass_effective * self.tube.flow_area
 
     @property
     def internal_hydraulic_diameter(self) -> float:
