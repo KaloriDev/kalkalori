@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import TubeSurfaceType
@@ -76,6 +77,9 @@ from core.common.warnings import (
 )
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
+
+if TYPE_CHECKING:
+    from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
 
 
 @dataclass(frozen=True)
@@ -410,6 +414,24 @@ class HXResult:
     def finned_tube(self) -> FinnedTubeDiagnostics | None:
         """Concise alias for :attr:`finned_tube_diagnostics`."""
         return self.finned_tube_diagnostics
+
+    @property
+    def wet_finned_surface(self) -> "WetFinnedSurfaceResult | None":
+        """Converged wet circular-fin diagnostics, or ``None`` when absent."""
+        diagnostics = self.finned_tube_diagnostics
+        return None if diagnostics is None else diagnostics.wet_surface
+
+    @property
+    def outside_dp_dry_reference(self) -> float | None:
+        """Dry circular-finned-bank pressure-drop reference [Pa]."""
+        diagnostics = self.finned_tube_diagnostics
+        return None if diagnostics is None else diagnostics.outside_dp_dry_reference
+
+    @property
+    def wet_pressure_drop_supported(self) -> bool | None:
+        """Whether a wet circular-fin pressure-drop correction is supported."""
+        diagnostics = self.finned_tube_diagnostics
+        return None if diagnostics is None else diagnostics.wet_pressure_drop_supported
 
     @property
     def tube_bundle_hydraulic(self) -> TubeBundleHydraulicResult | None:

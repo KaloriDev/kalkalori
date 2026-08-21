@@ -108,6 +108,7 @@ from core.phase_change.types import PhaseChangeResult, WaterSteamPhaseChangeResu
 if TYPE_CHECKING:
     from core.models.bare_tube import BareTubeHeatExchanger, HXResult
     from core.models.simulation import HXSimulationResult
+    from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +175,24 @@ class HXRatingResult:
     @property
     def finned_tube(self) -> FinnedTubeDiagnostics | None:
         return self.finned_tube_diagnostics
+
+    @property
+    def wet_finned_surface(self) -> "WetFinnedSurfaceResult | None":
+        """Converged wet circular-fin diagnostics, or ``None`` when absent."""
+        diagnostics = self.finned_tube_diagnostics
+        return None if diagnostics is None else diagnostics.wet_surface
+
+    @property
+    def outside_dp_dry_reference(self) -> float | None:
+        """Dry circular-finned-bank pressure-drop reference [Pa]."""
+        diagnostics = self.finned_tube_diagnostics
+        return None if diagnostics is None else diagnostics.outside_dp_dry_reference
+
+    @property
+    def wet_pressure_drop_supported(self) -> bool | None:
+        """Whether a wet circular-fin pressure-drop correction is supported."""
+        diagnostics = self.finned_tube_diagnostics
+        return None if diagnostics is None else diagnostics.wet_pressure_drop_supported
 
     @property
     def tube_surface_type(self) -> TubeSurfaceType:

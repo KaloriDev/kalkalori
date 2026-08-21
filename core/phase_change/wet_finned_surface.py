@@ -47,6 +47,7 @@ from core.phase_change.water_equilibrium import (
     saturated_water_ratio,
 )
 from core.properties.water import (
+    WATER_CRITICAL_TEMPERATURE_K,
     WATER_TRIPLE_POINT_TEMPERATURE_K,
     water_latent_heat_of_vaporization,
     water_saturation_liquid_enthalpy,
@@ -94,9 +95,12 @@ class WetAnnularFinResult:
 
     Areas and rates are for one geometric fin.  ``wet_fin_area`` is the area
     of both faces from the root to a linearly interpolated dew-point crossing;
-    the physical tip area is included only when the tip itself is wet.
-    ``wet_dry_boundary_radius`` is therefore the radial dew-point crossing on
-    the two faces and is ``None`` for dry and fully-wet states.
+    the physical tip area is included only when the tip itself is wet.  A
+    whole-exchanger caller may additionally apply a 0D cold-zone area factor
+    when the dry endpoint envelope activates condensation although the bulk-
+    mean radial field is dry.  In that case ``fin_wet_state`` is partial but
+    ``wet_dry_boundary_radius`` is ``None`` when the representative cold-zone
+    fin is wet all the way to its tip: there is no radial crossing to report.
     """
 
     fin_wet_state: WetFinState
@@ -122,6 +126,8 @@ class WetAnnularFinResult:
 
     outside_alpha_physical: float
     mass_transfer_coefficient: float
+    condensation_area_fraction: float
+    condensation_temperature_offset_K: float
     radial_cells: int
     iterations: int
     residuals: Mapping[str, float]
@@ -168,6 +174,7 @@ class WetFinnedSurfaceResult:
     core_wall_temperature: float
     inside_wall_temperature: float
     root_surface_temperature: float
+    outside_surface_temperature_area_mean: float
     wall_temperature_wet_mean: float | None
     W_sat_wet_surface: float | None
 
@@ -176,6 +183,8 @@ class WetFinnedSurfaceResult:
     fin_area: float
     equivalent_fin_count: float
     water_availability_scale: float
+    condensation_area_fraction: float
+    condensation_temperature_offset_K: float
 
     outside_alpha_physical: float
     outside_alpha_wet_effective_gross_core_basis: float
@@ -236,6 +245,7 @@ class _TransferEvaluation:
     total_flux: float
     condensate_enthalpy_flux: float
     W_sat: float | None
+    condensation_temperature: float
 
 
 @dataclass(frozen=True)
@@ -348,6 +358,8 @@ def solve_wet_finned_surface(
     m_dot_water_vapor_available: float,
     M_h2o: float = WATER_MOLAR_MASS_KG_PER_MOL,
     lewis_number: float = 1.0,
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
     radial_cells: int = DEFAULT_WET_FIN_RADIAL_CELLS,
     max_iterations: int = 80,
     temperature_tolerance_K: float = 1.0e-7,
@@ -384,6 +396,20 @@ def solve_wet_finned_surface(
     ):
         raise ValueError(
             "m_dot_water_vapor_available must be finite and non-negative."
+        )
+    if (
+        not math.isfinite(condensation_area_fraction)
+        or not 0.0 <= condensation_area_fraction <= 1.0
+    ):
+        raise ValueError("condensation_area_fraction must be in [0, 1].")
+    if not math.isfinite(condensation_temperature_offset_K):
+        raise ValueError(
+            "condensation_temperature_offset_K must be finite [K]."
+        )
+    if condensation_temperature_offset_K > 0.0:
+        raise ValueError(
+            "condensation_temperature_offset_K must be <= 0 K; the 0D "
+            "wet-zone representative cannot be warmer than the mean field."
         )
 
     _validate_common_inputs(
@@ -425,6 +451,10 @@ def solve_wet_finned_surface(
         M_h2o=M_h2o,
         lewis_number=lewis_number,
         m_dot_water_vapor_available=m_dot_water_vapor_available,
+        condensation_area_fraction=condensation_area_fraction,
+        condensation_temperature_offset_K=(
+            condensation_temperature_offset_K
+        ),
         max_iterations=max_iterations,
         temperature_tolerance_K=temperature_tolerance_K,
         relative_heat_tolerance=relative_heat_tolerance,
@@ -470,6 +500,10 @@ def solve_wet_finned_surface(
             lewis_number=lewis_number,
             iterations=iterations,
             residuals=residuals,
+            condensation_area_fraction=condensation_area_fraction,
+            condensation_temperature_offset_K=(
+                condensation_temperature_offset_K
+            ),
         )
         Q_fin_sensible = annular_fin.Q_fin_sensible * equivalent_fin_count
         Q_fin_latent = annular_fin.Q_fin_latent * equivalent_fin_count
@@ -497,9 +531,18 @@ def solve_wet_finned_surface(
     Q_total = Q_sensible + Q_latent
     m_total = m_primary + m_fin
     H_total = H_primary + H_fin
+    outside_surface_temperature_area_mean = (
+        gas_bulk_temperature
+        - Q_sensible
+        / (network.outside_alpha_physical * network.area_outside_gross)
+    )
 
     primary_is_wet = primary_transfer.raw_mass_flux > 0.0
-    wet_primary_area = primary_area if primary_is_wet else 0.0
+    wet_primary_area = (
+        primary_area * condensation_area_fraction
+        if primary_is_wet
+        else 0.0
+    )
     wet_area = wet_primary_area + wet_fin_area
     wet_fraction = wet_area / network.area_outside_gross
 
@@ -508,7 +551,9 @@ def solve_wet_finned_surface(
     for index, transfer in enumerate(evaluation.transfers):
         node_mass = chain.surface_areas[index] * transfer.mass_flux
         if node_mass > 0.0:
-            wet_mass_temperature_sum += node_mass * temperatures[index]
+            wet_mass_temperature_sum += (
+                node_mass * transfer.condensation_temperature
+            )
             assert transfer.W_sat is not None
             wet_mass_W_sat_sum += node_mass * transfer.W_sat
     T_wet_mean = (
@@ -568,6 +613,9 @@ def solve_wet_finned_surface(
         core_wall_temperature=T_core,
         inside_wall_temperature=inside_wall_temperature,
         root_surface_temperature=T_root,
+        outside_surface_temperature_area_mean=(
+            outside_surface_temperature_area_mean
+        ),
         wall_temperature_wet_mean=T_wet_mean,
         W_sat_wet_surface=W_sat_wet,
         outside_total_area=network.area_outside_gross,
@@ -575,6 +623,8 @@ def solve_wet_finned_surface(
         fin_area=network.area_fin,
         equivalent_fin_count=equivalent_fin_count,
         water_availability_scale=evaluation.availability_scale,
+        condensation_area_fraction=condensation_area_fraction,
+        condensation_temperature_offset_K=condensation_temperature_offset_K,
         outside_alpha_physical=network.outside_alpha_physical,
         outside_alpha_wet_effective_gross_core_basis=outside_alpha_wet_effective,
         outside_alpha_wet_effective_basis=(
@@ -602,6 +652,17 @@ def solve_wet_finned_surface(
             "lewis_number_chilton_colburn_analogy",
             "dry_gas_composition_unchanged_by_condensation",
             "authoritative_fin_area_uniform_equivalent_fin_count",
+            *(
+                (
+                    "endpoint_envelope_wet_zone_0d_linear_weighting",
+                    "wet_zone_temperature_offset_applies_to_mass_latent_only",
+                )
+                if (
+                    condensation_area_fraction < 1.0
+                    or condensation_temperature_offset_K != 0.0
+                )
+                else ()
+            ),
             "no_condensate_film_resistance_or_wet_pressure_drop_correction",
         ),
         warnings=(),
@@ -794,6 +855,8 @@ def _solve_nonlinear_chain(
     M_h2o: float,
     lewis_number: float,
     m_dot_water_vapor_available: float,
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
     max_iterations: int,
     temperature_tolerance_K: float,
     relative_heat_tolerance: float,
@@ -820,6 +883,10 @@ def _solve_nonlinear_chain(
         M_h2o=M_h2o,
         lewis_number=lewis_number,
         m_dot_water_vapor_available=0.0,
+        condensation_area_fraction=condensation_area_fraction,
+        condensation_temperature_offset_K=(
+            condensation_temperature_offset_K
+        ),
     )
     dry_delta = _solve_tridiagonal(
         list(dry.lower),
@@ -863,6 +930,10 @@ def _solve_nonlinear_chain(
             M_h2o=M_h2o,
             lewis_number=lewis_number,
             m_dot_water_vapor_available=m_dot_water_vapor_available,
+            condensation_area_fraction=condensation_area_fraction,
+            condensation_temperature_offset_K=(
+                condensation_temperature_offset_K
+            ),
         )
         heat_tolerance = max(
             relative_heat_tolerance
@@ -891,53 +962,92 @@ def _solve_nonlinear_chain(
         ):
             return temperatures, current, iteration, residuals
 
-        delta = _solve_tridiagonal(
+        newton_delta = _solve_tridiagonal(
             list(current.lower),
             list(current.diagonal),
             list(current.upper),
             [-value for value in current.residual],
         )
-        damping = relaxation_factor
-        current_norm = current.equation_residual_W
+        # At a dew-point crossing the max(., 0) mass source is continuous but
+        # not differentiable.  Use the residual RMS as the line-search merit
+        # function (the strict max-norm residual remains the convergence
+        # criterion).  If the semismooth Newton direction is not a descent
+        # direction, a frozen-latent-source/Picard Jacobian supplies a robust
+        # second direction without changing the final nonlinear equations.
+        # This Newton/Picard treatment is consistent with the partially wet
+        # finite-difference solution strategy of Sharqawy, Moinuddin & Zubair
+        # (2012), DOI 10.1016/j.ijrefrig.2011.11.004.
+        picard_diagonal = []
+        for index, area in enumerate(chain.surface_areas):
+            diagonal = chain.boundary_conductances[index]
+            if index > 0:
+                diagonal += chain.edges[index - 1]
+            if index < len(chain.surface_areas) - 1:
+                diagonal += chain.edges[index]
+            diagonal += area * outside_alpha_physical
+            picard_diagonal.append(diagonal)
+        picard_delta = _solve_tridiagonal(
+            list(current.lower),
+            picard_diagonal,
+            list(current.upper),
+            [-value for value in current.residual],
+        )
+        current_merit = _residual_rms(current.residual)
         accepted: tuple[list[float], _ChainEvaluation] | None = None
-        while damping >= _MIN_LINE_SEARCH_DAMPING:
-            trial_temperatures = [
-                temperature + damping * change
-                for temperature, change in zip(temperatures, delta)
-            ]
-            if not all(
-                low_temperature - temperature_tolerance_K
-                <= value
-                <= high_temperature + temperature_tolerance_K
-                for value in trial_temperatures
-            ):
+        damping = relaxation_factor
+        used_picard_direction = False
+        for used_picard_direction, direction in (
+            (False, newton_delta),
+            (True, picard_delta),
+        ):
+            damping = relaxation_factor
+            while damping >= _MIN_LINE_SEARCH_DAMPING:
+                trial_temperatures = [
+                    temperature + damping * change
+                    for temperature, change in zip(temperatures, direction)
+                ]
+                if not all(
+                    low_temperature - temperature_tolerance_K
+                    <= value
+                    <= high_temperature + temperature_tolerance_K
+                    for value in trial_temperatures
+                ):
+                    damping *= 0.5
+                    continue
+                trial = _evaluate_chain(
+                    chain,
+                    trial_temperatures,
+                    gas_bulk_temperature=gas_bulk_temperature,
+                    outside_alpha_physical=outside_alpha_physical,
+                    cp_gas=cp_gas,
+                    W_bulk=W_bulk,
+                    p_total=p_total,
+                    M_dry=M_dry,
+                    M_h2o=M_h2o,
+                    lewis_number=lewis_number,
+                    m_dot_water_vapor_available=m_dot_water_vapor_available,
+                    condensation_area_fraction=condensation_area_fraction,
+                    condensation_temperature_offset_K=(
+                        condensation_temperature_offset_K
+                    ),
+                )
+                trial_merit = _residual_rms(trial.residual)
+                if (
+                    trial_merit
+                    < current_merit * (1.0 - 1.0e-4 * damping)
+                    or trial.equation_residual_W <= heat_tolerance
+                ):
+                    accepted = trial_temperatures, trial
+                    break
                 damping *= 0.5
-                continue
-            trial = _evaluate_chain(
-                chain,
-                trial_temperatures,
-                gas_bulk_temperature=gas_bulk_temperature,
-                outside_alpha_physical=outside_alpha_physical,
-                cp_gas=cp_gas,
-                W_bulk=W_bulk,
-                p_total=p_total,
-                M_dry=M_dry,
-                M_h2o=M_h2o,
-                lewis_number=lewis_number,
-                m_dot_water_vapor_available=m_dot_water_vapor_available,
-            )
-            if (
-                trial.equation_residual_W < current_norm
-                or trial.equation_residual_W <= heat_tolerance
-            ):
-                accepted = trial_temperatures, trial
+            if accepted is not None:
                 break
-            damping *= 0.5
 
         if accepted is None:
             residuals["line_search_damping"] = damping
+            residuals["line_search_picard_direction"] = 1.0
             raise WetFinConvergenceError(
-                "Wet annular-fin Newton line search could not reduce the "
+                "Wet annular-fin Newton/Picard line search could not reduce the "
                 f"residual at iteration {iteration}; residuals={residuals}.",
                 iterations=iteration,
                 residuals=residuals,
@@ -961,6 +1071,7 @@ def _solve_nonlinear_chain(
             "condensate_step_kg_s": mass_step,
             "availability_scale": new_evaluation.availability_scale,
             "line_search_damping": damping,
+            "line_search_picard_direction": float(used_picard_direction),
         }
         temperatures = new_temperatures
         previous_mass = current.m_dot_condensate
@@ -1002,11 +1113,19 @@ def _evaluate_chain(
     M_h2o: float,
     lewis_number: float,
     m_dot_water_vapor_available: float,
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
 ) -> _ChainEvaluation:
     count = len(temperatures)
     raw_fluxes = [
-        _raw_condensation_flux(
-            temperature,
+        0.0
+        if (
+            condensation_area_fraction <= 0.0
+            or chain.surface_areas[index] <= 0.0
+        )
+        else condensation_area_fraction
+        * _raw_condensation_flux(
+            temperature + condensation_temperature_offset_K,
             outside_alpha_physical=outside_alpha_physical,
             cp_gas=cp_gas,
             W_bulk=W_bulk,
@@ -1015,8 +1134,6 @@ def _evaluate_chain(
             M_h2o=M_h2o,
             lewis_number=lewis_number,
         )
-        if chain.surface_areas[index] > 0.0
-        else 0.0
         for index, temperature in enumerate(temperatures)
     ]
     raw_mass_rate = sum(
@@ -1051,6 +1168,10 @@ def _evaluate_chain(
             lewis_number=lewis_number,
             availability_scale=availability_scale,
             raw_mass_flux=raw_fluxes[index],
+            condensation_area_fraction=condensation_area_fraction,
+            condensation_temperature_offset_K=(
+                condensation_temperature_offset_K
+            ),
         )
         transfers.append(transfer)
         derivatives.append(
@@ -1065,6 +1186,10 @@ def _evaluate_chain(
                 M_h2o=M_h2o,
                 lewis_number=lewis_number,
                 availability_scale=availability_scale,
+                condensation_area_fraction=condensation_area_fraction,
+                condensation_temperature_offset_K=(
+                    condensation_temperature_offset_K
+                ),
             )
         )
 
@@ -1146,10 +1271,29 @@ def _transfer_at_temperature(
     lewis_number: float,
     availability_scale: float,
     raw_mass_flux: float | None = None,
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
 ) -> _TransferEvaluation:
+    if condensation_area_fraction <= 0.0:
+        sensible_flux = outside_alpha_physical * (
+            gas_bulk_temperature - temperature
+        )
+        return _TransferEvaluation(
+            raw_mass_flux=0.0,
+            mass_flux=0.0,
+            sensible_flux=sensible_flux,
+            latent_flux=0.0,
+            total_flux=sensible_flux,
+            condensate_enthalpy_flux=0.0,
+            W_sat=None,
+            condensation_temperature=temperature,
+        )
+    condensation_temperature = (
+        temperature + condensation_temperature_offset_K
+    )
     if raw_mass_flux is None:
-        raw_mass_flux = _raw_condensation_flux(
-            temperature,
+        raw_mass_flux = condensation_area_fraction * _raw_condensation_flux(
+            condensation_temperature,
             outside_alpha_physical=outside_alpha_physical,
             cp_gas=cp_gas,
             W_bulk=W_bulk,
@@ -1167,7 +1311,7 @@ def _transfer_at_temperature(
             if W_bulk <= 0.0
             else _saturated_ratio_if_gas_phase_exists(
                 p_total=p_total,
-                temperature=temperature,
+                temperature=condensation_temperature,
                 M_dry=M_dry,
                 M_h2o=M_h2o,
             )
@@ -1180,11 +1324,14 @@ def _transfer_at_temperature(
             total_flux=sensible_flux,
             condensate_enthalpy_flux=0.0,
             W_sat=W_sat,
+            condensation_temperature=condensation_temperature,
         )
     mass_flux = availability_scale * raw_mass_flux
-    latent_flux = mass_flux * _latent_heat_at_temperature(temperature)
+    latent_flux = mass_flux * _latent_heat_at_temperature(
+        condensation_temperature
+    )
     condensate_enthalpy_flux = mass_flux * _liquid_enthalpy_at_temperature(
-        temperature
+        condensation_temperature
     )
     return _TransferEvaluation(
         raw_mass_flux=raw_mass_flux,
@@ -1195,10 +1342,11 @@ def _transfer_at_temperature(
         condensate_enthalpy_flux=condensate_enthalpy_flux,
         W_sat=_saturated_ratio_if_gas_phase_exists(
             p_total=p_total,
-            temperature=temperature,
+            temperature=condensation_temperature,
             M_dry=M_dry,
             M_h2o=M_h2o,
         ),
+        condensation_temperature=condensation_temperature,
     )
 
 
@@ -1252,6 +1400,13 @@ def _saturated_ratio_if_gas_phase_exists(
     M_h2o: float,
 ) -> float | None:
     """Interpolate authoritative W_sat values on a deterministic 0.25 K grid."""
+
+    if temperature >= WATER_CRITICAL_TEMPERATURE_K:
+        # There is no liquid-vapor saturation curve at/above water's critical
+        # temperature, hence no H2O condensation equilibrium for this local
+        # exposed surface. Treat it as dry rather than calling Region 4
+        # outside its documented IAPWS validity range.
+        return None
 
     lower, upper, fraction = _property_grid_bracket(temperature)
     lower_value = _saturated_ratio_grid_node(
@@ -1347,19 +1502,29 @@ def _total_flux_temperature_derivative(
     M_h2o: float,
     lewis_number: float,
     availability_scale: float,
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
 ) -> float:
+    if condensation_area_fraction <= 0.0:
+        return -outside_alpha_physical
     step = max(
         _DERIVATIVE_STEP_MIN_K,
         _DERIVATIVE_STEP_RELATIVE * abs(temperature),
     )
     lower_temperature = temperature - step
-    if lower_temperature <= WATER_TRIPLE_POINT_TEMPERATURE_K:
+    if (
+        lower_temperature + condensation_temperature_offset_K
+        <= WATER_TRIPLE_POINT_TEMPERATURE_K
+    ):
         lower_temperature = temperature
     upper_temperature = temperature + step
 
     def total_flux(value: float) -> float:
-        raw_mass_flux = _raw_condensation_flux(
-            value,
+        condensation_temperature = (
+            value + condensation_temperature_offset_K
+        )
+        raw_mass_flux = condensation_area_fraction * _raw_condensation_flux(
+            condensation_temperature,
             outside_alpha_physical=outside_alpha_physical,
             cp_gas=cp_gas,
             W_bulk=W_bulk,
@@ -1371,7 +1536,7 @@ def _total_flux_temperature_derivative(
         latent_flux = (
             availability_scale
             * raw_mass_flux
-            * _latent_heat_at_temperature(value)
+            * _latent_heat_at_temperature(condensation_temperature)
             if raw_mass_flux > 0.0 and availability_scale > 0.0
             else 0.0
         )
@@ -1404,6 +1569,8 @@ def _build_annular_fin_result(
     lewis_number: float,
     iterations: int,
     residuals: Mapping[str, float],
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
 ) -> WetAnnularFinResult:
     mesh = chain.mesh
     scale = chain.fin_area_scale
@@ -1450,6 +1617,10 @@ def _build_annular_fin_result(
         M_dry=M_dry,
         M_h2o=M_h2o,
         lewis_number=lewis_number,
+        condensation_area_fraction=condensation_area_fraction,
+        condensation_temperature_offset_K=(
+            condensation_temperature_offset_K
+        ),
     )
     dry_area = tube.fin_area_per_fin - wet_area
     root_heat_rate = mesh.conductance_root * (
@@ -1482,6 +1653,10 @@ def _build_annular_fin_result(
             cp_gas,
             lewis_number=lewis_number,
         ),
+        condensation_area_fraction=condensation_area_fraction,
+        condensation_temperature_offset_K=(
+            condensation_temperature_offset_K
+        ),
         radial_cells=len(mesh.cell_centers),
         iterations=iterations,
         residuals=fin_residuals,
@@ -1502,13 +1677,22 @@ def _classify_fin_wet_state(
     M_dry: float,
     M_h2o: float,
     lewis_number: float,
+    condensation_area_fraction: float = 1.0,
+    condensation_temperature_offset_K: float = 0.0,
 ) -> tuple[WetFinState, float, float | None]:
     del outside_alpha_physical, cp_gas, lewis_number
-    if W_bulk <= 0.0:
+    if W_bulk <= 0.0 or condensation_area_fraction <= 0.0:
         return WetFinState.DRY, 0.0, None
 
     radii = (mesh.r_root, *mesh.cell_centers, mesh.r_tip)
-    temperatures = (fin_base_temperature, *cell_temperatures, tip_temperature)
+    temperatures = tuple(
+        temperature + condensation_temperature_offset_K
+        for temperature in (
+            fin_base_temperature,
+            *cell_temperatures,
+            tip_temperature,
+        )
+    )
     drives = tuple(
         (
             W_bulk - W_sat
@@ -1528,7 +1712,15 @@ def _classify_fin_wet_state(
     if not any(drive > 0.0 for drive in drives):
         return WetFinState.DRY, 0.0, None
     if drives[-1] > 0.0:
-        return WetFinState.FULLY_WET, tube.fin_area_per_fin, None
+        wet_area = tube.fin_area_per_fin * condensation_area_fraction
+        if condensation_area_fraction < 1.0:
+            # The wet-zone representative is radially wet to the tip, while
+            # only the aggregate 0D endpoint-envelope fraction is exposed to
+            # condensation; this is not an axial or row-resolved boundary.
+            # There is no radial wet/dry crossing in this special partial-
+            # area case, so do not invent one at the physical tip.
+            return WetFinState.PARTIALLY_WET, wet_area, None
+        return WetFinState.FULLY_WET, wet_area, None
     if drives[0] <= 0.0:
         # A wet island away from a dry root is non-physical for the supported
         # outside-hotter radial boundary.  Do not report an ambiguous radius.
@@ -1556,6 +1748,7 @@ def _classify_fin_wet_state(
         * tube.fin_side_slope_factor
         * (boundary * boundary - mesh.r_root * mesh.r_root)
     )
+    wet_area *= condensation_area_fraction
     wet_area = min(max(wet_area, 0.0), tube.fin_both_sides_area_per_fin)
     return WetFinState.PARTIALLY_WET, wet_area, boundary
 
@@ -1579,6 +1772,20 @@ def _chain_energy_balance_error(
 
 def _heat_scale(alpha: float, area: float, temperature_span: float) -> float:
     return max(alpha * area * max(abs(temperature_span), 1.0e-6), 1.0e-12)
+
+
+def _residual_rms(residual: tuple[float, ...]) -> float:
+    """Return a scale-stable line-search merit norm [W]."""
+
+    if not residual:
+        return 0.0
+    scale = max(abs(value) for value in residual)
+    if scale == 0.0:
+        return 0.0
+    return scale * math.sqrt(
+        math.fsum((value / scale) ** 2 for value in residual)
+        / len(residual)
+    )
 
 
 def _jacobian_roundoff_floor(
@@ -1651,6 +1858,7 @@ def _zero_transfer() -> _TransferEvaluation:
         total_flux=0.0,
         condensate_enthalpy_flux=0.0,
         W_sat=None,
+        condensation_temperature=math.nan,
     )
 
 

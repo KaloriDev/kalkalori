@@ -42,6 +42,7 @@ import math
 from dataclasses import dataclass, replace
 
 from core.common.warnings import ModelWarning, make_warning
+from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.thermal_iteration import (
     IterativeThermalState,
     estimate_wall_temperature_envelope,
@@ -50,10 +51,10 @@ from core.heat_transfer.thermal_iteration import (
 from core.heat_transfer.outside_dispatch import (
     DEFAULT_FINNED_DP_PROVIDER,
     DEFAULT_FINNED_HT_PROVIDER,
+    evaluate_outside_hydraulics,
 )
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 from core.properties.averaging import mean_temperature
-from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 
 from core.phase_change import warning_codes as WC
 from core.phase_change.capability import (
@@ -84,6 +85,7 @@ from core.phase_change.finned_tube_guard import (
 from core.phase_change.water_equilibrium import is_frost_regime, water_dew_point, water_partial_pressure
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
+from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 
 DEFAULT_ONSET_TOLERANCE_K = 0.0
 DEFAULT_ACTIVATION_BAND_K = 0.5
@@ -219,10 +221,11 @@ def evaluate_side_onset(
     side, or all-``None`` if the side is not capable or has no valid dew
     point.
 
-    Fix (v0.6.0 patch, spec section 6.1): onset is decided from
-    ``wall_envelope.<side>_min`` -- the dry baseline's *minimum* estimated
-    wall temperature -- never from the mean/representative wall
-    temperature. ``wall_mean`` is still computed (via
+    Onset is decided from the dry baseline's *minimum exposed-skin*
+    temperature -- never from the mean/representative wall temperature.
+    For a plain tube this is exactly ``wall_envelope.outside_min``; for a
+    circular fin it is ``outside_skin_min`` so a colder upstream core/contact
+    node cannot create a false wet-surface onset. ``wall_mean`` is computed via
     ``representative_wall_temperature``) as the whole-surface mean for the
     sensible resistance network and general reporting, not for the onset
     decision or wet-zone condensate properties.
@@ -233,8 +236,19 @@ def evaluate_side_onset(
     if dew_point is None:
         return None, None, None, None, None
 
-    wall_min = envelope.outside_min if side == "outside" else envelope.inside_min
-    wall_max = envelope.outside_max if side == "outside" else envelope.inside_max
+    if side == "outside":
+        # A circular fin's exposed tip/base/primary metal can differ from the
+        # historical core-wall network node.  Condensation onset is a skin
+        # equilibrium question, so use the already-computed exposed-skin
+        # envelope when it is available.  Plain tubes expose identical skin
+        # and core-node values, preserving their established path exactly.
+        skin_min = getattr(envelope, "outside_skin_min", math.nan)
+        skin_max = getattr(envelope, "outside_skin_max", math.nan)
+        wall_min = skin_min if math.isfinite(skin_min) else envelope.outside_min
+        wall_max = skin_max if math.isfinite(skin_max) else envelope.outside_max
+    else:
+        wall_min = envelope.inside_min
+        wall_max = envelope.inside_max
     wall_mean = representative_wall_temperature(side=side, thermal_state=thermal_state, wall_envelope=envelope)
 
     onset = evaluate_condensation_onset(
@@ -256,6 +270,53 @@ def _dew_point_for(capability: PhaseChangeCapability, *, p: float) -> float | No
     if is_frost_regime(p_h2o):
         return None
     return water_dew_point(p_h2o)
+
+
+def _finned_0d_wet_zone_fallback(
+    *,
+    dew_point_temperature: float | None,
+    wall_temperature_min: float | None,
+    wall_temperature_max: float | None,
+    activation_band_K: float,
+) -> tuple[float, float] | None:
+    """Return the dry-envelope cold-zone area and temperature offset.
+
+    This estimate is passed to the wet circular-fin solver but used only if
+    the ordinary bulk-mean radial response is entirely dry.  It reconciles a
+    cold endpoint that activated AUTO with the global 0D surface response by
+    reusing the established linear wet-area convention; it is not axial,
+    row, circuit or pass marching.
+    """
+
+    values = (
+        dew_point_temperature,
+        wall_temperature_min,
+        wall_temperature_max,
+    )
+    if any(value is None or not math.isfinite(value) for value in values):
+        return None
+    assert dew_point_temperature is not None
+    assert wall_temperature_min is not None
+    assert wall_temperature_max is not None
+    wall_temperature_mean = 0.5 * (
+        wall_temperature_min + wall_temperature_max
+    )
+    estimate = estimate_wet_surface_fraction(
+        dew_point_temperature=dew_point_temperature,
+        wall_temperature_min=wall_temperature_min,
+        wall_temperature_mean=wall_temperature_mean,
+        wall_temperature_max=wall_temperature_max,
+        activation_band_K=activation_band_K,
+    )
+    if (
+        estimate.wet_surface_fraction <= 0.0
+        or estimate.wall_temperature_wet_mean is None
+    ):
+        return None
+    return (
+        estimate.wet_surface_fraction,
+        estimate.wall_temperature_wet_mean - wall_temperature_mean,
+    )
 
 
 def apply_phase_change(
@@ -333,6 +394,8 @@ def apply_phase_change(
         inside_active=inside_auto_possible,
         outside_active=outside_auto_possible,
         context="wet-gas condensation",
+        outside_capability=outside_capability,
+        direction=PhaseChangeDirection.CONDENSATION,
     )
 
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=iterate)
@@ -414,6 +477,17 @@ def apply_phase_change(
         return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
 
     m_dot_dry_carrier = outside.m_dot / (1.0 + outside_capability.W_in)
+    finned_wet_zone_fallback = None
+    if (
+        getattr(hx.bundle.tube, "surface_type", None)
+        is TubeSurfaceType.CIRCULAR_FINNED
+    ):
+        finned_wet_zone_fallback = _finned_0d_wet_zone_fallback(
+            dew_point_temperature=outside_dew_point,
+            wall_temperature_min=outside_wall_min,
+            wall_temperature_max=outside_wall_max,
+            activation_band_K=settings.activation_band_K,
+        )
 
     try:
         solution = solve_outside_condensation(
@@ -429,6 +503,17 @@ def apply_phase_change(
             T_out_inside_init=dry_result.T_out_inside,
             T_out_outside_init=dry_result.T_out_outside,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_condensation_area_fraction=(
+                None
+                if finned_wet_zone_fallback is None
+                else finned_wet_zone_fallback[0]
+            ),
+            finned_condensation_temperature_offset_K=(
+                0.0
+                if finned_wet_zone_fallback is None
+                else finned_wet_zone_fallback[1]
+            ),
             lewis_number=settings.lewis_number,
             activation_band_K=settings.activation_band_K,
             max_iterations=settings.max_iterations,
@@ -473,20 +558,54 @@ def apply_phase_change(
     # per-iteration state.  These are the values that actually drove mass
     # transfer, rather than a different post-hoc envelope.
     warnings_list: list[ModelWarning] = list(solution.warnings)
-    warnings_list.append(
-        make_warning(
-            code=WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
+    wet_dp_warning = None
+    if solution.wet_finned_surface is None:
+        warnings_list.append(
+            make_warning(
+                code=WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
+                message=(
+                    "outside: wet_surface_fraction and "
+                    "wall_temperature_wet_mean are 0D linear estimates "
+                    f"({solution.wet_surface_fraction_method}) based on a cheap "
+                    "two-point (inlet/outlet) wall-temperature estimate, not a "
+                    "spatially resolved (1D/segmented) wetted-area result."
+                ),
+                source="phase_change_integration",
+                severity="info",
+            )
+        )
+    else:
+        if (
+            solution.wet_finned_surface.condensation_area_fraction < 1.0
+            or solution.wet_finned_surface
+            .condensation_temperature_offset_K < 0.0
+        ):
+            warnings_list.append(
+                make_warning(
+                    code=WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
+                    message=(
+                        "outside: the bulk-mean radial circular-fin response "
+                        "was dry after endpoint onset, so condensation uses "
+                        "the dry exposed-skin envelope's linear 0D cold-zone "
+                        "area and representative temperature. This is not a "
+                        "longitudinal, row, circuit or pass-resolved model."
+                    ),
+                    source="phase_change_integration",
+                    severity="info",
+                )
+            )
+        wet_dp_warning = make_warning(
+            code=WC.CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY,
             message=(
-                "outside: wet_surface_fraction and "
-                "wall_temperature_wet_mean are 0D linear estimates "
-                f"({solution.wet_surface_fraction_method}) based on a cheap "
-                "two-point (inlet/outlet) wall-temperature estimate, not a "
-                "spatially resolved (1D/segmented) wetted-area result."
+                "outside: wet circular-finned thermal performance and "
+                "condensate are solved, but no wet-surface pressure-drop "
+                "correction is available; the reported finned-bank pressure "
+                "drop is the dry Robinson-Briggs reference only."
             ),
             source="phase_change_integration",
-            severity="info",
+            severity="warning",
         )
-    )
+        warnings_list.append(wet_dp_warning)
     warnings_list.append(
         make_warning(
             code=WC.OUTSIDE_CONDENSATION_DETECTED,
@@ -564,7 +683,24 @@ def apply_phase_change(
         onset_temperature_method=ONSET_TEMPERATURE_METHOD,
         converged=solution.converged,
         iterations=solution.iterations,
-        method="outside_condensation_0d_bulk_mean",
+        method=(
+            (
+                "outside_condensation_0d_wet_annular_fin_fvm_"
+                "with_endpoint_wet_zone_fallback"
+                if (
+                    solution.wet_finned_surface is not None
+                    and (
+                        solution.wet_finned_surface
+                        .condensation_area_fraction < 1.0
+                        or solution.wet_finned_surface
+                        .condensation_temperature_offset_K < 0.0
+                    )
+                )
+                else "outside_condensation_0d_wet_annular_fin_fvm"
+            )
+            if solution.wet_finned_surface is not None
+            else "outside_condensation_0d_bulk_mean"
+        ),
         W_in=outside_capability.W_in,
         W_mid=0.5 * (outside_capability.W_in + solution.W_out),
         W_out=solution.W_out,
@@ -576,7 +712,12 @@ def apply_phase_change(
         m_dot_gas_out=m_dot_gas_out,
         dew_point_in=outside_dew_point,
         dew_point_out=dew_point_at_ratio(outside_capability, solution.W_out, p=outside.p),
-        wall_temperature_mean=solution.T_wall_outside,
+        wall_temperature_mean=(
+            solution.wet_finned_surface
+            .outside_surface_temperature_area_mean
+            if solution.wet_finned_surface is not None
+            else solution.T_wall_outside
+        ),
         wall_temperature_min=solution.wall_temperature_min,
         wall_temperature_max=solution.wall_temperature_max,
         wall_temperature_wet_mean=solution.wall_temperature_wet_mean,
@@ -595,14 +736,19 @@ def apply_phase_change(
         energy_balance_error=energy_balance_error,
         residuals=dict(solution.residuals),
         assumptions=(
-            "bulk_mean_property_evaluation_0d",
-            "fully_drained_liquid_condensate",
-            "lewis_number_chilton_colburn_analogy",
-            "dry_gas_composition_unchanged_by_condensation",
-            "wet_surface_fraction_two_point_inlet_outlet_estimate",
-            "wet_surface_temperature_linear_envelope_estimate",
+            solution.wet_finned_surface.assumptions
+            if solution.wet_finned_surface is not None
+            else (
+                "bulk_mean_property_evaluation_0d",
+                "fully_drained_liquid_condensate",
+                "lewis_number_chilton_colburn_analogy",
+                "dry_gas_composition_unchanged_by_condensation",
+                "wet_surface_fraction_two_point_inlet_outlet_estimate",
+                "wet_surface_temperature_linear_envelope_estimate",
+            )
         ),
         warnings=tuple(warnings_list),
+        wet_finned_surface=solution.wet_finned_surface,
     )
 
     T_mean_inside = mean_temperature(inside.T_in, solution.T_out_inside)
@@ -660,6 +806,8 @@ def apply_phase_change(
         outside_pressure=outside.p,
         flow_arrangement=None,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
     # Refresh the outside hydraulic snapshot using the exact wet states
@@ -673,15 +821,9 @@ def apply_phase_change(
 
     from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 
-    outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+    outside_bank_hydraulic = evaluate_outside_hydraulics(
+        bundle=hx.bundle,
         m_dot=m_dot_dry_carrier * (1.0 + W_mean),
-        face_area=hx.bundle.frontal_flow_area,
-        tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
-        tube_pitch_transverse=hx.bundle.pitch_transverse,
-        tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-        layout=hx.bundle.layout,
-        n_rows=hx.bundle.n_rows,
-        n_tubes_per_row=hx.bundle.n_tubes_per_row,
         inlet_props=outside_props_inlet,
         midpoint_props=solution.outside_bulk_props,
         outlet_props=outside_props_outlet,
@@ -689,6 +831,7 @@ def apply_phase_change(
         temperature_out=solution.T_out_outside,
         pressure=outside.p,
         euler_provider=euler_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
         m_dot_inlet=m_dot_gas_in,
         m_dot_midpoint=m_dot_dry_carrier * (1.0 + W_mean),
         m_dot_outlet=m_dot_gas_out,
@@ -712,6 +855,49 @@ def apply_phase_change(
             flow_path=build_outside_pressure_drop_result(outside_bank_hydraulic),
         ),
     )
+    wet_finned_diagnostics = (
+        solution.finned_tube_diagnostics
+        if solution.wet_finned_surface is not None
+        else final_result.finned_tube_diagnostics
+    )
+    if solution.wet_finned_surface is not None:
+        if wet_finned_diagnostics is None:
+            raise ValueError(
+                "Active wet circular-fin solve lost its finned-tube diagnostics."
+            )
+        assert wet_dp_warning is not None
+        hydraulic_midpoint = outside_bank_hydraulic.midpoint
+        wet_finned_diagnostics = _replace(
+            wet_finned_diagnostics,
+            wet_surface=solution.wet_finned_surface,
+            pressure_drop_coefficient=hydraulic_midpoint.coefficient,
+            pressure_drop_coefficient_definition=(
+                outside_bank_hydraulic.coefficient_definition
+            ),
+            outside_dp_drag=outside_bank_hydraulic.dp_drag,
+            outside_dp_acceleration=outside_bank_hydraulic.dp_acceleration,
+            outside_dp_total=outside_bank_hydraulic.dp_total,
+            outside_dp_dry_reference=outside_bank_hydraulic.dp_total,
+            wet_pressure_drop_supported=False,
+            outside_dp_reference_only=True,
+            pressure_drop_metadata=outside_bank_hydraulic.metadata,
+            warnings=tuple(
+                _deduplicate_warnings(
+                    [
+                        *wet_finned_diagnostics.warnings,
+                        *outside_bank_hydraulic.warnings,
+                        wet_dp_warning,
+                    ]
+                )
+            ),
+        )
+        final_result = _replace(
+            final_result,
+            finned_tube_diagnostics=wet_finned_diagnostics,
+            warnings=_deduplicate_warnings(
+                [*(final_result.warnings or []), wet_dp_warning]
+            ),
+        )
 
     envelope_wet = estimate_wall_temperature_envelope(
         hx,
@@ -726,6 +912,7 @@ def apply_phase_change(
         p_inside=inside.p,
         p_outside=outside.p,
         euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
     )
     # Keep this public endpoint envelope internally consistent with its
     # four audit probes.  The exact centred two-point envelope that drove
@@ -741,6 +928,25 @@ def apply_phase_change(
     # exactly as thermal_iteration.solve_iterative_thermal_state's own
     # reconstruction self-check expects; alfa_outside_dry remains separately
     # available on outside_phase_change.alfa_dry.
+    wet_alpha = (
+        solution.wet_finned_surface
+        .outside_alpha_wet_effective_gross_core_basis
+        if solution.wet_finned_surface is not None
+        else solution.alfa_o_effective
+    )
+    wet_alpha_basis = (
+        solution.wet_finned_surface.outside_alpha_wet_effective_basis
+        if solution.wet_finned_surface is not None
+        else (
+            "gross_outside_area_and_bulk_gas_to_core_wall_"
+            "temperature_difference"
+        )
+    )
+    dry_effective_alpha = (
+        wet_finned_diagnostics.outside_alpha_effective_gross
+        if solution.wet_finned_surface is not None
+        else solution.alfa_o_effective
+    )
     wet_thermal_state = IterativeThermalState(
         inside_bulk_temperature=T_mean_inside,
         outside_bulk_temperature=T_mean_outside,
@@ -758,9 +964,14 @@ def apply_phase_change(
         converged=solution.converged,
         residual=solution.residuals.get("T_wall_outside_K", math.inf),
         diagnostics=solution.diagnostics,
+        outside_alpha_physical=solution.alfa_o_dry,
+        outside_alpha_effective_gross=dry_effective_alpha,
+        outside_alpha_wet_effective_gross_core_basis=wet_alpha,
+        outside_alpha_wet_effective_basis=wet_alpha_basis,
         inside_provider_name=type(inside.provider).__name__,
         outside_provider_name=type(outside_provider_final).__name__,
         warnings=solution.warnings,
+        finned_tube_diagnostics=wet_finned_diagnostics,
     )
 
     return replace(
@@ -791,6 +1002,9 @@ def apply_phase_change(
         wall_temperature_envelope=envelope_wet,
         inside_phase_change=inside_result,
         outside_phase_change=outside_result,
+        warnings=_deduplicate_warnings(
+            [*(dry_result.warnings or []), *warnings_list]
+        ),
     )
 
 

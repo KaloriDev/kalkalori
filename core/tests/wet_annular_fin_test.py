@@ -14,6 +14,9 @@ from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.tube import BareTube
 from core.heat_transfer.fin_efficiency import _annular_fin_efficiency_fvm
 from core.heat_transfer.outside_dispatch import calculate_resistance_network
+from core.phase_change.condensation_solver_helpers import (
+    solve_condensing_interface_state,
+)
 from core.phase_change.mass_heat_transfer import condensation_mass_flux
 from core.phase_change.water_equilibrium import saturated_water_ratio
 from core.phase_change.wet_finned_surface import (
@@ -23,6 +26,7 @@ from core.phase_change.wet_finned_surface import (
     _latent_heat_at_temperature,
     _liquid_enthalpy_at_temperature,
     _saturated_ratio_if_gas_phase_exists,
+    _total_flux_temperature_derivative,
     solve_wet_annular_fin,
     solve_wet_finned_surface,
 )
@@ -242,6 +246,11 @@ def test_continuous_root_primary_and_fin_splits_close_exactly() -> None:
     )
     assert result.energy_balance_error < 1.0e-6
     assert result.outside_alpha_physical == H_OUTSIDE
+    assert result.outside_surface_temperature_area_mean == pytest.approx(
+        334.0
+        - result.Q_sensible
+        / (result.outside_alpha_physical * result.outside_total_area)
+    )
     assert result.outside_alpha_wet_effective_gross_core_basis == pytest.approx(
         result.Q_total
         / (
@@ -311,12 +320,19 @@ def test_available_water_cap_is_shared_by_primary_and_fin_sources() -> None:
     assert result.m_dot_condensate_fin > 0.0
 
 
-def test_surface_above_boiling_at_total_pressure_is_dry_not_an_error() -> None:
+@pytest.mark.parametrize(
+    ("fin_base_temperature", "gas_bulk_temperature"),
+    ((390.0, 410.0), (650.0, 670.0)),
+)
+def test_surface_above_boiling_at_total_pressure_is_dry_not_an_error(
+    fin_base_temperature: float,
+    gas_bulk_temperature: float,
+) -> None:
     tube = _tube()
     result = solve_wet_annular_fin(
         tube,
-        fin_base_temperature=390.0,
-        gas_bulk_temperature=410.0,
+        fin_base_temperature=fin_base_temperature,
+        gas_bulk_temperature=gas_bulk_temperature,
         outside_alpha_physical=H_OUTSIDE,
         cp_gas=CP_GAS,
         W_bulk=_W_at_dew_point(300.0),
@@ -328,6 +344,25 @@ def test_surface_above_boiling_at_total_pressure_is_dry_not_an_error() -> None:
     assert result.fin_wet_state is WetFinState.DRY
     assert result.m_dot_condensate_fin == 0.0
     assert result.Q_fin_latent == 0.0
+
+
+def test_shifted_derivative_uses_one_sided_sample_at_triple_point() -> None:
+    derivative = _total_flux_temperature_derivative(
+        283.1601,
+        gas_bulk_temperature=330.0,
+        outside_alpha_physical=H_OUTSIDE,
+        cp_gas=CP_GAS,
+        W_bulk=_W_at_dew_point(315.0),
+        p_total=P,
+        M_dry=M_DRY,
+        M_h2o=0.01801528,
+        lewis_number=1.0,
+        availability_scale=1.0,
+        condensation_area_fraction=0.25,
+        condensation_temperature_offset_K=-10.0,
+    )
+
+    assert math.isfinite(derivative)
 
 
 def test_nonconvergence_raises_with_last_residuals_instead_of_returning_iterate() -> None:
@@ -418,3 +453,235 @@ def test_partial_wet_refinement_is_deterministic_through_320_cells() -> None:
     implicit_default = _solve_fin(tube, W_bulk=W_bulk)
     assert implicit_default.radial_cells == DEFAULT_WET_FIN_RADIAL_CELLS
     assert implicit_default == selected_default
+
+
+def test_humidity_sweep_transitions_continuously_dry_partial_and_full() -> None:
+    tube = _tube(fin_k=40.0, D_fin=0.060)
+    dew_points = (294.0, 300.0, 306.0, 312.0, 318.0, 324.0, 328.0)
+    results = tuple(
+        _solve_fin(
+            tube,
+            W_bulk=_W_at_dew_point(dew_point),
+            radial_cells=60,
+        )
+        for dew_point in dew_points
+    )
+
+    assert results[0].fin_wet_state is WetFinState.DRY
+    assert results[3].fin_wet_state is WetFinState.PARTIALLY_WET
+    assert results[-1].fin_wet_state is WetFinState.FULLY_WET
+    fractions = tuple(result.fin_wet_fraction for result in results)
+    condensate = tuple(result.m_dot_condensate_fin for result in results)
+    assert fractions == tuple(sorted(fractions))
+    assert condensate == tuple(sorted(condensate))
+    assert all(
+        right - left < 0.30
+        for left, right in zip(fractions, fractions[1:])
+    )
+
+
+def test_colder_fin_base_monotonically_increases_wet_fraction() -> None:
+    tube = _tube(fin_k=40.0, D_fin=0.060)
+    results = tuple(
+        solve_wet_annular_fin(
+            tube,
+            fin_base_temperature=base_temperature,
+            gas_bulk_temperature=330.0,
+            outside_alpha_physical=H_OUTSIDE,
+            cp_gas=CP_GAS,
+            W_bulk=_W_at_dew_point(312.0),
+            p_total=P,
+            M_dry=M_DRY,
+            radial_cells=60,
+        )
+        for base_temperature in (305.0, 300.0, 295.0, 290.0, 285.0)
+    )
+
+    fractions = tuple(result.fin_wet_fraction for result in results)
+    condensate = tuple(result.m_dot_condensate_fin for result in results)
+    # Inputs are ordered from warm to cold, so both sequences must increase.
+    assert fractions == tuple(sorted(fractions))
+    assert condensate == tuple(sorted(condensate))
+
+
+def test_efficiency_contact_mode_matches_ideal_at_one_and_reduces_fin_duty() -> None:
+    explicit_ideal = _tube(fin_contact_resistance=0.0)
+    efficiency_ideal = _tube(
+        fin_contact_resistance=None,
+        fin_contact_efficiency=1.0,
+    )
+    efficiency_finite = replace(
+        efficiency_ideal,
+        fin_contact_efficiency=0.8,
+    )
+
+    def solve(tube: CircularFinnedTube):
+        return solve_wet_finned_surface(
+            _bundle(tube),
+            _network(tube),
+            gas_bulk_temperature=334.0,
+            inside_bulk_temperature=288.0,
+            cp_gas=CP_GAS,
+            W_bulk=_W_at_dew_point(322.0),
+            p_total=P,
+            M_dry=M_DRY,
+            m_dot_water_vapor_available=1.0,
+            radial_cells=60,
+        )
+
+    explicit = solve(explicit_ideal)
+    ideal = solve(efficiency_ideal)
+    finite = solve(efficiency_finite)
+    assert ideal.contact_input_mode == "contact_efficiency"
+    assert ideal.contact_resistance_used == 0.0
+    assert ideal.Q_total == pytest.approx(explicit.Q_total, rel=1.0e-12)
+    assert ideal.fin_base_temperature == pytest.approx(
+        explicit.fin_base_temperature,
+        abs=1.0e-12,
+    )
+    assert finite.contact_input_mode == "contact_efficiency"
+    assert finite.contact_resistance_used > 0.0
+    assert finite.fin_base_temperature > finite.core_wall_temperature
+    assert finite.Q_fin_total < ideal.Q_fin_total
+    assert finite.Q_total < ideal.Q_total
+
+
+def test_zero_authoritative_fin_area_reduces_to_bare_wet_interface() -> None:
+    geometric = _tube()
+    primary_only = replace(
+        geometric,
+        external_area_per_length=geometric.primary_outside_area_per_length,
+    )
+    bundle = _bundle(primary_only)
+    network = _network(primary_only)
+    W_bulk = _W_at_dew_point(322.0)
+    wet = solve_wet_finned_surface(
+        bundle,
+        network,
+        gas_bulk_temperature=334.0,
+        inside_bulk_temperature=288.0,
+        cp_gas=CP_GAS,
+        W_bulk=W_bulk,
+        p_total=P,
+        M_dry=M_DRY,
+        m_dot_water_vapor_available=1.0,
+        radial_cells=60,
+    )
+    bare = solve_condensing_interface_state(
+        alfa_dry=H_OUTSIDE,
+        A_total=network.area_primary_outside,
+        A_wet=network.area_primary_outside,
+        T_wall_wet_mean=wet.primary_surface_temperature,
+        T_bulk_wet_gas=334.0,
+        T_bulk_other=288.0,
+        R_downstream=(
+            network.resistance_inside + network.resistance_core_wall
+        ),
+        cp_gas=CP_GAS,
+        W_bulk=W_bulk,
+        p_wet_gas=P,
+        M_dry=M_DRY,
+        m_dot_water_vapor_available=1.0,
+        lewis_number=1.0,
+    )
+
+    assert network.area_fin == 0.0
+    assert wet.annular_fin is None
+    assert wet.Q_fin_total == 0.0
+    assert wet.m_dot_condensate_fin == 0.0
+    assert wet.primary_surface_temperature == pytest.approx(
+        bare[0],
+        abs=4.0e-4,
+    )
+    assert wet.Q_sensible == pytest.approx(bare[1], rel=3.0e-5)
+    assert wet.Q_latent == pytest.approx(bare[2], rel=3.0e-5)
+    assert wet.m_dot_condensate == pytest.approx(bare[3], rel=3.0e-5)
+
+
+def test_0d_endpoint_wet_zone_activates_an_otherwise_dry_mean_surface() -> None:
+    """The AUTO integration fallback is area weighted, not a fake radius."""
+
+    tube = _tube()
+    common = dict(
+        gas_bulk_temperature=334.0,
+        inside_bulk_temperature=288.0,
+        cp_gas=CP_GAS,
+        W_bulk=_W_at_dew_point(315.0),
+        p_total=P,
+        M_dry=M_DRY,
+        m_dot_water_vapor_available=1.0,
+        radial_cells=60,
+    )
+    mean_surface = solve_wet_finned_surface(
+        _bundle(tube),
+        _network(tube),
+        **common,
+    )
+    cold_zone = solve_wet_finned_surface(
+        _bundle(tube),
+        _network(tube),
+        condensation_area_fraction=0.35,
+        condensation_temperature_offset_K=-10.0,
+        **common,
+    )
+
+    assert mean_surface.fin_wet_state is WetFinState.DRY
+    assert mean_surface.m_dot_condensate == 0.0
+    assert cold_zone.fin_wet_state is WetFinState.PARTIALLY_WET
+    assert cold_zone.fin_wet_fraction == pytest.approx(0.35)
+    # The representative cold-zone fin is radially wet to the tip. Its
+    # aggregate partial area comes from the endpoint envelope, so no radial
+    # crossing exists and no axial segmentation is implied.
+    assert cold_zone.wet_dry_boundary_radius is None
+    assert cold_zone.wet_area == pytest.approx(
+        0.35 * cold_zone.outside_total_area,
+        rel=1.0e-12,
+    )
+    assert cold_zone.m_dot_condensate_primary > 0.0
+    assert cold_zone.m_dot_condensate_fin > 0.0
+    assert cold_zone.Q_latent > 0.0
+    assert cold_zone.energy_balance_error < 1.0e-6
+    assert (
+        "endpoint_envelope_wet_zone_0d_linear_weighting"
+        in cold_zone.assumptions
+    )
+
+
+def test_zero_condensation_area_ignores_the_inactive_temperature_offset() -> None:
+    """A zero-area wet-zone request is the exact dry sensible limit."""
+
+    tube = _tube()
+    common = dict(
+        gas_bulk_temperature=334.0,
+        inside_bulk_temperature=288.0,
+        cp_gas=CP_GAS,
+        p_total=P,
+        M_dry=M_DRY,
+        m_dot_water_vapor_available=1.0,
+        radial_cells=60,
+    )
+    zero_area = solve_wet_finned_surface(
+        _bundle(tube),
+        _network(tube),
+        W_bulk=_W_at_dew_point(315.0),
+        condensation_area_fraction=0.0,
+        # This would be below the water triple point if it were evaluated;
+        # with no condensation area the offset has no physical meaning.
+        condensation_temperature_offset_K=-100.0,
+        **common,
+    )
+    dry_reference = solve_wet_finned_surface(
+        _bundle(tube),
+        _network(tube),
+        W_bulk=0.0,
+        **common,
+    )
+
+    assert zero_area.fin_wet_state is WetFinState.DRY
+    assert zero_area.m_dot_condensate == 0.0
+    assert zero_area.Q_latent == 0.0
+    assert zero_area.wet_area == 0.0
+    assert zero_area.Q_sensible == pytest.approx(
+        dry_reference.Q_sensible,
+        rel=1.0e-12,
+    )

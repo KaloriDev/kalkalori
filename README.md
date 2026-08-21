@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.4)
+## Current Capabilities (v0.7.5)
 
 - Rating can derive the required tube-side pure-steam mass flow from an
   independently known duty (explicit `Q`, or a fully specified opposing-side
@@ -56,24 +56,30 @@ and serialization**, enabling both open collaboration and commercial adoption.
   condensation; see
   [`docs/property_models.md`](docs/property_models.md#16-v062--pure-watersteam-cooling-inside-tubes)
 - Partial H2O condensation from a water-containing gas mixture either
-  inside tubes with a dry outside surface or outside a bare-tube bank, with automatic detection
+  inside tubes with a dry outside surface or outside a bare or circular-finned
+  tube bank, with automatic detection
   (`PhaseChangeMode.AUTO`) and a dry-only override
   (`PhaseChangeMode.DISABLED`); see
   [`docs/property_models.md`](docs/property_models.md#15-v061--wet-gas-water-condensation)
 - Bare tube heat exchangers
-- Dry circular-finned-tube exchangers. `CircularFinnedTube` composes a
-  `BareTube` core and supports constant or linearly tapered annular fins,
+- Circular-finned-tube exchangers. `CircularFinnedTube` composes a `BareTube`
+  core and supports constant or linearly tapered annular fins,
   welded or continuous-root construction, ideal contact by default, and
   either a practical dimensionless `fin_contact_efficiency` or the advanced
   physical `fin_contact_resistance` for non-ideal fin/root contact,
   Briggs--Young dry outside heat transfer, verified-scope Robinson--Briggs
   pressure loss, Simulation, Rating, and the established inside-side phase
-  change paths when the finned outside surface remains dry. The Briggs--Young
-  heat-transfer provider accepts every positive bank row count; one- to
+  change paths when the finned outside surface remains dry. The unchanged dry
+  Briggs--Young heat-transfer provider accepts every positive bank row count;
+  one- to
   three-row results carry an explicit unvalidated-extrapolation warning and
   have no row-count correction. See
-  [`docs/finned_tube_model.md`](docs/finned_tube_model.md). Wet/condensing
-  finned outside surfaces remain unsupported.
+  [`docs/finned_tube_model.md`](docs/finned_tube_model.md). For outside H2O
+  condensation from a non-condensable carrier gas, the same geometry supports
+  a nonlinear radial annular-fin calculation with independently condensing
+  primary and fin surfaces, typed dry/partially-wet/fully-wet diagnostics,
+  separate sensible/latent duties, drained-condensate balance, Simulation,
+  Rating and `PhaseChangeMode.AUTO`.
 - Tube-side forced convection
 - Outside forced convection (mass-flow driven)
 - Multi-pass tube bundles
@@ -101,8 +107,10 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - thermal performance
   - hydraulic performance
 
-Outside pressure change is limited to the calculated plain or dry
-circular-finned tube bank. Duct, plenum,
+Actual outside pressure-change support is limited to the calculated plain or
+dry circular-finned tube bank. During active wet-finned condensation the
+reported finned-bank value is explicitly a dry pressure-drop reference, not an
+actual wet-bank pressure drop. Duct, plenum,
 casing-transition, screen, louver, damper, fan, and external-piping losses are
 not included.
 

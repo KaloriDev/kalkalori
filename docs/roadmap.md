@@ -35,15 +35,47 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.4`
+**Current version:** `v0.7.5`
 **Model level:** MVP_0D  
-**Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
-and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
-return losses remain future work.
+**Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
+0D sensible/phase-change thermal balance and tube-bank hydraulic balance;
+active wet-finned pressure drop, local nozzle/chamber/tube-sheet/return losses
+and distributed thermal resolution remain future work.
 
 ---
 
 ## Roadmap Overview
+
+---
+
+### v0.7.5 — Wet Circular-Finned Outside Condensation
+
+**Delivered scope:**
+
+- H2O condensation from a gas mixture with a non-condensable dry carrier on
+  the exposed primary/root cylinder and circular annular fins;
+- a deterministic nonlinear radial finite-volume fin field with dry,
+  partially wet and fully wet states, both faces and the physical fin tip;
+- independent primary/fin sensible duty, latent duty and condensate splits,
+  with authoritative whole-side mass and energy closure;
+- preserved welded-fin and continuous-root/contact topology, including the
+  v0.7.2 contact-input precedence and unchanged legacy dry route;
+- Simulation, Rating and `PhaseChangeMode.AUTO`, with the existing
+  `PhaseChangeMode.DISABLED` dry-result warning behavior;
+- typed wet-surface state, temperature, wet-area, iteration, residual,
+  assumption and warning diagnostics;
+- an explicit dry/reference-only finned-bank pressure drop during active
+  condensation; wet pressure-drop support remains false.
+
+This is a global 0D extension. It does not add row-wise, longitudinal or
+circuit-wise thermal marching, and `n_passes_transverse` is not thermal
+segmentation. A cold endpoint / dry bulk-mean mismatch uses the declared
+linear 0D endpoint wet-zone fallback, not a spatial temperature map. Formed
+condensate is assumed to drain completely from the
+modelled gas phase. Film retention, drainage geometry, flooding/bridging,
+droplet carryover or re-entrainment, re-evaporation, frost/ice, acid dew point,
+multiple condensables, flow maldistribution, condensate-film resistance and
+wet hydraulics remain excluded.
 
 ---
 
@@ -58,10 +90,11 @@ or implementation order.
 - film retention and drainage
 - carryover and droplet re-entrainment
 - re-evaporation
-- wet-surface and drainage diagnostics
+- liquid-inventory, retention and drainage-path diagnostics
 
-These effects are strongly geometry-dependent (bundle layout, fins and drainage
-path) and should be reassessed after finned-tube geometry is implemented.
+These effects are strongly geometry-dependent (bundle layout, fin joints and
+drainage path) and require a dedicated liquid-inventory model beyond the
+implemented wet thermal surface response.
 The current 0D model continues to explicitly assume full condensate drainage
 where that assumption is documented.
 
@@ -91,8 +124,9 @@ where that assumption is documented.
 - KalKalori should provide thermodynamic states needed by hydraulics, including
   phase, vapor quality, mass flux, pressure and enthalpy
 - coupled thermal-hydraulic iteration should be managed by an orchestrator
-- absent two-phase pressure-drop support remains explicitly `unsupported`, not
-  replaced by an approximate single-phase result
+- absent two-phase pressure-drop support remains explicit. Active wet-finned
+  condensation may expose the existing dry-bank value only when labelled as a
+  reference, never as an approximate actual wet pressure drop
 
 **Out of scope for the whole v0.6.x line:** corrosion and material
 selection remain outside the solver's scope.

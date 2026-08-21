@@ -1,7 +1,7 @@
 # KalKalori — Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Phase-change support for KalKalori's 0D bare-tube heat-exchanger model.
+"""Phase-change support for KalKalori's 0D heat-exchanger model.
 
 The package supports partial H2O condensation from a wet gas containing a
 non-condensable carrier on either exchanger side, plus pure-water/steam
@@ -56,6 +56,15 @@ from core.phase_change.finned_tube_guard import (
     CircularFinnedTubeWetSurfaceNotSupportedError,
     reject_circular_finned_tube_wet_surface,
 )
+from core.phase_change.wet_finned_surface import (
+    DEFAULT_WET_FIN_RADIAL_CELLS,
+    WetAnnularFinResult,
+    WetFinConvergenceError,
+    WetFinnedSurfaceResult,
+    WetFinState,
+    solve_wet_annular_fin,
+    solve_wet_finned_surface,
+)
 from core.phase_change.steam_condensation import (
     SteamCondensationLocalResult,
     SteamCondensationZoneResult,
@@ -96,6 +105,13 @@ __all__ = [
     "PureWaterPhaseChangeProviderNotSupportedError",
     "CircularFinnedTubeWetSurfaceNotSupportedError",
     "reject_circular_finned_tube_wet_surface",
+    "DEFAULT_WET_FIN_RADIAL_CELLS",
+    "WetAnnularFinResult",
+    "WetFinConvergenceError",
+    "WetFinnedSurfaceResult",
+    "WetFinState",
+    "solve_wet_annular_fin",
+    "solve_wet_finned_surface",
     "SteamCondensationLocalResult",
     "SteamCondensationZoneResult",
     "SteamTubeOrientation",

@@ -44,10 +44,13 @@ import math
 from dataclasses import replace
 
 from core.common.warnings import ModelWarning, make_warning
+from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.outside_flow import calculate_outside_tube_bank_hydraulics
 from core.heat_transfer.outside_dispatch import (
     DEFAULT_FINNED_DP_PROVIDER,
     DEFAULT_FINNED_HT_PROVIDER,
+    calculate_resistance_network,
+    evaluate_outside_hydraulics,
 )
 from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide, close_heat_balance
 from core.models.rating import run_rating
@@ -62,6 +65,7 @@ from core.phase_change.capability import (
 from core.phase_change.integration import (
     ONSET_TEMPERATURE_METHOD,
     PhaseChangeSettings,
+    _finned_0d_wet_zone_fallback,
     build_capability_side_result,
     dew_point_at_ratio,
     evaluate_side_onset,
@@ -80,6 +84,10 @@ from core.phase_change.finned_tube_guard import (
 from core.properties.water import water_latent_heat_of_vaporization, water_saturation_liquid_enthalpy
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
+from core.phase_change.wet_finned_surface import (
+    WetFinnedSurfaceResult,
+    solve_wet_finned_surface,
+)
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.phase_change.water_equilibrium import saturated_water_ratio
 
@@ -224,6 +232,163 @@ def _centered_wall_bounds(rating_result, *, side: str) -> tuple[float, float, fl
     return wall_mean - half_span, wall_mean, wall_mean + half_span
 
 
+def _normalize_rating_wet_finned_surface(
+    surface: WetFinnedSurfaceResult,
+    *,
+    Q_sensible: float,
+    Q_latent: float,
+    Q_total: float,
+    m_dot_condensate: float,
+    condensate_temperature: float,
+) -> WetFinnedSurfaceResult:
+    """Normalize only Rating's primary/fin rate split to its closed balance.
+
+    Rating's specified temperature program fixes the authoritative whole-side
+    enthalpy duty and condensate rate.  The nonlinear surface solve remains
+    authoritative for temperatures, wet areas/state and the relative
+    primary/fin distribution.  Scaling that distribution keeps one typed
+    result internally closed without pretending that Rating is a separate
+    transport-limited whole-HX solve.  Raw mismatches and scale factors remain
+    explicit in ``residuals``.
+    """
+
+    def scaled_split(
+        primary_raw: float,
+        fin_raw: float,
+        target: float,
+        *,
+        name: str,
+    ) -> tuple[float, float, float]:
+        raw_total = primary_raw + fin_raw
+        scale_floor = max(abs(target), abs(raw_total), 1.0) * 1.0e-15
+        if abs(raw_total) <= scale_floor:
+            if abs(target) <= scale_floor:
+                return 0.0, 0.0, 1.0
+            raise ValueError(
+                "Active wet-finned Rating cannot normalize a non-zero "
+                f"{name} total from a zero raw primary/fin response."
+            )
+        scale = target / raw_total
+        return primary_raw * scale, fin_raw * scale, scale
+
+    Q_primary_sensible, Q_fin_sensible, sensible_scale = scaled_split(
+        surface.Q_primary_sensible,
+        surface.Q_fin_sensible,
+        Q_sensible,
+        name="sensible-duty",
+    )
+    Q_primary_latent, Q_fin_latent, latent_scale = scaled_split(
+        surface.Q_primary_latent,
+        surface.Q_fin_latent,
+        Q_latent,
+        name="latent-duty",
+    )
+    m_primary, m_fin, condensate_scale = scaled_split(
+        surface.m_dot_condensate_primary,
+        surface.m_dot_condensate_fin,
+        m_dot_condensate,
+        name="condensate",
+    )
+
+    Q_primary_total = Q_primary_sensible + Q_primary_latent
+    Q_fin_total = Q_fin_sensible + Q_fin_latent
+    condensate_enthalpy_rate = (
+        m_dot_condensate
+        * water_saturation_liquid_enthalpy(T=condensate_temperature)
+    )
+    raw_Q_total = surface.Q_total
+    raw_condensate = surface.m_dot_condensate
+    raw_Q_gap = abs(raw_Q_total - Q_total)
+    raw_condensate_gap = abs(raw_condensate - m_dot_condensate)
+    normalization_needed = (
+        raw_Q_gap > max(abs(Q_total), 1.0) * 1.0e-12
+        or raw_condensate_gap
+        > max(abs(m_dot_condensate), 1.0e-12) * 1.0e-9
+    )
+    residuals = dict(surface.residuals)
+    residuals.update(
+        {
+            "rating_raw_surface_Q_total_W": raw_Q_total,
+            "rating_surface_Q_gap_W": raw_Q_gap,
+            "rating_raw_surface_condensate_kg_s": raw_condensate,
+            "rating_surface_condensate_gap_kg_s": raw_condensate_gap,
+            "rating_sensible_distribution_scale": abs(sensible_scale),
+            "rating_latent_distribution_scale": abs(latent_scale),
+            "rating_condensate_distribution_scale": abs(condensate_scale),
+        }
+    )
+    assumptions = surface.assumptions
+    if normalization_needed:
+        assumptions = (
+            *assumptions,
+            "rating_closed_balance_normalized_primary_fin_distribution",
+            "rating_wet_effective_alpha_uses_raw_radial_transport_duty",
+        )
+
+    annular_fin = surface.annular_fin
+    if annular_fin is not None and surface.equivalent_fin_count > 0.0:
+        fin_count = surface.equivalent_fin_count
+        fin_condensate_enthalpy = (
+            condensate_enthalpy_rate
+            * (m_fin / m_dot_condensate)
+            if m_dot_condensate > 0.0
+            else 0.0
+        )
+        annular_residuals = dict(annular_fin.residuals)
+        annular_residuals.update(
+            {
+                "rating_sensible_distribution_scale": abs(sensible_scale),
+                "rating_latent_distribution_scale": abs(latent_scale),
+                "rating_condensate_distribution_scale": abs(condensate_scale),
+            }
+        )
+        annular_fin = replace(
+            annular_fin,
+            Q_fin_sensible=Q_fin_sensible / fin_count,
+            Q_fin_latent=Q_fin_latent / fin_count,
+            Q_fin_total=Q_fin_total / fin_count,
+            m_dot_condensate_fin=m_fin / fin_count,
+            condensate_enthalpy_rate_fin=(
+                fin_condensate_enthalpy / fin_count
+            ),
+            residuals=annular_residuals,
+        )
+
+    split_mass_error = m_dot_condensate - (m_primary + m_fin)
+    split_energy_error = max(
+        abs(Q_total - (Q_sensible + Q_latent)),
+        abs(Q_total - (Q_primary_total + Q_fin_total)),
+    )
+    return replace(
+        surface,
+        Q_primary_sensible=Q_primary_sensible,
+        Q_primary_latent=Q_primary_latent,
+        Q_primary_total=Q_primary_total,
+        m_dot_condensate_primary=m_primary,
+        Q_fin_sensible=Q_fin_sensible,
+        Q_fin_latent=Q_fin_latent,
+        Q_fin_total=Q_fin_total,
+        m_dot_condensate_fin=m_fin,
+        Q_sensible=Q_sensible,
+        Q_latent=Q_latent,
+        Q_total=Q_total,
+        m_dot_condensate=m_dot_condensate,
+        condensate_enthalpy_rate=condensate_enthalpy_rate,
+        mass_balance_error=split_mass_error,
+        energy_balance_error=split_energy_error,
+        residuals=residuals,
+        assumptions=assumptions,
+        outside_alpha_wet_effective_basis=(
+            surface.outside_alpha_wet_effective_basis
+            + "_using_raw_radial_transport_duty_before_rating_"
+            "distribution_normalization"
+            if normalization_needed
+            else surface.outside_alpha_wet_effective_basis
+        ),
+        annular_fin=annular_fin,
+    )
+
+
 def apply_phase_change_to_rating(
     hx,
     inside: BalanceSideSpec,
@@ -283,15 +448,43 @@ def apply_phase_change_to_rating(
         guarded_inside, guarded_outside, Q=Q, effectiveness=effectiveness,
         over_specified_tolerance=over_specified_tolerance,
     )
+    dry_simulation_balance = closed_balance
     dry_result = run_rating(
         hx, closed_balance,
         flow_arrangement=flow_arrangement, K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
-        euler_provider=euler_provider, include_simulation=include_simulation,
+        # Defer the optional bridge until onset has selected the dry or active
+        # route. An active outside wet Rating gets one phase-aware Simulation
+        # after convergence, never a discarded dry snapshot before the solve.
+        euler_provider=euler_provider, include_simulation=False,
         finned_heat_transfer_provider=finned_heat_transfer_provider,
         finned_pressure_drop_provider=finned_pressure_drop_provider,
         max_iterations=max_iterations, wall_temperature_tolerance_K=wall_temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
     )
+
+    def attach_requested_dry_simulation(result):
+        """Restore the legacy dry Rating bridge only on a dry return path."""
+        if not include_simulation or result.simulation is not None:
+            return result
+        from core.models.simulation import run_simulation
+
+        simulation = run_simulation(
+            hx,
+            dry_simulation_balance.inside.to_hx_side_input(),
+            dry_simulation_balance.outside.to_hx_side_input(),
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet,
+            K_outlet=K_outlet,
+            K_turn=K_turn,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+        return replace(
+            result,
+            simulation=simulation,
+            Q_achievable=simulation.q,
+        )
 
     reject_unsupported_pure_water_phase_crossing(
         inside.provider,
@@ -319,6 +512,7 @@ def apply_phase_change_to_rating(
     raise_if_inside_pure_steam_condensation(inside, dry_result)
 
     if not inside_capability.capable and not outside_capability.capable:
+        dry_result = attach_requested_dry_simulation(dry_result)
         return replace(
             dry_result,
             inside_phase_change=build_capability_side_result(
@@ -365,6 +559,8 @@ def apply_phase_change_to_rating(
         inside_active=inside_auto_possible,
         outside_active=outside_auto_possible,
         context="wet-gas condensation rating",
+        outside_capability=outside_capability,
+        direction=PhaseChangeDirection.CONDENSATION,
     )
 
     # Rating has no iterate=False escape hatch, so the guard in
@@ -426,6 +622,7 @@ def apply_phase_change_to_rating(
             onset=outside_onset, wall_temperature_min=outside_wall_min,
             wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
         )
+        dry_result = attach_requested_dry_simulation(dry_result)
         return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
 
     # --- Active outside-condensation rating ---------------------------------
@@ -455,6 +652,27 @@ def apply_phase_change_to_rating(
         raise ValueError("Active outside condensation requires an inlet water ratio.")
     enthalpy_evaluator = WetGasEnthalpyEvaluator(outside.p, outside_capability)
     m_dot_dry_carrier = outside.m_dot / (1.0 + W_in)
+    is_wet_finned = (
+        getattr(hx.bundle.tube, "surface_type", None)
+        is TubeSurfaceType.CIRCULAR_FINNED
+    )
+    M_dry = outside_capability.M_dry
+    M_h2o = outside_capability.M_condensable
+    if is_wet_finned and (M_dry is None or M_h2o is None):
+        raise ValueError(
+            "Active wet-finned Rating requires dry-carrier and water molar "
+            "masses for the radial surface solve."
+        )
+    finned_wet_zone_fallback = (
+        _finned_0d_wet_zone_fallback(
+            dew_point_temperature=outside_dew_point,
+            wall_temperature_min=outside_wall_min,
+            wall_temperature_max=outside_wall_max,
+            activation_band_K=settings.activation_band_K,
+        )
+        if is_wet_finned
+        else None
+    )
 
     dT_outside = outside.T_in - outside.T_out
     if abs(dT_outside) < 1e-9:
@@ -522,7 +740,11 @@ def apply_phase_change_to_rating(
             euler_provider=euler_provider,
             finned_heat_transfer_provider=finned_heat_transfer_provider,
             finned_pressure_drop_provider=finned_pressure_drop_provider,
-            include_simulation=include_simulation,
+            # A phase-aware achievable Simulation is run once after this wet
+            # Rating fixed point converges. Calling the dry driver here would
+            # repeat it on every outer iteration and expose a misleading
+            # sensible-only nested result.
+            include_simulation=False,
             max_iterations=max_iterations,
             wall_temperature_tolerance_K=wall_temperature_tolerance_K,
             relative_alfa_tolerance=relative_alfa_tolerance,
@@ -538,6 +760,7 @@ def apply_phase_change_to_rating(
     previous_W_out: float | None = None
     wet_rating_result = None
     wet_surface = None
+    wet_finned_surface = None
     dew_point_mean = None
     rating_wall_min = None
     rating_wall_max = None
@@ -548,6 +771,7 @@ def apply_phase_change_to_rating(
     enthalpy_balance_residual = math.inf
     outer_residuals: dict[str, float] = {}
     outer_converged = False
+    finned_wet_zone_fallback_locked = False
     outer_limit = min(settings.max_iterations, _RATING_OUTER_MAX_ITERATIONS)
 
     for outer_iteration in range(1, outer_limit + 1):
@@ -570,23 +794,119 @@ def apply_phase_change_to_rating(
 
             dew_point_mean = WATER_TRIPLE_POINT_TEMPERATURE_K
 
-        (
-            rating_wall_min,
-            T_wall_outside_repr,
-            rating_wall_max,
-        ) = _centered_wall_bounds(wet_rating_result, side="outside")
-        wet_surface = estimate_wet_surface_fraction(
-            dew_point_temperature=dew_point_mean,
-            wall_temperature_min=rating_wall_min,
-            wall_temperature_mean=T_wall_outside_repr,
-            wall_temperature_max=rating_wall_max,
-            activation_band_K=settings.activation_band_K,
-        )
-        wet_wall_temperature = wet_surface.wall_temperature_wet_mean
-        if (
-            wet_surface.wet_surface_fraction <= 0.0
-            or wet_wall_temperature is None
-        ):
+        if is_wet_finned:
+            thermal_state_iter = wet_rating_result.thermal_state
+            dry_contact_network = calculate_resistance_network(
+                bundle=hx.bundle,
+                alpha_inside=thermal_state_iter.alfa_i,
+                outside_alpha_physical=(
+                    thermal_state_iter.outside_alpha_physical
+                ),
+                resistance_core_wall=hx.tube_wall_resistance(),
+            )
+            assert M_dry is not None and M_h2o is not None
+            def solve_rating_finned_surface(
+                *,
+                condensation_area_fraction: float = 1.0,
+                condensation_temperature_offset_K: float = 0.0,
+            ) -> WetFinnedSurfaceResult:
+                return solve_wet_finned_surface(
+                    hx.bundle,
+                    dry_contact_network,
+                    gas_bulk_temperature=(
+                        thermal_state_iter.outside_bulk_temperature
+                    ),
+                    inside_bulk_temperature=(
+                        thermal_state_iter.inside_bulk_temperature
+                    ),
+                    cp_gas=thermal_state_iter.outside_bulk_props.cp,
+                    W_bulk=W_mean_iter,
+                    p_total=outside.p,
+                    M_dry=M_dry,
+                    M_h2o=M_h2o,
+                    m_dot_water_vapor_available=(
+                        m_dot_dry_carrier * W_mean_iter
+                    ),
+                    lewis_number=settings.lewis_number,
+                    condensation_area_fraction=condensation_area_fraction,
+                    condensation_temperature_offset_K=(
+                        condensation_temperature_offset_K
+                    ),
+                    max_iterations=settings.max_iterations,
+                    temperature_tolerance_K=min(
+                        settings.temperature_tolerance_K,
+                        settings.wall_temperature_tolerance_K,
+                        1.0e-6,
+                    ),
+                    relative_heat_tolerance=min(
+                        settings.relative_Q_tolerance,
+                        1.0e-8,
+                    ),
+                    condensate_tolerance_kg_s=(
+                        min(settings.condensate_tolerance_kg_s, 1.0e-10)
+                    ),
+                    # The radial solve is an internally line-searched Newton
+                    # problem. Rating's outer fixed-point relaxation must not
+                    # add a second damping layer to that local solve.
+                    relaxation_factor=1.0,
+                )
+
+            if finned_wet_zone_fallback_locked:
+                assert finned_wet_zone_fallback is not None
+                wet_finned_surface = solve_rating_finned_surface(
+                    condensation_area_fraction=(
+                        finned_wet_zone_fallback[0]
+                    ),
+                    condensation_temperature_offset_K=(
+                        finned_wet_zone_fallback[1]
+                    ),
+                )
+            else:
+                wet_finned_surface = solve_rating_finned_surface()
+            if (
+                not finned_wet_zone_fallback_locked
+                and wet_finned_surface.m_dot_condensate == 0.0
+                and finned_wet_zone_fallback is not None
+            ):
+                wet_finned_surface = solve_rating_finned_surface(
+                    condensation_area_fraction=(
+                        finned_wet_zone_fallback[0]
+                    ),
+                    condensation_temperature_offset_K=(
+                        finned_wet_zone_fallback[1]
+                    ),
+                )
+                finned_wet_zone_fallback_locked = True
+            T_wall_outside_repr = wet_finned_surface.core_wall_temperature
+            exposed_temperatures = (
+                wet_finned_surface.primary_surface_temperature,
+                wet_finned_surface.fin_base_temperature,
+                wet_finned_surface.fin_tip_temperature,
+            )
+            rating_wall_min = min(exposed_temperatures) + (
+                wet_finned_surface.condensation_temperature_offset_K
+            )
+            rating_wall_max = max(exposed_temperatures)
+            wet_wall_temperature = (
+                wet_finned_surface.wall_temperature_wet_mean
+            )
+            wet_fraction_iter = wet_finned_surface.wet_surface_fraction
+        else:
+            (
+                rating_wall_min,
+                T_wall_outside_repr,
+                rating_wall_max,
+            ) = _centered_wall_bounds(wet_rating_result, side="outside")
+            wet_surface = estimate_wet_surface_fraction(
+                dew_point_temperature=dew_point_mean,
+                wall_temperature_min=rating_wall_min,
+                wall_temperature_mean=T_wall_outside_repr,
+                wall_temperature_max=rating_wall_max,
+                activation_band_K=settings.activation_band_K,
+            )
+            wet_wall_temperature = wet_surface.wall_temperature_wet_mean
+            wet_fraction_iter = wet_surface.wet_surface_fraction
+        if wet_fraction_iter <= 0.0 or wet_wall_temperature is None:
             raise ValueError(
                 "Rating's active outside-condensation regime produced no "
                 "wet wall area after the wet-state update. The active regime "
@@ -596,7 +916,7 @@ def apply_phase_change_to_rating(
             math.isfinite(value)
             for value in (
                 W_out_iter,
-                wet_surface.wet_surface_fraction,
+                wet_fraction_iter,
                 wet_wall_temperature,
                 rating_wall_min,
                 T_wall_outside_repr,
@@ -649,6 +969,13 @@ def apply_phase_change_to_rating(
             "outside_enthalpy_balance_W": abs(enthalpy_balance_residual),
             "outside_enthalpy_root_W": abs(root_enthalpy_residual),
         }
+        if wet_finned_surface is not None:
+            outer_residuals.update(
+                {
+                    f"wet_finned_{name}": value
+                    for name, value in wet_finned_surface.residuals.items()
+                }
+            )
 
         if (
             outer_iteration >= 2
@@ -672,7 +999,8 @@ def apply_phase_change_to_rating(
 
     if (
         wet_rating_result is None
-        or wet_surface is None
+        or (is_wet_finned and wet_finned_surface is None)
+        or (not is_wet_finned and wet_surface is None)
         or dew_point_mean is None
         or rating_wall_min is None
         or rating_wall_max is None
@@ -708,8 +1036,8 @@ def apply_phase_change_to_rating(
         )
     )
 
-    # The loop's last Rating run used this exact W_out. Its centred active
-    # bounds produced this exact wet fraction and wet-wall temperature, and
+    # The loop's last Rating run used this exact W_out. Its active surface
+    # response produced this exact wet fraction and wet-wall temperature, and
     # the enthalpy residual above was evaluated at that reported state.
     W_out = W_out_iter
     W_mean = 0.5 * (W_in + W_out)
@@ -732,26 +1060,53 @@ def apply_phase_change_to_rating(
     outside_provider_inlet = wet_gas_provider_at_water_ratio(outside_capability, W_in)
     outside_provider_outlet = wet_gas_provider_at_water_ratio(outside_capability, W_out)
     T_mean_outside = 0.5 * (outside.T_in + outside.T_out)
-    outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
-        m_dot=m_dot_gas_mean,
-        face_area=hx.bundle.frontal_flow_area,
-        tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
-        tube_pitch_transverse=hx.bundle.pitch_transverse,
-        tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
-        layout=hx.bundle.layout,
-        n_rows=hx.bundle.n_rows,
-        n_tubes_per_row=hx.bundle.n_tubes_per_row,
-        inlet_props=outside_provider_inlet.at(T=outside.T_in, p=outside.p),
-        midpoint_props=outside_provider_mean.at(T=T_mean_outside, p=outside.p),
-        outlet_props=outside_provider_outlet.at(T=outside.T_out, p=outside.p),
-        temperature_in=outside.T_in,
-        temperature_out=outside.T_out,
-        pressure=outside.p,
-        euler_provider=euler_provider,
-        m_dot_inlet=outside.m_dot,
-        m_dot_midpoint=m_dot_gas_mean,
-        m_dot_outlet=m_dot_gas_out,
+    outside_props_inlet = outside_provider_inlet.at(
+        T=outside.T_in, p=outside.p
     )
+    outside_props_midpoint = outside_provider_mean.at(
+        T=T_mean_outside, p=outside.p
+    )
+    outside_props_outlet = outside_provider_outlet.at(
+        T=outside.T_out, p=outside.p
+    )
+    if is_wet_finned:
+        outside_bank_hydraulic = evaluate_outside_hydraulics(
+            bundle=hx.bundle,
+            m_dot=m_dot_gas_mean,
+            inlet_props=outside_props_inlet,
+            midpoint_props=outside_props_midpoint,
+            outlet_props=outside_props_outlet,
+            temperature_in=outside.T_in,
+            temperature_out=outside.T_out,
+            pressure=outside.p,
+            euler_provider=euler_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+            m_dot_inlet=outside.m_dot,
+            m_dot_midpoint=m_dot_gas_mean,
+            m_dot_outlet=m_dot_gas_out,
+        )
+    else:
+        # Preserve the historical bare-tube Rating calculation exactly.
+        outside_bank_hydraulic = calculate_outside_tube_bank_hydraulics(
+            m_dot=m_dot_gas_mean,
+            face_area=hx.bundle.frontal_flow_area,
+            tube_outer_diameter=float(getattr(hx.bundle.tube, "D_o")),
+            tube_pitch_transverse=hx.bundle.pitch_transverse,
+            tube_pitch_longitudinal=hx.bundle.pitch_longitudinal,
+            layout=hx.bundle.layout,
+            n_rows=hx.bundle.n_rows,
+            n_tubes_per_row=hx.bundle.n_tubes_per_row,
+            inlet_props=outside_props_inlet,
+            midpoint_props=outside_props_midpoint,
+            outlet_props=outside_props_outlet,
+            temperature_in=outside.T_in,
+            temperature_out=outside.T_out,
+            pressure=outside.p,
+            euler_provider=euler_provider,
+            m_dot_inlet=outside.m_dot,
+            m_dot_midpoint=m_dot_gas_mean,
+            m_dot_outlet=m_dot_gas_out,
+        )
     outside_bank_hydraulic = replace(
         outside_bank_hydraulic,
         midpoint_method="arithmetic_temperature_and_water_ratio",
@@ -792,47 +1147,256 @@ def apply_phase_change_to_rating(
             )
         )
 
-    alfa_o_dry = wet_rating_result.alfa_o
-    T_wall_outside_repr = wet_rating_result.thermal_state.outside_wall_temperature
-    delta_T_film = T_mean_outside - T_wall_outside_repr
-    if abs(delta_T_film) < 1e-3:
-        alfa_o_effective = alfa_o_dry
-        balance_warnings.append(
-            make_warning(
-                code=WC.EFFECTIVE_OUTSIDE_ALPHA_LIMITED,
-                message=(
-                    "outside: bulk-to-surface temperature difference is too "
-                    "small to reconstruct alfa_outside_effective from "
-                    "Q_total; falling back to alfa_outside_dry."
-                ),
-                source=SOURCE,
-                severity="info",
+    if is_wet_finned:
+        assert wet_finned_surface is not None
+        raw_wet_finned_surface = wet_finned_surface
+        alfa_o_dry = raw_wet_finned_surface.outside_alpha_physical
+        T_wall_outside_repr = raw_wet_finned_surface.core_wall_temperature
+        # This named wet coefficient comes from the same raw radial response
+        # that set the converged wall temperatures and wet areas.  Its type
+        # states the gross-area / bulk-gas-to-core-wall basis explicitly;
+        # latent duty is never relabelled as a physical Briggs-Young HTC.
+        alfa_o_effective = (
+            raw_wet_finned_surface.outside_alpha_wet_effective_gross_core_basis
+        )
+        if not math.isfinite(alfa_o_effective) or alfa_o_effective <= 0.0:
+            raise ValueError(
+                "Wet-finned Rating produced a non-positive effective "
+                "gross-area outside conductance."
+            )
+
+        wet_area = raw_wet_finned_surface.wet_area
+        wet_surface_fraction = (
+            raw_wet_finned_surface.wet_surface_fraction
+        )
+        wet_surface_fraction_method = (
+            "nonlinear_radial_annular_fin_fvm_plus_primary_surface"
+            + (
+                "_with_0d_endpoint_wet_zone_fallback"
+                if (
+                    raw_wet_finned_surface.condensation_area_fraction < 1.0
+                    or raw_wet_finned_surface
+                    .condensation_temperature_offset_K < 0.0
+                )
+                else ""
             )
         )
-    else:
-        alfa_o_effective = Q_required / (wet_rating_result.A_o * delta_T_film)
-
-    # Rating reports A_wet but does not use it as a transport-limited design
-    # check. The shared wet-surface estimate is nevertheless part of the
-    # enthalpy fixed point because its representative wet-wall temperature
-    # sets both drained-liquid enthalpy and the latent split.
-    wet_area = wet_rating_result.A_o * wet_surface.wet_surface_fraction
-    M_dry = outside_capability.M_dry
-    M_h2o = outside_capability.M_condensable
-    if M_dry is None or M_h2o is None:
-        raise ValueError(
-            "Active outside condensation requires dry-carrier and water "
-            "molar masses for wet-surface saturation diagnostics."
+        W_sat_wet_surface = raw_wet_finned_surface.W_sat_wet_surface
+        wet_finned_surface = _normalize_rating_wet_finned_surface(
+            raw_wet_finned_surface,
+            Q_sensible=Q_sensible,
+            Q_latent=Q_latent,
+            Q_total=Q_required,
+            m_dot_condensate=m_dot_condensate,
+            condensate_temperature=wet_wall_temperature,
         )
-    W_sat_wet_surface = saturated_water_ratio(
-        p_total=outside.p,
-        T=wet_wall_temperature,
-        M_dry=M_dry,
-        M_h2o=M_h2o,
-    )
+        outer_residuals.update(
+            {
+                f"wet_finned_{name}": value
+                for name, value in wet_finned_surface.residuals.items()
+            }
+        )
+    else:
+        assert wet_surface is not None
+        alfa_o_dry = wet_rating_result.alfa_o
+        T_wall_outside_repr = (
+            wet_rating_result.thermal_state.outside_wall_temperature
+        )
+        delta_T_film = T_mean_outside - T_wall_outside_repr
+        if abs(delta_T_film) < 1e-3:
+            alfa_o_effective = alfa_o_dry
+            balance_warnings.append(
+                make_warning(
+                    code=WC.EFFECTIVE_OUTSIDE_ALPHA_LIMITED,
+                    message=(
+                        "outside: bulk-to-surface temperature difference is "
+                        "too small to reconstruct alfa_outside_effective "
+                        "from Q_total; falling back to alfa_outside_dry."
+                    ),
+                    source=SOURCE,
+                    severity="info",
+                )
+            )
+        else:
+            alfa_o_effective = Q_required / (
+                wet_rating_result.A_o * delta_T_film
+            )
+
+        # Preserve the legacy bare Rating wet-envelope calculation exactly.
+        wet_area = (
+            wet_rating_result.A_o * wet_surface.wet_surface_fraction
+        )
+        wet_surface_fraction = wet_surface.wet_surface_fraction
+        wet_surface_fraction_method = wet_surface.method
+        if M_dry is None or M_h2o is None:
+            raise ValueError(
+                "Active outside condensation requires dry-carrier and water "
+                "molar masses for wet-surface saturation diagnostics."
+            )
+        W_sat_wet_surface = saturated_water_ratio(
+            p_total=outside.p,
+            T=wet_wall_temperature,
+            M_dry=M_dry,
+            M_h2o=M_h2o,
+        )
 
     mass_balance_error = m_dot_water_vapor_in - (m_dot_water_vapor_out + m_dot_condensate)
     energy_balance_error = Q_required - (Q_sensible + Q_latent)
+
+    if is_wet_finned:
+        assert wet_finned_surface is not None
+        if (
+            wet_finned_surface.condensation_area_fraction < 1.0
+            or wet_finned_surface.condensation_temperature_offset_K < 0.0
+        ):
+            balance_warnings.append(
+                make_warning(
+                    code=WC.WET_SURFACE_FRACTION_0D_ESTIMATE,
+                    message=(
+                        "outside: the bulk-mean radial circular-fin Rating "
+                        "response was dry after endpoint onset, so "
+                        "condensation uses the dry exposed-skin envelope's "
+                        "linear 0D cold-zone area and representative "
+                        "temperature. This is not a longitudinal, row, "
+                        "circuit or pass-resolved model."
+                    ),
+                    source=SOURCE,
+                    severity="info",
+                )
+            )
+        wet_dp_warning = make_warning(
+            code=WC.CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY,
+            message=(
+                "outside: wet circular-finned thermal performance and "
+                "condensate are solved, but no wet-surface pressure-drop "
+                "correction is available; the reported finned-bank pressure "
+                "drop is the selected dry-correlation reference only."
+            ),
+            source=SOURCE,
+            severity="warning",
+        )
+        balance_warnings.append(wet_dp_warning)
+        balance_warnings = _deduplicate_rating_warnings(balance_warnings)
+
+        A_o = wet_rating_result.A_o
+        R_outside_effective = 1.0 / (alfa_o_effective * A_o)
+        R_inside = 1.0 / (
+            wet_rating_result.thermal_state.alfa_i
+            * wet_rating_result.final_result.A_i
+        )
+        R_total_effective = (
+            R_inside
+            + hx.tube_wall_resistance()
+            + R_outside_effective
+        )
+        UA_effective = 1.0 / R_total_effective
+        U_effective = UA_effective / A_o
+        A_required_effective = wet_rating_result.UA_required / U_effective
+        overdesign_factor_effective = A_o / A_required_effective - 1.0
+        ua_margin_effective = (
+            UA_effective / wet_rating_result.UA_required - 1.0
+        )
+
+        thermal_finned = (
+            wet_rating_result.thermal_state.finned_tube_diagnostics
+        )
+        final_finned = wet_rating_result.final_result.finned_tube_diagnostics
+        if thermal_finned is None or final_finned is None:
+            raise ValueError(
+                "Active wet circular-fin Rating lost its finned diagnostics."
+            )
+
+        def attach_wet_surface(diagnostics):
+            return replace(
+                diagnostics,
+                # Preserve all established dry-network thermal fields.  The
+                # wet effective coefficient and its basis live only on the
+                # explicitly named nested wet result.
+                wet_surface=wet_finned_surface,
+                pressure_drop_coefficient=(
+                    outside_bank_hydraulic.midpoint.coefficient
+                ),
+                pressure_drop_coefficient_definition=(
+                    outside_bank_hydraulic.coefficient_definition
+                ),
+                outside_dp_drag=outside_bank_hydraulic.dp_drag,
+                outside_dp_acceleration=outside_bank_hydraulic.dp_acceleration,
+                outside_dp_total=outside_bank_hydraulic.dp_total,
+                pressure_drop_metadata=outside_bank_hydraulic.metadata,
+                outside_dp_dry_reference=outside_bank_hydraulic.dp_total,
+                wet_pressure_drop_supported=False,
+                outside_dp_reference_only=True,
+                warnings=tuple(
+                    _deduplicate_rating_warnings(
+                        [
+                            *diagnostics.warnings,
+                            *outside_bank_hydraulic.warnings,
+                            wet_dp_warning,
+                        ]
+                    )
+                ),
+            )
+
+        thermal_finned = attach_wet_surface(thermal_finned)
+        final_finned = attach_wet_surface(final_finned)
+        wet_thermal_state = replace(
+            wet_rating_result.thermal_state,
+            inside_wall_temperature=(
+                wet_finned_surface.inside_wall_temperature
+            ),
+            outside_wall_temperature=(
+                wet_finned_surface.core_wall_temperature
+            ),
+            alfa_o=alfa_o_effective,
+            U=U_effective,
+            UA=UA_effective,
+            iterations=outer_iteration,
+            converged=rating_coupled_converged,
+            residual=outer_residuals["T_wall_wet_mean_K"],
+            outside_alpha_physical=alfa_o_dry,
+            outside_alpha_effective_gross=(
+                thermal_finned.outside_alpha_effective_gross
+            ),
+            outside_alpha_wet_effective_gross_core_basis=(
+                wet_finned_surface.outside_alpha_wet_effective_gross_core_basis
+            ),
+            outside_alpha_wet_effective_basis=(
+                wet_finned_surface.outside_alpha_wet_effective_basis
+            ),
+            warnings=tuple(
+                _deduplicate_rating_warnings(
+                    [
+                        *wet_rating_result.thermal_state.warnings,
+                        wet_dp_warning,
+                    ]
+                )
+            ),
+            finned_tube_diagnostics=thermal_finned,
+        )
+        wet_final_result = replace(
+            wet_rating_result.final_result,
+            finned_tube_diagnostics=final_finned,
+            warnings=_deduplicate_rating_warnings(
+                [
+                    *(wet_rating_result.final_result.warnings or []),
+                    wet_dp_warning,
+                ]
+            ),
+        )
+        wet_rating_result = replace(
+            wet_rating_result,
+            overdesign_factor=overdesign_factor_effective,
+            ua_margin=ua_margin_effective,
+            A_required=A_required_effective,
+            UA_actual=UA_effective,
+            U_mean=U_effective,
+            alfa_o=alfa_o_effective,
+            final_result=wet_final_result,
+            thermal_state=wet_thermal_state,
+            warnings=_deduplicate_rating_warnings(
+                [*(wet_rating_result.warnings or []), *balance_warnings]
+            ),
+        )
 
     outside_result = PhaseChangeResult(
         side="outside",
@@ -848,7 +1412,23 @@ def apply_phase_change_to_rating(
         onset_temperature_method=ONSET_TEMPERATURE_METHOD,
         converged=rating_coupled_converged,
         iterations=outer_iteration,
-        method="outside_condensation_rating_wet_wall_fixed_point",
+        method=(
+            (
+                "outside_condensation_rating_wet_annular_fin_fvm_"
+                "with_endpoint_wet_zone_fallback"
+                if (
+                    wet_finned_surface is not None
+                    and (
+                        wet_finned_surface.condensation_area_fraction < 1.0
+                        or wet_finned_surface
+                        .condensation_temperature_offset_K < 0.0
+                    )
+                )
+                else "outside_condensation_rating_wet_annular_fin_fvm"
+            )
+            if is_wet_finned
+            else "outside_condensation_rating_wet_wall_fixed_point"
+        ),
         W_in=W_in,
         W_mid=W_mean,
         W_out=W_out,
@@ -860,15 +1440,20 @@ def apply_phase_change_to_rating(
         m_dot_gas_out=m_dot_gas_out,
         dew_point_in=outside_dew_point,
         dew_point_out=dew_point_at_ratio(outside_capability, W_out, p=outside.p),
-        wall_temperature_mean=T_wall_outside_repr,
+        wall_temperature_mean=(
+            wet_finned_surface.outside_surface_temperature_area_mean
+            if wet_finned_surface is not None
+            else T_wall_outside_repr
+        ),
         wall_temperature_min=rating_wall_min,
         wall_temperature_max=rating_wall_max,
         wall_temperature_wet_mean=wet_wall_temperature,
-        wet_surface_fraction=wet_surface.wet_surface_fraction,
-        wet_surface_fraction_method=wet_surface.method,
+        wet_surface_fraction=wet_surface_fraction,
+        wet_surface_fraction_method=wet_surface_fraction_method,
         wet_area=wet_area,
         outside_total_area=wet_rating_result.A_o,
         W_sat_wet_surface=W_sat_wet_surface,
+        wet_finned_surface=wet_finned_surface,
         alfa_dry=alfa_o_dry,
         alfa_effective=alfa_o_effective,
         lewis_number=settings.lewis_number,
@@ -878,20 +1463,89 @@ def apply_phase_change_to_rating(
         mass_balance_error=mass_balance_error,
         energy_balance_error=energy_balance_error,
         residuals=outer_residuals,
-        assumptions=(
-            "rating_enthalpy_root_not_transport_limited",
-            "wet_surface_bounds_centered_on_global_wall_mean",
-            "condensate_temperature_equals_representative_wet_wall_temperature",
-            "fully_drained_saturated_liquid_condensate_at_wet_wall_temperature",
-            "dry_gas_composition_unchanged_by_condensation",
+        assumptions=tuple(
+            dict.fromkeys(
+                (
+                    "rating_enthalpy_root_not_transport_limited",
+                    "condensate_temperature_equals_representative_wet_wall_temperature",
+                    *(
+                        wet_finned_surface.assumptions
+                        if wet_finned_surface is not None
+                        else (
+                            "wet_surface_bounds_centered_on_global_wall_mean",
+                            "fully_drained_saturated_liquid_condensate_at_wet_wall_temperature",
+                            "dry_gas_composition_unchanged_by_condensation",
+                        )
+                    ),
+                )
+            )
         ),
         warnings=tuple(balance_warnings),
     )
+
+    phase_aware_simulation = None
+    Q_achievable = None
+    if include_simulation:
+        from core.models.simulation import HXSideInput
+
+        phase_aware_simulation = hx.simulate(
+            HXSideInput(
+                provider=inside.provider,
+                m_dot=closed_balance.inside.m_dot,
+                T_in=closed_balance.inside.T_in,
+                p=inside.p,
+                phase_change_mode=inside.phase_change_mode,
+            ),
+            HXSideInput(
+                provider=outside.provider,
+                m_dot=closed_balance.outside.m_dot,
+                T_in=closed_balance.outside.T_in,
+                p=outside.p,
+                phase_change_mode=outside.phase_change_mode,
+            ),
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet,
+            K_outlet=K_outlet,
+            K_turn=K_turn,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+            max_iter=max_iterations,
+            temperature_tolerance_K=wall_temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            relaxation_factor=relaxation_factor,
+            phase_change_onset_tolerance_K=settings.onset_tolerance_K,
+            phase_change_activation_band_K=settings.activation_band_K,
+            lewis_number=settings.lewis_number,
+            phase_change_max_iterations=settings.max_iterations,
+            phase_change_temperature_tolerance_K=(
+                settings.temperature_tolerance_K
+            ),
+            phase_change_relative_Q_tolerance=(
+                settings.relative_Q_tolerance
+            ),
+            phase_change_water_ratio_tolerance=(
+                settings.water_ratio_tolerance
+            ),
+            phase_change_condensate_tolerance_kg_s=(
+                settings.condensate_tolerance_kg_s
+            ),
+            phase_change_wall_temperature_tolerance_K=(
+                settings.wall_temperature_tolerance_K
+            ),
+            phase_change_wet_fraction_tolerance=(
+                settings.wet_fraction_tolerance
+            ),
+            phase_change_relaxation_factor=settings.relaxation_factor,
+        )
+        Q_achievable = phase_aware_simulation.q
 
     return replace(
         wet_rating_result,
         inside_phase_change=inside_result,
         outside_phase_change=outside_result,
+        simulation=phase_aware_simulation,
+        Q_achievable=Q_achievable,
     )
 
 
