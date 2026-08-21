@@ -384,3 +384,58 @@ def test_dry_finned_rating_keeps_the_legacy_result_exactly() -> None:
         assert getattr(actual, name) == getattr(expected, name)
     assert actual.thermal_state == expected.thermal_state
     assert actual.wall_temperature_envelope == expected.wall_temperature_envelope
+
+
+def _capable_auto_rating(inside_T_in_C: float):
+    """Rating with a genuinely H2O-capable outside gas, AUTO on both sides.
+
+    Sweeping ``inside_T_in_C`` alone (all else fixed) crosses the AUTO
+    onset threshold: colder inside temperatures pull the outside wall
+    below the dew point (active wet condensation); warmer ones hold it
+    dry/near-onset. Mirrors the Simulation-side transition covered in
+    ``phase_change_auto_regime_transition_test.py``, but for Rating.
+    """
+    hx = _exchanger()
+    inside_T_in = inside_T_in_C + 273.15
+    inside = BalanceSideSpec(
+        provider=_inside_provider(), p=P, m_dot=8.0,
+        T_in=inside_T_in, T_out=inside_T_in + 21.0,
+        phase_change_mode=PhaseChangeMode.AUTO,
+    )
+    outside = BalanceSideSpec(
+        provider=_wet_provider(), p=P, m_dot=6.0,
+        T_in=420.0, T_out=380.0,
+        phase_change_mode=PhaseChangeMode.AUTO,
+    )
+    return hx.rate(inside, outside)
+
+
+def test_near_onset_auto_rating_is_a_valid_dry_result_not_a_failure() -> None:
+    """Spec section 5/6/17.24: Rating's AUTO must also legitimately resolve
+    to a converged near-onset/dry result, and that result must expose the
+    real sensible duty rather than a hardcoded zero."""
+    result = _capable_auto_rating(41.5)
+    pc = result.outside_phase_change
+
+    assert pc.capable is True
+    assert pc.active is False
+    assert pc.near_onset is True
+    assert pc.possible is True
+    assert result.wet_finned_surface is None
+    assert pc.m_dot_condensate == 0.0
+    assert pc.Q_latent == 0.0
+    assert pc.Q_sensible == pytest.approx(result.Q_required)
+    assert pc.Q_total == pytest.approx(result.Q_required)
+    assert math.isfinite(result.UA_actual)
+    assert math.isfinite(result.overdesign_factor)
+
+
+def test_crossing_auto_rating_onset_changes_regime_not_exception() -> None:
+    wet = _capable_auto_rating(41.0)
+    dry = _capable_auto_rating(41.5)
+
+    assert wet.outside_phase_change.active is True
+    assert wet.outside_phase_change.m_dot_condensate > 0.0
+    assert dry.outside_phase_change.active is False
+    assert dry.outside_phase_change.near_onset is True
+    assert math.isfinite(wet.Q_required) and math.isfinite(dry.Q_required)
