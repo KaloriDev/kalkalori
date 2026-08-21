@@ -1,13 +1,15 @@
-# Circular-Finned-Tube Model (v0.7.0; fin/root contact input extended in v0.7.2)
+# Circular-Finned-Tube Model (v0.7.0; applicability extended through v0.7.4)
 
 This document describes the v0.7.0 release-candidate dry
 circular-finned-tube model pending independent reference validation.
 It is a 0D engineering model with explicitly declared geometry and
 correlation boundaries. v0.7.2 adds a practical dimensionless
 `fin_contact_efficiency` alternative to the explicit `fin_contact_resistance`
-input; see [Fin/root contact input](#finroot-contact-input) below. It is not
-a new correlation and does not change the fin-efficiency, root-conduction,
-Briggs--Young or Robinson--Briggs physics described here.
+input; see [Fin/root contact input](#finroot-contact-input) below. v0.7.4
+makes positive one- to three-row Briggs--Young requests calculable with an
+explicit unvalidated-extrapolation warning. Neither change introduces a new
+correlation or changes the fin-efficiency, root-conduction, Briggs--Young or
+Robinson--Briggs equations described here.
 
 ## Scope
 
@@ -377,7 +379,7 @@ the **effective gross-area** value (the values coincide for a plain tube).
 | Model | Source | Application | Reference diameter | Reference velocity | Reynolds range | Layout | Area basis | Main limitations |
 |---|---|---|---|---|---:|---|---|---|
 | Annular-fin conduction | Gardner (1945); extended-surface texts | Fin and overall surface efficiency | `D_root` to `D_fin` radial domain | n/a | n/a | Individual full circular fin | Actual two faces plus tip | 1D radial conduction, uniform physical `h_o`, linear taper |
-| Briggs--Young (1963) | *Chem. Eng. Prog. Symp. Ser.* 59(41), 1--10 | Dry outside HTC | `D_root` | `V_max` on `A_min` | 1,100--18,000 | Staggered equilateral triangular; at least 4 rows, source banks had 6 | Physical film coefficient on exposed gross surface; efficiency separate | Air data; no inline or row correction; other gases are an extrapolation |
+| Briggs--Young (1963) | *Chem. Eng. Prog. Symp. Ser.* 59(41), 1--10 | Dry outside HTC | `D_root` | `V_max` on `A_min` | 1,100--18,000 | Staggered equilateral triangular; positive row count; source banks had 6 and a later recommendation is at least 4 | Physical film coefficient on exposed gross surface; efficiency separate | Air data; 1--3 rows and other gases are unvalidated extrapolations; no inline or row correction |
 | Robinson--Briggs (1966) | *Chem. Eng. Prog. Symp. Ser.* 62(64), 177--184 | Dry bank pressure loss | `D_root` | `V_max` on `A_min` | 2,000--50,000 | Staggered equilateral triangular; at least 4 rows, source banks had 6 | Dynamic pressure based on `V_max`; coefficient is per row | Isothermal air data; materially isosceles layouts are outside the verified v0.7.0 scope |
 
 ### Briggs--Young heat transfer
@@ -401,9 +403,25 @@ Published geometry diagnostics include `0.13 <= s/H <= 0.63`,
 `0.011 <= t_mean/D_root <= 0.15` and
 `1.54 <= P_t/D_root <= 8.23`, with `11.1 mm <= D_root <= 40.9 mm`
 and `246 <= 1/p_f <= 768 1/m`. Source banks had six rows; use down to
-four rows is reported as a secondary recommendation. The equilateral check
-uses a 0.1% relative engineering tolerance so rounded nominal dimensions are
-not rejected as materially isosceles.
+four rows is reported as a later, secondary recommendation. Provider metadata
+therefore retains `source_test_rows` as exactly 6 rows and
+`secondary_recommended_rows` as 4 rows or more. These ranges describe the
+evidence and later recommendation rather than a mathematical requirement of
+the equation.
+
+Every positive row count is calculable. For one to three rows, v0.7.4 uses
+the same uncorrected Briggs--Young equation shown above and returns
+`briggs_young_1963_small_row_count_extrapolation` with severity `warning`.
+Its source is `finned_tube_outside_ht`. The diagnostic states that the request
+is an unvalidated small-row-count extrapolation and that no row correction was
+applied. It replaces, rather than duplicates, the general row-count diagnostic.
+Four or five rows and row counts above six retain
+`briggs_young_1963_row_count_secondary_extension` with severity `info`; six
+rows produce no row-count diagnostic. Other independent applicability
+warnings may coexist with these diagnostics.
+
+The equilateral check uses a 0.1% relative engineering tolerance so rounded
+nominal dimensions are not rejected as materially isosceles.
 
 ### Robinson--Briggs pressure loss
 
@@ -433,10 +451,13 @@ does not silently substitute the inlet state.
 Provider results report method/source, geometry family, velocity and
 Reynolds bases, reference diameter, area and row bases, applicability ranges
 and structured warnings. The built-in models reject bare tubes, inline
-banks, materially isosceles banks, too few rows and geometry-family mismatches
-rather than falling back to a smooth-tube model. A 0.1% relative tolerance on
-`P_d/P_t` accepts ordinary rounded dimensions without extending the model to
-arbitrary isosceles geometry.
+banks, materially isosceles banks and geometry-family mismatches rather than
+falling back to a smooth-tube model. Robinson--Briggs pressure loss also
+rejects banks with fewer than four rows. Briggs--Young heat transfer instead
+calculates every positive row count and reports the dedicated extrapolation
+warning for one to three rows. A 0.1% relative tolerance on `P_d/P_t` accepts
+ordinary rounded dimensions without extending the model to arbitrary
+isosceles geometry.
 
 An active wet or condensing **outside** surface on a `CircularFinnedTube` is
 conservatively rejected with a dedicated controlled unsupported error. The

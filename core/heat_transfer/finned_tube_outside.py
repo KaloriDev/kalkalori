@@ -91,7 +91,8 @@ BRIGGS_YOUNG_1963_METADATA = FinnedTubeHeatTransferMetadata(
     row_basis=(
         "mean coefficient correlated from six-row banks; no row correction "
         "is contained in the equation; use for >=4 rows is a later handbook "
-        "recommendation and is reported diagnostically"
+        "recommendation, while 1-3 rows are calculable unvalidated "
+        "extrapolations reported by a warning"
     ),
     source_fluid="air",
     supported_layouts=("staggered_equilateral_triangular",),
@@ -304,12 +305,6 @@ class BriggsYoung1963Provider:
                 "BriggsYoung1963Provider supports only staggered triangular "
                 "tube banks; inline layout is unsupported."
             )
-        if request.n_rows < 4:
-            raise ValueError(
-                "BriggsYoung1963Provider requires at least four tube rows; "
-                "the source correlation was obtained from six-row banks."
-            )
-
         diagonal_pitch = math.hypot(
             request.pitch_longitudinal, 0.5 * request.pitch_transverse
         )
@@ -546,14 +541,32 @@ def _briggs_young_warnings(
         if warning is not None:
             warnings.append(warning)
 
-    if request.n_rows != 6:
+    if request.n_rows < 4:
+        warnings.append(
+            make_warning(
+                code="briggs_young_1963_small_row_count_extrapolation",
+                message=(
+                    "Briggs-Young was correlated from six-row banks, and "
+                    "later references recommend its use for banks with at "
+                    "least four rows. The requested "
+                    f"{request.n_rows}-row bank is an unvalidated "
+                    "small-row-count extrapolation; no row correction has "
+                    "been applied."
+                ),
+                source="finned_tube_outside_ht",
+                severity="warning",
+            )
+        )
+    elif request.n_rows != 6:
         warnings.append(
             make_warning(
                 code="briggs_young_1963_row_count_secondary_extension",
                 message=(
-                    "Briggs-Young was correlated from six-row banks. The "
-                    f"requested {request.n_rows} rows satisfy the later >=4-row "
-                    "recommendation, but no row correction is present."
+                    "Briggs-Young was correlated from six-row banks. Applying "
+                    f"it to the requested {request.n_rows}-row bank is a "
+                    "secondary extension within the later recommendation for "
+                    "banks with at least four rows; the equation contains no "
+                    "row-count correction."
                 ),
                 source="finned_tube_outside_ht",
                 severity="info",

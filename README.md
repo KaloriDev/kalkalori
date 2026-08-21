@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.2)
+## Current Capabilities (v0.7.4)
 
 - Rating can derive the required tube-side pure-steam mass flow from an
   independently known duty (explicit `Q`, or a fully specified opposing-side
@@ -68,7 +68,10 @@ and serialization**, enabling both open collaboration and commercial adoption.
   physical `fin_contact_resistance` for non-ideal fin/root contact,
   Briggs--Young dry outside heat transfer, verified-scope Robinson--Briggs
   pressure loss, Simulation, Rating, and the established inside-side phase
-  change paths when the finned outside surface remains dry. See
+  change paths when the finned outside surface remains dry. The Briggs--Young
+  heat-transfer provider accepts every positive bank row count; one- to
+  three-row results carry an explicit unvalidated-extrapolation warning and
+  have no row-count correction. See
   [`docs/finned_tube_model.md`](docs/finned_tube_model.md). Wet/condensing
   finned outside surfaces remain unsupported.
 - Tube-side forced convection
