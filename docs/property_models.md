@@ -874,6 +874,40 @@ have been possible from the dry baseline and attaches a
 forced approximation, not a "this case has no condensation" statement; the
 true duty and outlet temperature may differ from the dry result.
 
+### 15.35 Rating with a single unknown non-condensing-side variable (v0.7.5)
+
+Active outside condensation does not inherently require every one of the
+non-condensing (typically inside) side's `m_dot`/`T_in`/`T_out` to be
+explicit. Exactly as for a dry `Rating` call, `BalanceSideSpec` may still
+leave a single supported unknown --  `m_dot` (with `T_out` known) or
+`T_out` (with `m_dot` known) -- for the solver to close, provided the wet
+outside side is itself fully specified (`m_dot`, `T_in`, `T_out`).
+
+Unlike the dry case, this cannot be recovered by one more algebraic
+`close_heat_balance` step: the wet outside stream's own duty is not pinned
+down by its `(T_in, T_out, m_dot)` alone once condensation is active (how
+much water actually condenses is an extra physical degree of freedom, set
+only by the mass-transfer-coefficient-driven physics at the real wall
+temperature, which itself depends on the unknown flow through the inside
+film coefficient). `core.phase_change.rating_integration` instead runs an
+outer, bounded, bracketed scalar root search over the single unknown,
+re-evaluating the whole Rating call at each trial and comparing the
+resulting nonlinear wet-fin surface's own physically-driven duty against
+the duty the trial's inside energy balance requires. This is currently
+implemented only for a `CircularFinnedTube` outside surface (a bare-tube
+outside surface does not yet expose an equivalent independent raw duty and
+raises a clear, typed error if this closure is attempted on one).
+
+Each trial may resolve dry, near-onset or actively condensing -- AUTO
+legitimately crosses regime boundaries during the search, and a dry/near-
+onset trial is not treated as a search failure. A genuinely underdetermined
+side (both `m_dot` and `T_out` missing) is still rejected, and a target
+that cannot be reached by any physically valid flow/temperature raises a
+diagnostic `RatingClosureError` (no fabricated "closest" result is
+returned). This search is materially more expensive than a plain Rating
+call (each trial re-runs the full nonlinear wet-fin solve); it is not
+attempted unless exactly one supported unknown triggers it.
+
 ### 15.4 Scope (v0.6.1/v0.7.5)
 
 `GasMixturePropertyProvider` represents the gas phase, not a pre-existing

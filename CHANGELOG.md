@@ -40,6 +40,8 @@ The project follows **Semantic Versioning (SemVer)**:
   Q_required`) instead of `0.0`, so callers no longer need to branch on
   `active` before reading them. `active=False` is a valid converged dry or
   near-onset AUTO result, never a calculation failure.
+- Restored Rating closure of a single unknown non-condensing-side mass flow
+  or outlet temperature when outside H2O condensation is active.
 - Hardened the active wet circular-fin solve against a near-boundary
   collapse: if the dry-baseline onset screen activates AUTO but the
   converged nonlinear radial field (including its 0D endpoint wet-zone
