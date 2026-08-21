@@ -34,6 +34,18 @@ The project follows **Semantic Versioning (SemVer)**:
 - Narrowed the wet-finned capability guard to permit the supported outside
   gas-mixture/H2O-condensation case while retaining controlled errors for
   unsupported species, directions and simultaneous phase-change cases.
+- `PhaseChangeMode.AUTO` dry/near-onset results now expose a complete
+  sensible-only `PhaseChangeResult`: `Q_sensible`/`Q_total` report the real
+  exchanger duty (matching `HXSimulationResult.q` / `HXRatingResult.
+  Q_required`) instead of `0.0`, so callers no longer need to branch on
+  `active` before reading them. `active=False` is a valid converged dry or
+  near-onset AUTO result, never a calculation failure.
+- Hardened the active wet circular-fin solve against a near-boundary
+  collapse: if the dry-baseline onset screen activates AUTO but the
+  converged nonlinear radial field (including its 0D endpoint wet-zone
+  fallback) finds zero net condensate, the call now returns the exact dry
+  AUTO result with a `PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY` warning
+  instead of raising.
 
 ### Notes
 

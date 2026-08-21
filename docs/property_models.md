@@ -852,7 +852,16 @@ is set does the solver actually make phase change **active** and run the
 coupled side-specific solve. A capable
 medium that never reaches its dew point produces an ordinary sensible-only
 result under `AUTO`, bit-for-bit identical to not having this feature at
-all.
+all. A small activation band straddling the dew-point margin resolves to a
+**near-onset** result (`possible=True`, `active=False`,
+`near_onset=True`) instead of oscillating between the dry and wet solve on
+repeated calls close to onset.
+
+`active=False` -- whether dry, near-onset, or a not-capable side -- is
+always a valid, converged result, never a calculation failure. Its
+`PhaseChangeResult.Q_sensible`/`Q_total` equal the real exchanger duty
+(`Q_latent = 0`, `m_dot_condensate = 0`) exactly like `DISABLED` below, so a
+caller never has to check `active` before reading them.
 
 ### 15.3 `PhaseChangeMode.DISABLED`
 

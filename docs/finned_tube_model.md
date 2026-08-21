@@ -470,6 +470,33 @@ through `condensation_area_fraction`,
 does not march temperatures axially and does not use rows, circuits or
 `n_passes_transverse` as thermal segments.
 
+### AUTO regime and non-active results
+
+`PhaseChangeMode.AUTO` legitimately resolves to any of `DRY`, `NEAR_ONSET`,
+`PARTIALLY_WET` or `FULLY_WET`; `outside_phase_change.active == False` is a
+valid converged result (the dry or near-onset regime), never a calculation
+failure. The near-onset activation band exists so a borderline operating
+point does not oscillate between the dry and wet solve on repeated calls
+close to the dew point; it is deliberately held on the dry route rather than
+shrunk to force activation. A regime-independent result must not be read by
+first checking `active`: whenever phase change was evaluated,
+`Q_sensible`/`Q_total` on the returned `PhaseChangeResult` always equal the
+real exchanger duty (`HXSimulationResult.q` / `HXRatingResult.Q_required`)
+and `Q_latent`/`m_dot_condensate` are `0.0` for a non-active result, exactly
+as for any other side/provider without condensation capability.
+
+If the dry-baseline onset screen (a cheap two-point linear wall-temperature
+envelope) activates `AUTO`, but the converged nonlinear radial field --
+including its 0D endpoint wet-zone fallback -- finds no point below the
+local saturation line, the call returns the same dry AUTO result described
+above together with a `PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY` warning,
+instead of raising. This is a legitimate near-boundary collapse (the coarse
+onset screen is more conservative than the resolved fin-efficiency field),
+not a solver contradiction: `solve_wet_finned_surface` only ever returns a
+converged, internally consistent iterate (an unconverged nonlinear solve
+raises `WetFinConvergenceError` instead, which is not converted to a dry
+result).
+
 ### Primary surface, area and contact accounting
 
 The exposed primary/root cylinder is a separate nonlinear surface node and

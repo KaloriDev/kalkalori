@@ -65,7 +65,12 @@ and distributed thermal resolution remain future work.
 - typed wet-surface state, temperature, wet-area, iteration, residual,
   assumption and warning diagnostics;
 - an explicit dry/reference-only finned-bank pressure drop during active
-  condensation; wet pressure-drop support remains false.
+  condensation; wet pressure-drop support remains false;
+- a regime-independent `PhaseChangeMode.AUTO` result contract: dry and
+  near-onset are valid converged regimes (`active=False` is not a failure),
+  the returned `Q_sensible`/`Q_total` always equal the real exchanger duty,
+  and a wet-fin solve that converges to zero net condensate near onset
+  returns the exact dry result with a diagnostic warning instead of raising.
 
 This is a global 0D extension. It does not add row-wise, longitudinal or
 circuit-wise thermal marching, and `n_passes_transverse` is not thermal
