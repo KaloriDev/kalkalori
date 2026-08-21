@@ -100,7 +100,7 @@ from core.heat_transfer.outside_dispatch import (
     merge_finned_tube_diagnostics,
 )
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
-from core.common.warnings import ModelWarning, deduplicate_warnings
+from core.common.warnings import ModelWarning, deduplicate_warnings, make_warning
 
 from core.models.heat_balance import ClosedBalance
 from core.phase_change.types import PhaseChangeResult, WaterSteamPhaseChangeResult
@@ -501,6 +501,7 @@ def run_rating(
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
     relaxation_factor: float = 0.5,
+    allow_infeasible_sensible_effectiveness: bool = False,
 ) -> HXRatingResult:
     """Rate a plain- or circular-finned-tube exchanger against a balance.
 
@@ -512,6 +513,22 @@ def run_rating(
     ``relative_alfa_tolerance``/``relaxation_factor`` are forwarded to
     ``solve_iterative_thermal_state`` (same defaults and meaning as
     ``BareTubeHeatExchanger.solve_thermal_state``).
+
+    ``allow_infeasible_sensible_effectiveness`` (default ``False``,
+    preserving the historical strict behavior for direct callers of this
+    public function): when ``True``, a closed balance whose sensible-only
+    effectiveness is outside ``[0, 1)`` reports ``UA_required``/
+    ``A_required``/``overdesign_factor``/``ua_margin`` as infinite/``-1.0``
+    sentinels (warning ``RATING_SENSIBLE_EFFECTIVENESS_INFEASIBLE``) instead
+    of raising ``ValueError``. ``thermal_state``/``wall_temperature_envelope``
+    do not depend on the closed balance's ``Q``/effectiveness at all (they
+    are the exchanger's own physical response to the given inlets/flows), so
+    they remain valid and usable even when this sentinel path is taken. Used
+    internally by ``core.phase_change.rating_integration`` for a
+    dry-baseline pass whose only purpose is estimating wall temperatures for
+    the condensation-onset decision -- a duty exceeding sensible-only
+    capacity does not by itself mean the *specified* Rating problem is
+    infeasible once condensation is considered.
     """
     if flow_arrangement is None:
         flow_arrangement = hx.bundle.flow_arrangement
@@ -612,16 +629,48 @@ def run_rating(
     C_min = min(C_hot, C_cold)
 
     eps_req = closed_balance.Q / closed_balance.Q_max
-    NTU_req = ntu_from_effectiveness(
-        eps_req,
-        C_hot,
-        C_cold,
-        flow_arrangement=flow_arrangement,
-        C_inside=inside.C,
-        C_outside=outside.C,
-    )
-    UA_req = NTU_req * C_min
-    A_req = UA_req / U_mean
+    sensible_effectiveness_infeasible = not (0.0 <= eps_req < 1.0)
+    extra_warnings: list[ModelWarning] = []
+    if sensible_effectiveness_infeasible and allow_infeasible_sensible_effectiveness:
+        # ``thermal_state``/``wall_temperature_envelope`` above already do not
+        # depend on this closed balance's Q/effectiveness at all (they are the
+        # exchanger's own physical response to the given inlets/flows), so
+        # they remain valid even though a purely-sensible NTU-effectiveness
+        # inversion cannot represent this duty. Report infinite/-1.0
+        # sentinels instead of raising, for a caller (specifically the active
+        # outside-condensation Rating closure, which discards this dry-only
+        # baseline's UA_required/overdesign_factor once condensation is
+        # confirmed active) that only needs the wall-temperature response
+        # here, not a final authoritative dry answer.
+        UA_req = math.inf
+        A_req = math.inf
+        extra_warnings.append(
+            make_warning(
+                code="RATING_SENSIBLE_EFFECTIVENESS_INFEASIBLE",
+                message=(
+                    "run_rating: the closed balance's sensible-only "
+                    f"effectiveness ({eps_req:.6g}) is outside [0, 1); the "
+                    "specified duty exceeds what any purely-sensible "
+                    "exchanger area could deliver. UA_required/A_required/"
+                    "overdesign_factor are reported as infinite/-1.0 "
+                    "sentinels; this dry-only evaluation cannot represent "
+                    "this operating point."
+                ),
+                source="rating",
+                severity="warning",
+            )
+        )
+    else:
+        NTU_req = ntu_from_effectiveness(
+            eps_req,
+            C_hot,
+            C_cold,
+            flow_arrangement=flow_arrangement,
+            C_inside=inside.C,
+            C_outside=outside.C,
+        )
+        UA_req = NTU_req * C_min
+        A_req = UA_req / U_mean
 
     overdesign_factor = A_o / A_req - 1.0
     ua_margin = UA_actual / UA_req - 1.0
@@ -631,6 +680,7 @@ def run_rating(
         + list(solve_result.warnings or [])
         + list(thermal_state.warnings)
         + list(wall_temperature_envelope.warnings)
+        + extra_warnings
     )
     warnings_list = deduplicate_warnings(warnings_list)
 

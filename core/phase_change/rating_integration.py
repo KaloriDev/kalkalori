@@ -55,6 +55,7 @@ from core.heat_transfer.outside_dispatch import (
 from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide, close_heat_balance
 from core.models.rating import run_rating
 from core.pressure_drop.flow_path import build_outside_pressure_drop_result
+from core.properties.averaging import mean_temperature
 
 from core.phase_change import warning_codes as WC
 from core.phase_change.capability import (
@@ -94,6 +95,171 @@ from core.phase_change.water_equilibrium import saturated_water_ratio
 SOURCE = "phase_change_rating_integration"
 _RATING_OUTER_MAX_ITERATIONS = 12
 _RATING_ENTHALPY_SYNCHRONIZATION_TOLERANCE_W = 1e-5
+
+_RATING_CLOSURE_MAX_BRACKET_EXPANSIONS = 40
+_RATING_CLOSURE_MAX_ROOT_ITERATIONS = 60
+_RATING_CLOSURE_MASS_FLOW_FLOOR_KG_S = 1e-9
+_RATING_CLOSURE_TEMPERATURE_MARGIN_K = 1e-3
+
+
+class RatingClosureError(ValueError):
+    """Raised when a single-unknown Rating closure cannot be solved.
+
+    Distinct from the plain ``ValueError`` used for a genuinely
+    under-specified Rating problem (spec section 19): this one is raised
+    only after a bracketed scalar search over the one supported unknown
+    (inside mass flow or inside outlet temperature) has been attempted and
+    failed -- either no sign change could be bracketed (no physically
+    achievable solution for any positive/valid value) or the bracketed
+    root search itself did not converge.
+    """
+
+    warning_code = "RATING_CLOSURE_NOT_SOLVED"
+
+
+def _bracket_and_solve_monotonic_root(
+    residual,
+    x0: float,
+    *,
+    x_min: float,
+    x_max: float,
+    x_tolerance: float,
+    residual_tolerance: float,
+    variable_name: str,
+    initial_step: float | None = None,
+    max_bracket_expansions: int = _RATING_CLOSURE_MAX_BRACKET_EXPANSIONS,
+    max_iterations: int = _RATING_CLOSURE_MAX_ROOT_ITERATIONS,
+) -> tuple[float, float, int]:
+    """Bracket and solve ``residual(x) = 0`` for ``x`` in ``(x_min, x_max)``.
+
+    A deterministic bounded bracketed solver (geometric bracket expansion
+    around ``x0``, then an Illinois/regula-falsi search with anti-stagnation
+    damping and a bisection fallback) -- no SciPy dependency, matching the
+    project's existing bracketed-root idiom (see
+    ``core.phase_change.outside_condensation_solver._solve_interface_state``
+    and the KDV acceptance notebooks' closed-loop solver). ``residual`` may
+    raise on a physically/numerically invalid trial (e.g. a property outside
+    its validity range); such points are treated as unusable, not as a
+    valid zero-crossing, and are never returned as a bracket endpoint.
+
+    ``initial_step`` sets the first bracket-expansion step explicitly
+    (defaulting to half of ``abs(x0)`` when omitted); pass it for a variable
+    whose natural scale is unrelated to its own magnitude (e.g. a Kelvin
+    temperature, where ``abs(x0) * 0.5`` is a wildly oversized first jump).
+
+    Returns ``(x_root, residual_at_root, iterations)``.
+
+    Raises:
+        RatingClosureError: no sign change could be bracketed within
+            ``[x_min, x_max]``, or the root search did not converge within
+            ``max_iterations``.
+    """
+
+    def safe_residual(x: float) -> float:
+        if not (x_min < x < x_max):
+            return math.nan
+        try:
+            value = residual(x)
+        except Exception:
+            return math.nan
+        return value if math.isfinite(value) else math.nan
+
+    r0 = safe_residual(x0)
+    if math.isnan(r0):
+        raise RatingClosureError(
+            f"Rating closure: the initial estimate {variable_name}={x0:.6g} "
+            "did not produce a valid trial state (a property or physical "
+            "bound was violated); no bracket search could start."
+        )
+    if abs(r0) <= residual_tolerance:
+        return x0, r0, 0
+
+    lo, hi = x0, x0
+    r_lo, r_hi = r0, r0
+    step = (
+        max(abs(x0) * 0.5, x_tolerance * 10.0)
+        if initial_step is None
+        else max(abs(initial_step), x_tolerance * 10.0)
+    )
+    expansions = 0
+    while r_lo * r_hi > 0.0 and expansions < max_bracket_expansions:
+        expansions += 1
+        moved = False
+        new_hi = min(hi + step, x_max)
+        if new_hi > hi:
+            r_new_hi = safe_residual(new_hi)
+            if not math.isnan(r_new_hi):
+                hi, r_hi = new_hi, r_new_hi
+                moved = True
+                if r_lo * r_hi <= 0.0:
+                    break
+        new_lo = max(lo - step, x_min)
+        if new_lo < lo:
+            r_new_lo = safe_residual(new_lo)
+            if not math.isnan(r_new_lo):
+                lo, r_lo = new_lo, r_new_lo
+                moved = True
+                if r_lo * r_hi <= 0.0:
+                    break
+        step *= 2.0
+        if not moved and new_hi >= x_max and new_lo <= x_min:
+            break
+
+    if r_lo * r_hi > 0.0:
+        raise RatingClosureError(
+            f"Rating closure: could not bracket a solution for "
+            f"{variable_name} -- no sign change found for "
+            f"{variable_name} in [{lo:.6g}, {hi:.6g}] (residuals "
+            f"{r_lo:.6g} W, {r_hi:.6g} W) after {expansions} geometric "
+            f"bracket expansions from the initial estimate {x0:.6g}. The "
+            "specified Rating temperature program does not appear to be "
+            f"physically achievable for any valid {variable_name}."
+        )
+
+    retained_side: str | None = None
+    x_mid = lo
+    r_mid = r_lo
+    for iteration in range(1, max_iterations + 1):
+        denom = r_hi - r_lo
+        if denom == 0.0:
+            x_mid = 0.5 * (lo + hi)
+        else:
+            x_mid = hi - r_hi * (hi - lo) / denom
+            if not (lo < x_mid < hi):
+                x_mid = 0.5 * (lo + hi)
+        r_mid = safe_residual(x_mid)
+        if math.isnan(r_mid):
+            # The interior point itself is invalid (e.g. a property bound):
+            # fall back to a safe bisection step instead of the (possibly
+            # overshooting) secant/Illinois step.
+            x_mid = 0.5 * (lo + hi)
+            r_mid = safe_residual(x_mid)
+            if math.isnan(r_mid):
+                raise RatingClosureError(
+                    f"Rating closure: the interior point {variable_name}="
+                    f"{x_mid:.6g} did not produce a valid trial state while "
+                    "bisecting a valid bracket; the physically valid region "
+                    "for this variable appears to be narrower than the "
+                    "bracket found."
+                )
+        if abs(r_mid) <= residual_tolerance or (hi - lo) < x_tolerance:
+            return x_mid, r_mid, iteration
+        if r_lo * r_mid <= 0.0:
+            hi, r_hi = x_mid, r_mid
+            if retained_side == "lo":
+                r_lo *= 0.5
+            retained_side = "lo"
+        else:
+            lo, r_lo = x_mid, r_mid
+            if retained_side == "hi":
+                r_hi *= 0.5
+            retained_side = "hi"
+
+    raise RatingClosureError(
+        f"Rating closure: the bracketed search for {variable_name} did not "
+        f"converge within {max_iterations} iterations (last residual "
+        f"{r_mid:.6g} W, bracket [{lo:.6g}, {hi:.6g}])."
+    )
 
 
 def _solve_rating_water_ratio_for_side(
@@ -389,6 +555,250 @@ def _normalize_rating_wet_finned_surface(
     )
 
 
+def _rating_raw_available_duty(result, outside: BalanceSideSpec) -> float:
+    """Return the physically-driven ("raw", pre-normalization) duty [W]
+    implied by one fully-evaluated Rating trial's converged state.
+
+    For an active wet circular-fin trial, this is the nonlinear radial
+    surface's own mass-transfer-coefficient-driven duty (the same raw value
+    ``_normalize_rating_wet_finned_surface`` scales to match
+    ``Q_required`` -- see its residual entry
+    ``rating_raw_surface_Q_total_W``), *before* that normalization. For a
+    dry/near-onset trial, condensation is inactive by definition, so the
+    physically-driven duty is simply the outside stream's own sensible duty
+    from its (unaffected-by-the-trial) closed temperature program -- exactly
+    what a dry ``close_heat_balance`` would derive from that side alone.
+    """
+    pc = result.outside_phase_change
+    if pc is not None and pc.active:
+        wet = result.wet_finned_surface
+        if wet is None:
+            raise RatingClosureError(
+                "Rating closure: active outside condensation on a non-"
+                "finned (bare-tube) surface does not yet expose the raw "
+                "mass-transfer-driven duty needed to solve an unknown "
+                "non-condensing-side mass flow/outlet temperature; this "
+                "closure is currently supported only for CircularFinnedTube."
+            )
+        raw_Q_total = wet.residuals.get("rating_raw_surface_Q_total_W")
+        if raw_Q_total is None:
+            raise RatingClosureError(
+                "Rating closure: the active wet-finned trial did not "
+                "report its raw pre-normalization duty."
+            )
+        return raw_Q_total
+    cp_outside_mean = outside.provider.at(
+        T=mean_temperature(outside.T_in, outside.T_out), p=outside.p
+    ).cp
+    return outside.m_dot * cp_outside_mean * abs(outside.T_out - outside.T_in)
+
+
+def _solve_rating_single_unknown_inside_variable(
+    hx,
+    inside: BalanceSideSpec,
+    outside: BalanceSideSpec,
+    *,
+    cold_start_m_dot: float,
+    cold_start_T_out: float,
+    flow_arrangement: str | None,
+    K_inlet: float,
+    K_outlet: float,
+    K_turn: float,
+    euler_provider: str,
+    finned_heat_transfer_provider: object,
+    finned_pressure_drop_provider: object,
+    include_simulation: bool,
+    over_specified_tolerance: float,
+    max_iterations: int,
+    wall_temperature_tolerance_K: float,
+    relative_alfa_tolerance: float,
+    relaxation_factor: float,
+    settings: "PhaseChangeSettings",
+):
+    """Restore Rating's pre-v0.7.5 single-unknown non-condensing-side
+    closure (spec sections 1-14) for active outside H2O condensation.
+
+    Exactly one of ``inside.m_dot``/``inside.T_out`` is ``None`` here (the
+    caller has already validated this and that ``Q``/``effectiveness`` were
+    not given explicitly -- see the call site in
+    ``apply_phase_change_to_rating``). The missing value cannot be recovered
+    by one algebraic step the way the dry ``close_heat_balance`` path can,
+    because the wet outside stream's own duty is not pinned down by its
+    (T_in, T_out, m_dot) alone: how much water condenses (hence the total
+    latent-inclusive duty) is a genuine extra degree of freedom that only
+    the mass-transfer-coefficient-driven physics -- evaluated at the real
+    wall temperature, which itself depends on the unknown inside flow via
+    alfa_inside -- can resolve.
+
+    This performs an outer scalar root search over the missing inside
+    variable. Each trial fills in a concrete value, building a fully
+    specified inside ``BalanceSideSpec`` and re-running
+    ``apply_phase_change_to_rating`` on it (reusing every existing piece of
+    machinery -- close_heat_balance, run_rating, the active-condensation
+    fixed point, the wet-finned radial solve -- rather than duplicating any
+    of it). Because the trial's inside side is complete,
+    ``close_heat_balance`` resolves ``Q_required`` from it directly (its
+    ``is_complete(inside)`` branch, checked first) -- this is exactly
+    ``Q_required_by_inside_side(trial)`` from the spec, obtained "for free"
+    instead of recomputed here. The residual compares that required duty
+    against the raw, physically-driven duty the trial's converged HX state
+    implies (``Q_available_from_converged_wet_HX(trial)``,
+    ``_rating_raw_available_duty``); the two coincide only at the physically
+    self-consistent inside variable.
+
+    A trial may resolve dry, near-onset or actively condensing (spec
+    section 8): all three are valid, finite HX states, and the residual
+    formula spans the transition continuously (see
+    ``_rating_raw_available_duty``); only an evaluation that itself raises
+    (a non-finite iterate, a property outside its validity range, or a
+    genuine solver failure) is treated as an unusable trial point.
+    """
+    solve_for_m_dot = inside.m_dot is None
+    assert solve_for_m_dot != (inside.T_out is None), (
+        "exactly one of inside.m_dot/inside.T_out must be unknown here"
+    )
+    T_in_inside = inside.T_in
+    if T_in_inside is None:
+        raise ValueError("Rating closure requires inside.T_in.")
+
+    def evaluate(trial_value: float):
+        inside_trial = (
+            replace(inside, m_dot=trial_value)
+            if solve_for_m_dot
+            else replace(inside, T_out=trial_value)
+        )
+        return apply_phase_change_to_rating(
+            hx, inside_trial, outside,
+            Q=None, effectiveness=None,
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+            # The achievable-duty Simulation bridge is only useful on the
+            # final, converged trial -- running it on every search step
+            # would repeat an expensive nested Simulation for nothing.
+            include_simulation=False,
+            over_specified_tolerance=over_specified_tolerance,
+            max_iterations=max_iterations,
+            wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            relaxation_factor=relaxation_factor,
+            settings=settings,
+        )
+
+    def residual(trial_value: float) -> float:
+        result = evaluate(trial_value)
+        return _rating_raw_available_duty(result, outside) - result.Q_required
+
+    if solve_for_m_dot:
+        x0 = max(cold_start_m_dot, _RATING_CLOSURE_MASS_FLOW_FLOOR_KG_S * 10.0)
+        x_min = _RATING_CLOSURE_MASS_FLOW_FLOOR_KG_S
+        x_max = math.inf
+        # A relative tolerance on the flow itself, not an absurdly tight
+        # absolute one -- the underlying wet-finned solve's own tolerances
+        # (settings.relative_Q_tolerance etc.) already bound how precisely
+        # any single trial evaluation is meaningful.
+        x_tolerance = max(x0 * 1e-6, 1e-9)
+        variable_name = "inside.m_dot"
+        initial_step = None  # relative-to-x0 default is appropriate here
+        cp_inside_scale = inside.provider.at(
+            T=mean_temperature(T_in_inside, inside.T_out), p=inside.p
+        ).cp
+        Q_scale = abs(x0 * cp_inside_scale * (inside.T_out - T_in_inside))
+    else:
+        hot_is_inside = T_in_inside >= outside.T_in
+        margin = _RATING_CLOSURE_TEMPERATURE_MARGIN_K
+        if hot_is_inside:
+            x_min, x_max = outside.T_in + margin, T_in_inside - margin
+        else:
+            x_min, x_max = T_in_inside + margin, outside.T_in - margin
+        if not (x_min < x_max):
+            raise RatingClosureError(
+                "Rating closure: the inside and outside inlet temperatures "
+                "leave no physically valid range for the unknown inside "
+                "outlet temperature (inside.T_in="
+                f"{T_in_inside:.6g} K, outside.T_in={outside.T_in:.6g} K)."
+            )
+        x0 = min(max(cold_start_T_out, x_min), x_max)
+        x_tolerance = max(wall_temperature_tolerance_K * 1.0e-2, 1e-4)
+        variable_name = "inside.T_out"
+        # A modest Kelvin step, not abs(x0)*0.5 (x0 is a ~300 K absolute
+        # temperature, not a quantity whose natural scale is its own
+        # magnitude) -- scaled to the initial approach so a cold-start
+        # estimate close to T_in still gets a sensibly small first step.
+        initial_step = max(abs(x0 - T_in_inside) * 0.25, 1.0)
+        cp_inside_scale = inside.provider.at(
+            T=mean_temperature(T_in_inside, x0), p=inside.p
+        ).cp
+        Q_scale = abs(inside.m_dot * cp_inside_scale * (x0 - T_in_inside))
+
+    # A relative Watt tolerance on the residual, scaled to this problem's
+    # own duty (reusing the existing settings.relative_Q_tolerance idiom
+    # rather than an unscaled absolute value that would be meaninglessly
+    # tight for a MW-scale duty and meaninglessly loose for a W-scale one).
+    residual_tolerance = max(1.0, settings.relative_Q_tolerance * Q_scale)
+    x_root, _, closure_iterations = _bracket_and_solve_monotonic_root(
+        residual, x0,
+        x_min=x_min, x_max=x_max,
+        x_tolerance=x_tolerance,
+        residual_tolerance=residual_tolerance,
+        variable_name=variable_name,
+        initial_step=initial_step,
+    )
+
+    inside_final = (
+        replace(inside, m_dot=x_root)
+        if solve_for_m_dot
+        else replace(inside, T_out=x_root)
+    )
+    final_result = apply_phase_change_to_rating(
+        hx, inside_final, outside,
+        Q=None, effectiveness=None,
+        flow_arrangement=flow_arrangement,
+        K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+        euler_provider=euler_provider,
+        finned_heat_transfer_provider=finned_heat_transfer_provider,
+        finned_pressure_drop_provider=finned_pressure_drop_provider,
+        include_simulation=include_simulation,
+        over_specified_tolerance=over_specified_tolerance,
+        max_iterations=max_iterations,
+        wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+        relative_alfa_tolerance=relative_alfa_tolerance,
+        relaxation_factor=relaxation_factor,
+        settings=settings,
+    )
+    final_residual = (
+        _rating_raw_available_duty(final_result, outside)
+        - final_result.Q_required
+    )
+    closure_tag = (
+        "rating_closure_solved_inside_m_dot"
+        if solve_for_m_dot
+        else "rating_closure_solved_inside_T_out"
+    )
+    closure_diagnostics = {
+        "rating_closure_iterations": float(closure_iterations),
+        "rating_closure_residual_W": final_residual,
+        "rating_closure_bracket_low": x_min,
+        "rating_closure_bracket_high": (
+            x_max if math.isfinite(x_max) else float("nan")
+        ),
+    }
+    outside_phase_change = replace(
+        final_result.outside_phase_change,
+        residuals={
+            **final_result.outside_phase_change.residuals,
+            **closure_diagnostics,
+        },
+        assumptions=(
+            *final_result.outside_phase_change.assumptions,
+            closure_tag,
+        ),
+    )
+    return replace(final_result, outside_phase_change=outside_phase_change)
+
+
 def apply_phase_change_to_rating(
     hx,
     inside: BalanceSideSpec,
@@ -460,6 +870,16 @@ def apply_phase_change_to_rating(
         finned_pressure_drop_provider=finned_pressure_drop_provider,
         max_iterations=max_iterations, wall_temperature_tolerance_K=wall_temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance, relaxation_factor=relaxation_factor,
+        # A closed balance built from a trial value of the single-unknown
+        # Rating closure (spec sections 1-14) can imply a duty beyond
+        # sensible-only capacity even though the *actual* (condensation-
+        # aware) problem is perfectly feasible -- this dry-baseline pass
+        # exists only to estimate wall temperatures for the onset decision
+        # below, not to report a final authoritative dry answer, so it must
+        # not raise on that alone. A trial that turns out genuinely dry AND
+        # infeasible is still rejected below, once the "not active" branch
+        # is confirmed as the final route.
+        allow_infeasible_sensible_effectiveness=True,
     )
 
     def attach_requested_dry_simulation(result):
@@ -617,6 +1037,22 @@ def apply_phase_change_to_rating(
     )
 
     if not outside_auto_possible:
+        if not math.isfinite(dry_result.UA_required):
+            # The dry-baseline pass above tolerated a sensible-only
+            # effectiveness outside [0, 1) so it could still estimate wall
+            # temperatures for the onset decision (see its
+            # allow_infeasible_sensible_effectiveness=True call), but the
+            # regime has now been confirmed dry/near-onset -- condensation
+            # is not activating to explain the gap. This specified duty is
+            # genuinely unreachable by any dry exchanger area.
+            raise ValueError(
+                "Rating: the specified/implied duty exceeds what any "
+                "purely-sensible (dry) exchanger area could deliver "
+                "(sensible-only effectiveness outside [0, 1)), and outside "
+                "H2O condensation is not active to account for the "
+                "difference. The specified Rating temperature program is "
+                "not physically achievable."
+            )
         outside_result = build_capability_side_result(
             side="outside", mode=outside.phase_change_mode, capability=outside_capability,
             possible=outside_possible, near_onset=outside_near_onset,
@@ -641,13 +1077,44 @@ def apply_phase_change_to_rating(
             "Rating with active outside condensation requires outside.T_out "
             "(the outlet temperature) to be specified explicitly."
         )
-    if Q is None and not (inside.m_dot is not None and inside.T_out is not None):
+    inside_has_m_dot = inside.m_dot is not None
+    inside_has_T_out = inside.T_out is not None
+    if Q is None and effectiveness is None and inside_has_m_dot != inside_has_T_out:
+        # Exactly one of the non-condensing inside side's m_dot/T_out is
+        # unknown (spec sections 1-14): restore the pre-v0.7.5 Rating
+        # closure capability via an outer scalar solve, rather than
+        # rejecting a previously valid Rating problem outright. The wet
+        # outside side's own duty is not pinned down by its (T_in, T_out,
+        # m_dot) alone once condensation is active (how much water
+        # condenses is a genuine extra degree of freedom), so this single
+        # remaining unknown cannot be recovered by one more algebraic
+        # close_heat_balance step the way the dry case can.
+        return _solve_rating_single_unknown_inside_variable(
+            hx, inside, outside,
+            cold_start_m_dot=closed_balance.inside.m_dot,
+            cold_start_T_out=closed_balance.inside.T_out,
+            flow_arrangement=flow_arrangement,
+            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+            include_simulation=include_simulation,
+            over_specified_tolerance=over_specified_tolerance,
+            max_iterations=max_iterations,
+            wall_temperature_tolerance_K=wall_temperature_tolerance_K,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            relaxation_factor=relaxation_factor,
+            settings=settings,
+        )
+    if Q is None and not (inside_has_m_dot and inside_has_T_out):
         raise ValueError(
-            "Rating with active outside condensation requires the duty to "
-            "come from an explicit Q or from a fully specified "
-            "(m_dot + T_in + T_out) inside side -- it cannot be inferred "
-            "from the outside (condensing) side's sensible heat capacity "
-            "alone, since that would silently ignore latent duty."
+            "Rating with active outside condensation is underdetermined: "
+            "the duty must come from an explicit Q, an explicit "
+            "effectiveness, a fully specified (m_dot + T_in + T_out) "
+            "inside side, or exactly one of inside.m_dot/inside.T_out left "
+            "unknown for the solver to close -- it cannot be inferred from "
+            "the outside (condensing) side's sensible heat capacity alone, "
+            "since that would silently ignore latent duty."
         )
 
     Q_required = closed_balance.Q
