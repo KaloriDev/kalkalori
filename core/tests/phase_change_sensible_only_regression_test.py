@@ -88,6 +88,10 @@ def test_simulate_matches_run_simulation_bit_for_bit_when_not_capable() -> None:
     _assert_fields_match(actual, expected)
     assert actual.outside_phase_change.capable is False
     assert actual.inside_phase_change.capable is False
+    assert actual.outside_phase_change.Q_sensible == actual.q
+    assert actual.outside_phase_change.Q_total == actual.q
+    assert actual.inside_phase_change.Q_sensible == actual.q
+    assert actual.inside_phase_change.Q_total == actual.q
 
     # Public endpoint accessors are direct views of the hydraulic source of
     # truth; no presentation-layer provider evaluation is involved.
@@ -161,6 +165,10 @@ def test_rate_matches_run_rating_bit_for_bit_when_not_capable() -> None:
     assert actual.outside_dp_acceleration == expected.outside_dp_acceleration
     assert actual.outside_phase_change.capable is False
     assert actual.inside_phase_change.capable is False
+    assert actual.outside_phase_change.Q_sensible == actual.Q_required
+    assert actual.outside_phase_change.Q_total == actual.Q_required
+    assert actual.inside_phase_change.Q_sensible == actual.Q_required
+    assert actual.inside_phase_change.Q_total == actual.Q_required
     assert actual.inside_properties_inlet is actual.final_result.tube_bundle_hydraulic.inlet
     assert actual.inside_properties_outlet.T == inside.T_out
     assert actual.outside_properties_inlet is actual.final_result.outside_tube_bank_hydraulic.inlet

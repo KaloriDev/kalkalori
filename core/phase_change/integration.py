@@ -192,7 +192,22 @@ def check_single_active_side(
         )
 
 
-def capability_only_result(side: str, mode: PhaseChangeMode, capability: PhaseChangeCapability) -> PhaseChangeResult:
+def capability_only_result(
+    side: str,
+    mode: PhaseChangeMode,
+    capability: PhaseChangeCapability,
+    Q_sensible_actual: float | None = None,
+) -> PhaseChangeResult:
+    """Build a ``PhaseChangeResult`` for a side with no phase-change capability.
+
+    ``Q_sensible_actual`` is the actual dry-baseline exchanger duty [W]
+    (``HXSimulationResult.q`` / ``HXRatingResult.Q_required``), when known
+    at the call site. Passing it keeps this non-active result compliant
+    with the ``PhaseChangeResult`` contract documented in
+    ``core.phase_change.types`` (``Q_sensible == Q_total`` equal to the
+    real duty, not left at zero just because ``active`` is False).
+    """
+    Q = 0.0 if Q_sensible_actual is None else Q_sensible_actual
     return PhaseChangeResult(
         side=side,
         mode=mode,
@@ -203,6 +218,9 @@ def capability_only_result(side: str, mode: PhaseChangeMode, capability: PhaseCh
         active=False,
         W_in=capability.W_in,
         W_out=capability.W_in,
+        Q_sensible=Q,
+        Q_latent=0.0,
+        Q_total=Q,
         assumptions=("sensible_only_no_phase_change",) if capability.capable else (),
     )
 
@@ -358,8 +376,12 @@ def apply_phase_change(
     if not inside_capability.capable and not outside_capability.capable:
         return replace(
             dry_result,
-            inside_phase_change=capability_only_result("inside", inside.phase_change_mode, inside_capability),
-            outside_phase_change=capability_only_result("outside", outside.phase_change_mode, outside_capability),
+            inside_phase_change=capability_only_result(
+                "inside", inside.phase_change_mode, inside_capability, dry_result.q,
+            ),
+            outside_phase_change=capability_only_result(
+                "outside", outside.phase_change_mode, outside_capability, dry_result.q,
+            ),
         )
 
     thermal_state = dry_result.thermal_state
@@ -433,6 +455,7 @@ def apply_phase_change(
         m_dot_gas=inside.m_dot,
         onset=inside_onset, wall_temperature_min=inside_wall_min,
         wall_temperature_mean=inside_wall_mean, wall_temperature_max=inside_wall_max,
+        Q_sensible_actual=dry_result.q,
     )
 
     if not outside_auto_possible:
@@ -443,6 +466,7 @@ def apply_phase_change(
             m_dot_gas=outside.m_dot,
             onset=outside_onset, wall_temperature_min=outside_wall_min,
             wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
+            Q_sensible_actual=dry_result.q,
         )
         return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
 
@@ -458,6 +482,7 @@ def apply_phase_change(
                 m_dot_gas=outside.m_dot,
                 onset=outside_onset, wall_temperature_min=outside_wall_min,
                 wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
+                Q_sensible_actual=dry_result.q,
             ),
             warnings=(
                 make_warning(
@@ -533,6 +558,7 @@ def apply_phase_change(
                 m_dot_gas=outside.m_dot,
                 onset=outside_onset, wall_temperature_min=outside_wall_min,
                 wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
+                Q_sensible_actual=dry_result.q,
             ),
             warnings=(
                 make_warning(
@@ -542,6 +568,30 @@ def apply_phase_change(
                     severity="warning",
                 ),
             ),
+        )
+        return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
+
+    if solution.wet_finned_surface is not None and solution.m_dot_condensate <= 0.0:
+        # The dry-baseline onset screen activated this call (spec section 8),
+        # but the converged nonlinear radial wet-fin field found no point
+        # below the local saturation line, even with the 0D endpoint wet-
+        # zone fallback (see solve_outside_condensation). This is a
+        # legitimate near-boundary collapse, not a solver contradiction --
+        # report it as a valid dry AUTO result (exactly the same shape as
+        # the "not outside_auto_possible" dry path above, so the v0.7.4
+        # legacy dry circular-fin result is reproduced bit-for-bit) with a
+        # diagnostic warning rather than forcing an active wet state or
+        # failing an otherwise physically valid call.
+        outside_result = replace(
+            build_capability_side_result(
+                side="outside", mode=outside.phase_change_mode, capability=outside_capability,
+                possible=True, near_onset=False, dew_point=outside_dew_point, p=outside.p,
+                m_dot_gas=outside.m_dot,
+                onset=outside_onset, wall_temperature_min=outside_wall_min,
+                wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
+                Q_sensible_actual=dry_result.q,
+            ),
+            warnings=tuple(solution.warnings),
         )
         return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
 
@@ -974,6 +1024,15 @@ def apply_phase_change(
         finned_tube_diagnostics=wet_finned_diagnostics,
     )
 
+    # The inactive inside side's Q_sensible/Q_total were built above from the
+    # dry-baseline duty (before this solve ran); the actual whole-exchanger
+    # duty now includes outside's latent contribution. Refresh them to the
+    # converged total so inside_phase_change stays consistent with q below
+    # without requiring callers to branch on active (spec section 6).
+    inside_result = replace(
+        inside_result, Q_sensible=solution.Q_total, Q_total=solution.Q_total,
+    )
+
     return replace(
         dry_result,
         converged=solution.converged,
@@ -1047,6 +1106,7 @@ def _apply_inside_condensation(
         wall_temperature_min=outside_wall_min,
         wall_temperature_mean=outside_wall_mean,
         wall_temperature_max=outside_wall_max,
+        Q_sensible_actual=dry_result.q,
     )
 
     p_h2o_in = water_partial_pressure(_y_h2o(inside_capability), inside.p)
@@ -1065,6 +1125,7 @@ def _apply_inside_condensation(
                 wall_temperature_min=inside_wall_min,
                 wall_temperature_mean=inside_wall_mean,
                 wall_temperature_max=inside_wall_max,
+                Q_sensible_actual=dry_result.q,
             ),
             warnings=(
                 make_warning(
@@ -1127,6 +1188,7 @@ def _apply_inside_condensation(
                 wall_temperature_min=inside_wall_min,
                 wall_temperature_mean=inside_wall_mean,
                 wall_temperature_max=inside_wall_max,
+                Q_sensible_actual=dry_result.q,
             ),
             warnings=(
                 make_warning(
@@ -1404,6 +1466,14 @@ def _apply_inside_condensation(
         outside_provider_name=type(outside.provider).__name__,
         warnings=solution.warnings,
     )
+    # The inactive outside side's Q_sensible/Q_total were built above from
+    # the dry-baseline duty (before this solve ran); the actual
+    # whole-exchanger duty now includes inside's latent contribution.
+    # Refresh them to the converged total, mirroring the equivalent fixup
+    # for the active-outside path above (spec section 6).
+    outside_result = replace(
+        outside_result, Q_sensible=solution.Q_total, Q_total=solution.Q_total,
+    )
     return replace(
         dry_result,
         converged=solution.converged,
@@ -1520,6 +1590,7 @@ def build_capability_side_result(
     wall_temperature_min: float | None = None,
     wall_temperature_mean: float | None = None,
     wall_temperature_max: float | None = None,
+    Q_sensible_actual: float | None = None,
 ) -> PhaseChangeResult:
     """Build a non-active (capable-but-dry / near-onset / disabled)
     ``PhaseChangeResult``.
@@ -1530,6 +1601,15 @@ def build_capability_side_result(
     them (fix, v0.6.0 patch, spec section 15: "do not leave onset/wall-
     temperature diagnostics as None just because the wet solver was not
     run, if the data was available from the dry baseline").
+
+    ``Q_sensible_actual`` is the real dry-baseline exchanger duty [W] for
+    this call (``HXSimulationResult.q`` / ``HXRatingResult.Q_required``),
+    when the caller has it. A capable-but-inactive AUTO/DISABLED result
+    still represents a physically running exchanger transferring that duty
+    sensibly; every caller building a genuinely final (non-active) result
+    should supply it so ``Q_sensible``/``Q_total`` need no ``active``
+    branch downstream (fix, v0.7.5 patch: this previously always reported
+    ``0.0`` here even though the dry baseline had a finite duty).
     """
     warnings: list[ModelWarning] = []
     if near_onset:
@@ -1603,9 +1683,9 @@ def build_capability_side_result(
         wall_temperature_max=wall_temperature_max,
         wet_surface_fraction=0.0 if capability.capable else None,
         wet_area=0.0 if capability.capable else None,
-        Q_sensible=0.0,
+        Q_sensible=0.0 if Q_sensible_actual is None else Q_sensible_actual,
         Q_latent=0.0,
-        Q_total=0.0,
+        Q_total=0.0 if Q_sensible_actual is None else Q_sensible_actual,
         assumptions=("sensible_only_no_phase_change",) if capability.capable else (),
         warnings=tuple(warnings),
     )

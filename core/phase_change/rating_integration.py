@@ -519,11 +519,13 @@ def apply_phase_change_to_rating(
                 side="inside", mode=inside.phase_change_mode, capability=inside_capability,
                 possible=False, near_onset=False, dew_point=None, p=inside.p,
                 m_dot_gas=inside.m_dot,
+                Q_sensible_actual=dry_result.Q_required,
             ),
             outside_phase_change=build_capability_side_result(
                 side="outside", mode=outside.phase_change_mode, capability=outside_capability,
                 possible=False, near_onset=False, dew_point=None, p=outside.p,
                 m_dot_gas=outside.m_dot,
+                Q_sensible_actual=dry_result.Q_required,
             ),
         )
 
@@ -611,6 +613,7 @@ def apply_phase_change_to_rating(
         m_dot_gas=inside.m_dot,
         onset=inside_onset, wall_temperature_min=inside_wall_min,
         wall_temperature_mean=inside_wall_mean, wall_temperature_max=inside_wall_max,
+        Q_sensible_actual=dry_result.Q_required,
     )
 
     if not outside_auto_possible:
@@ -621,6 +624,7 @@ def apply_phase_change_to_rating(
             m_dot_gas=outside.m_dot,
             onset=outside_onset, wall_temperature_min=outside_wall_min,
             wall_temperature_mean=outside_wall_mean, wall_temperature_max=outside_wall_max,
+            Q_sensible_actual=dry_result.Q_required,
         )
         dry_result = attach_requested_dry_simulation(dry_result)
         return replace(dry_result, inside_phase_change=inside_result, outside_phase_change=outside_result)
@@ -1916,6 +1920,7 @@ def _apply_inside_condensation_to_rating(
         wall_temperature_min=outside_wall_min,
         wall_temperature_mean=outside_wall_mean,
         wall_temperature_max=outside_wall_max,
+        Q_sensible_actual=Q_required,
     )
     inside_result = PhaseChangeResult(
         side="inside",

@@ -758,11 +758,35 @@ def solve_outside_condensation(
         final_wet_finned_surface is not None
         and final_wet_finned_surface.m_dot_condensate <= 0.0
     ):
-        raise ValueError(
-            "outside_condensation_solver: the locked active wet circular-fin "
-            "regime produced zero condensate after both the bulk-mean radial "
-            "solve and its dry-envelope 0D wet-zone fallback; refusing to "
-            "return an internally dry active state."
+        # The dry-baseline onset screen (a cheap two-point linear envelope)
+        # activated this call, but the converged nonlinear radial field --
+        # resolved with the same physical fin conduction/efficiency that
+        # makes the coldest point warmer than that linear estimate -- found
+        # no point below the local saturation line, even after the 0D
+        # endpoint wet-zone fallback. ``solve_wet_finned_surface`` only ever
+        # returns a genuinely converged, internally consistent iterate (an
+        # unconverged nonlinear solve raises ``WetFinConvergenceError``
+        # instead, propagated separately); a converged zero-condensate
+        # result is therefore a legitimate near-boundary collapse, not a
+        # contradiction. Report it as a diagnostic warning and let the
+        # caller decide how to represent the regime, instead of failing an
+        # otherwise physically valid AUTO call.
+        all_warnings.append(
+            make_warning(
+                code=WC.PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY,
+                message=(
+                    "outside_condensation_solver: the locked active wet "
+                    "circular-fin regime converged with zero condensate "
+                    "after both the bulk-mean radial solve and its "
+                    "dry-envelope 0D wet-zone fallback. The nonlinear "
+                    "radial field is internally self-consistent (zero "
+                    "latent duty matches zero condensate); this call "
+                    "reports a converged sensible-only state rather than "
+                    "forcing an active wet result."
+                ),
+                source=SOURCE,
+                severity="warning",
+            )
         )
 
     if solution_state["wet_finned_surface"] is None and not (
