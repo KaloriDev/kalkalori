@@ -2,9 +2,8 @@
 # GNU GPL v3 only
 """Regression coverage for the v0.7.5 AUTO dry/near-onset/wet transition.
 
-A real closed-loop acceptance run (KDV-26004 DK045, PG40 economizer +
-air-heater loop) surfaced two related defects on a circular-finned outside
-surface operating close to its condensation onset:
+A real closed-loop acceptance run on a circular-finned outside surface,
+operating close to its condensation onset, surfaced two related defects:
 
 1. ``PhaseChangeMode.AUTO`` legitimately resolves to a DRY or NEAR_ONSET
    regime for some geometries/operating points -- ``active=False`` is a
@@ -25,10 +24,10 @@ finds zero net condensate (a near-boundary collapse, not a solver
 contradiction), the call must still return a valid, diagnostic-rich dry
 result instead of raising.
 
-Uses the same circular-finned geometry/providers as
-``wet_finned_simulation_test.py`` (no CoolProp/IAPWS required); the glycol
-inlet temperature sweep below reproduces the wet -> near_onset/dry -> dry
-transition actually observed in the KDV-26004 acceptance geometry.
+The fixture below is a synthetic finned economizer (no CoolProp/IAPWS
+required), unrelated to any specific project geometry; its liquid-inlet
+temperature sweep was chosen empirically to reproduce the same wet ->
+near_onset/dry -> dry transition class that originally exposed the bug.
 """
 
 from __future__ import annotations
@@ -56,67 +55,67 @@ from core.properties.gas_mixture import (
 P = 101_325.0
 
 
-def _kdv_like_hx() -> BareTubeHeatExchanger:
-    """Same finned economizer geometry as the KDV-26004 acceptance loop."""
+def _economizer_hx() -> BareTubeHeatExchanger:
+    """Synthetic finned economizer, sized only to sit near condensation onset."""
     core = BareTube(
-        D_i=0.016, D_o=0.018, length_total=3.33, length_effective=3.30, wall_k=15.0,
+        D_i=0.0189, D_o=0.0212, length_total=2.75, length_effective=2.72, wall_k=45.0,
     )
     tube = CircularFinnedTube(
         core_tube=core,
-        fin_k=200.0,
-        D_fin=0.045,
-        D_root=0.0196,
-        fin_thickness_root=0.0003,
-        fin_thickness_tip=0.0002,
-        fin_pitch=0.0023,
-        fin_contact_efficiency=0.95,
+        fin_k=175.0,
+        D_fin=0.0508,
+        D_root=0.0224,
+        fin_thickness_root=0.00035,
+        fin_thickness_tip=0.00018,
+        fin_pitch=0.0028,
+        fin_contact_efficiency=0.92,
     )
     return BareTubeHeatExchanger(
         TubeBundle(
             tube=tube,
-            n_rows=15,
-            n_tubes_per_row=110,
-            pitch_transverse=0.047,
-            pitch_longitudinal=0.0407,
+            n_rows=12,
+            n_tubes_per_row=84,
+            pitch_transverse=0.052,
+            pitch_longitudinal=0.045,
             layout="staggered",
-            n_passes_tube=18,
-            n_passes_transverse=6,
+            n_passes_tube=16,
+            n_passes_transverse=4,
             flow_arrangement="counterflow",
         )
     )
 
 
-def _glycol_stub() -> ConstantPropertyProvider:
+def _liquid_stub() -> ConstantPropertyProvider:
     return ConstantPropertyProvider(
-        FluidTransportProperties(rho=1_020.0, mu=2.0e-3, k=0.42, cp=3_650.0)
+        FluidTransportProperties(rho=1_010.0, mu=1.6e-3, k=0.38, cp=3_550.0)
     )
 
 
 def _wet_air_provider() -> GasMixturePropertyProvider:
     return GasMixturePropertyProvider(
         gas_mixture_from_dry_composition_and_water_ratio(
-            dry_components={"N2": 0.79, "O2": 0.21},
+            dry_components={"N2": 0.77, "O2": 0.21, "CO2": 0.02},
             dry_basis="mole",
-            water_ratio=0.048,
+            water_ratio=0.055,
             imposed_phase="gas",
         )
     )
 
 
-def _simulate_at_glycol_inlet(T_glycol_in_K: float):
-    hx = _kdv_like_hx()
+def _simulate_at_liquid_inlet(T_liquid_in_K: float):
+    hx = _economizer_hx()
     return hx.simulate(
         HXSideInput(
-            provider=_glycol_stub(),
-            m_dot=44_115.0 / 3600.0,
-            T_in=T_glycol_in_K,
-            p=300_000.0,
+            provider=_liquid_stub(),
+            m_dot=31_500.0 / 3600.0,
+            T_in=T_liquid_in_K,
+            p=250_000.0,
             phase_change_mode=PhaseChangeMode.DISABLED,
         ),
         HXSideInput(
             provider=_wet_air_provider(),
-            m_dot=189_570.0 / 3600.0,
-            T_in=340.15,
+            m_dot=142_800.0 / 3600.0,
+            T_in=335.15,
             p=P,
             phase_change_mode=PhaseChangeMode.AUTO,
         ),
@@ -149,22 +148,22 @@ def _assert_valid_hx_result(result) -> None:
 
 
 @pytest.mark.parametrize(
-    "T_glycol_in_C, expect_active, expect_near_onset, expect_wet",
+    "T_liquid_in_C, expect_active, expect_near_onset, expect_wet",
     [
         # A: comfortably past onset -> active wet condensation.
-        (25.0, True, False, True),
+        (20.0, True, False, True),
         # A': still active, but close to the activation-band boundary.
-        (34.6, True, False, True),
+        (37.1, True, False, True),
         # B: crossed the activation band -> near-onset, held dry.
-        (34.7, False, True, False),
+        (37.2, False, True, False),
         # C: clearly dry, well past the near-onset band.
-        (40.0, False, False, False),
+        (45.0, False, False, False),
     ],
 )
 def test_auto_regime_transition_always_returns_a_valid_result(
-    T_glycol_in_C, expect_active, expect_near_onset, expect_wet,
+    T_liquid_in_C, expect_active, expect_near_onset, expect_wet,
 ) -> None:
-    result = _simulate_at_glycol_inlet(T_glycol_in_C + 273.15)
+    result = _simulate_at_liquid_inlet(T_liquid_in_C + 273.15)
     pc = result.outside_phase_change
 
     _assert_valid_hx_result(result)
@@ -188,8 +187,8 @@ def test_auto_regime_transition_always_returns_a_valid_result(
 
 def test_crossing_onset_threshold_changes_regime_not_exception() -> None:
     """The exact transition pair: one wet, its warmer neighbor dry."""
-    wet = _simulate_at_glycol_inlet(34.6 + 273.15)
-    dry = _simulate_at_glycol_inlet(34.7 + 273.15)
+    wet = _simulate_at_liquid_inlet(37.1 + 273.15)
+    dry = _simulate_at_liquid_inlet(37.2 + 273.15)
 
     assert wet.outside_phase_change.active is True
     assert dry.outside_phase_change.active is False
@@ -201,18 +200,18 @@ def test_crossing_onset_threshold_changes_regime_not_exception() -> None:
 
 def test_dry_side_of_onset_reproduces_the_legacy_disabled_dry_result() -> None:
     """Section 12: the inactive AUTO branch must not diverge from DISABLED."""
-    disabled = _kdv_like_hx().simulate(
+    disabled = _economizer_hx().simulate(
         HXSideInput(
-            provider=_glycol_stub(), m_dot=44_115.0 / 3600.0,
-            T_in=40.0 + 273.15, p=300_000.0,
+            provider=_liquid_stub(), m_dot=31_500.0 / 3600.0,
+            T_in=45.0 + 273.15, p=250_000.0,
             phase_change_mode=PhaseChangeMode.DISABLED,
         ),
         HXSideInput(
-            provider=_wet_air_provider(), m_dot=189_570.0 / 3600.0,
-            T_in=340.15, p=P, phase_change_mode=PhaseChangeMode.DISABLED,
+            provider=_wet_air_provider(), m_dot=142_800.0 / 3600.0,
+            T_in=335.15, p=P, phase_change_mode=PhaseChangeMode.DISABLED,
         ),
     )
-    auto = _simulate_at_glycol_inlet(40.0 + 273.15)
+    auto = _simulate_at_liquid_inlet(45.0 + 273.15)
 
     assert auto.outside_phase_change.active is False
     assert auto.q == disabled.q
@@ -264,7 +263,7 @@ def test_wet_finned_solver_collapse_to_dry_returns_valid_result(monkeypatch) -> 
     # Use a comfortably-active wet operating point, so the only reason this
     # would fail to condense is the forced collapse above, not genuine onset
     # ambiguity -- isolating the collapse-handling code path.
-    result = _simulate_at_glycol_inlet(25.0 + 273.15)
+    result = _simulate_at_liquid_inlet(20.0 + 273.15)
     pc = result.outside_phase_change
 
     _assert_valid_hx_result(result)
@@ -281,15 +280,15 @@ def test_wet_finned_solver_collapse_to_dry_returns_valid_result(monkeypatch) -> 
 
     # And it must reproduce the exact legacy dry (DISABLED) result -- the
     # collapse fallback must not leave a partially-wet residue behind.
-    disabled = _kdv_like_hx().simulate(
+    disabled = _economizer_hx().simulate(
         HXSideInput(
-            provider=_glycol_stub(), m_dot=44_115.0 / 3600.0,
-            T_in=25.0 + 273.15, p=300_000.0,
+            provider=_liquid_stub(), m_dot=31_500.0 / 3600.0,
+            T_in=20.0 + 273.15, p=250_000.0,
             phase_change_mode=PhaseChangeMode.DISABLED,
         ),
         HXSideInput(
-            provider=_wet_air_provider(), m_dot=189_570.0 / 3600.0,
-            T_in=340.15, p=P, phase_change_mode=PhaseChangeMode.DISABLED,
+            provider=_wet_air_provider(), m_dot=142_800.0 / 3600.0,
+            T_in=335.15, p=P, phase_change_mode=PhaseChangeMode.DISABLED,
         ),
     )
     assert result.q == disabled.q

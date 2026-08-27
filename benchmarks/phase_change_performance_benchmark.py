@@ -3,8 +3,8 @@
 This module is intentionally not named ``*_test.py`` and contains no timing
 assertions.  Run it from the repository root, for example::
 
-    py -3.11 -m core.tests.phase_change_performance_benchmark --case all
-    py -3.11 -m core.tests.phase_change_performance_benchmark --case inside --profile
+    py -3.11 -m benchmarks.phase_change_performance_benchmark --case all
+    py -3.11 -m benchmarks.phase_change_performance_benchmark --case inside --profile
 """
 
 from __future__ import annotations

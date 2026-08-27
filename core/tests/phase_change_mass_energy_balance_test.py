@@ -35,7 +35,6 @@ from core.phase_change.outside_condensation_solver import (
     FrostingNotSupportedError,
     solve_outside_condensation,
 )
-from core.phase_change.water_equilibrium import water_partial_pressure
 
 
 def _hx() -> BareTubeHeatExchanger:
@@ -116,11 +115,9 @@ def test_solver_starts_from_dry_baseline_not_zero() -> None:
     # wildly different arbitrary-zero-start solution).
     assert 250.0 < solution.T_out_outside < 360.0
     assert 250.0 < solution.T_out_inside < 360.0
-
-
-def test_water_partial_pressure_rejects_p_h2o_at_or_above_total() -> None:
-    with pytest.raises(ValueError):
-        water_partial_pressure(1.0, 101325.0)
+    # water_partial_pressure's own p_h2o-at-or-above-total rejection is
+    # covered canonically by phase_change_water_equilibrium_test.py; not
+    # duplicated here.
 
 
 def test_frosting_not_supported_is_raised_for_a_sub_freezing_interface() -> None:

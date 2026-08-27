@@ -89,7 +89,9 @@ def _finned_tube(*, contact: float | None = None) -> CircularFinnedTube:
     )
 
 
-def _bundle(*, finned: bool, layout: str = "staggered") -> TubeBundle:
+def _bundle(
+    *, finned: bool, layout: str = "staggered", contact: float | None = None
+) -> TubeBundle:
     pitch_transverse = 0.060
     pitch_longitudinal = (
         pitch_transverse * math.sqrt(3.0) / 2.0
@@ -97,7 +99,7 @@ def _bundle(*, finned: bool, layout: str = "staggered") -> TubeBundle:
         else 0.060
     )
     return TubeBundle(
-        tube=_finned_tube() if finned else _core_tube(),
+        tube=_finned_tube(contact=contact) if finned else _core_tube(),
         n_rows=6,
         n_tubes_per_row=8,
         pitch_transverse=pitch_transverse,
@@ -801,27 +803,7 @@ def test_public_workflow_warnings_are_deduplicated() -> None:
 
 
 def test_welded_contact_resistance_affects_only_the_parallel_fin_branch() -> None:
-    core = _core_tube()
-    welded = CircularFinnedTube(
-        core_tube=core,
-        fin_k=200.0,
-        D_fin=0.047,
-        D_root=core.D_o,
-        fin_thickness_root=0.0005,
-        fin_pitch=0.0024,
-        fin_contact_resistance=1.0e6,
-    )
-    pitch_transverse = 0.060
-    bundle = TubeBundle(
-        tube=welded,
-        n_rows=6,
-        n_tubes_per_row=8,
-        pitch_transverse=pitch_transverse,
-        pitch_longitudinal=math.sqrt(3.0) * pitch_transverse / 2.0,
-        layout="staggered",
-        n_passes_tube=2,
-        flow_arrangement="counterflow",
-    )
+    bundle = _welded_bundle(contact=1.0e6)
     hx = BareTubeHeatExchanger(bundle)
     network = calculate_resistance_network(
         bundle=bundle,
@@ -946,31 +928,12 @@ def test_continuous_root_wall_node_uses_full_outside_resistance() -> None:
 
 
 def test_primary_only_area_override_is_valid_for_welded_topology() -> None:
-    core = _core_tube()
-    welded = CircularFinnedTube(
-        core_tube=core,
-        fin_k=200.0,
-        D_fin=0.047,
-        D_root=core.D_o,
-        fin_thickness_root=0.0005,
-        fin_pitch=0.0024,
-        fin_contact_resistance=2.0e-4,
-    )
+    bundle = _welded_bundle(contact=2.0e-4)
     welded = replace(
-        welded,
-        external_area_per_length=welded.primary_outside_area_per_length,
+        bundle.tube,
+        external_area_per_length=bundle.tube.primary_outside_area_per_length,
     )
-    pitch_transverse = 0.060
-    bundle = TubeBundle(
-        tube=welded,
-        n_rows=6,
-        n_tubes_per_row=8,
-        pitch_transverse=pitch_transverse,
-        pitch_longitudinal=math.sqrt(3.0) * pitch_transverse / 2.0,
-        layout="staggered",
-        n_passes_tube=2,
-        flow_arrangement="counterflow",
-    )
+    bundle = replace(bundle, tube=welded)
 
     network = calculate_resistance_network(
         bundle=bundle,
@@ -987,18 +950,7 @@ def test_primary_only_area_override_is_valid_for_welded_topology() -> None:
 
 
 def test_extruded_root_and_positive_contact_are_common_series_terms() -> None:
-    tube = _finned_tube(contact=2.0e-4)
-    pitch_transverse = 0.060
-    bundle = TubeBundle(
-        tube=tube,
-        n_rows=6,
-        n_tubes_per_row=8,
-        pitch_transverse=pitch_transverse,
-        pitch_longitudinal=math.sqrt(3.0) * pitch_transverse / 2.0,
-        layout="staggered",
-        n_passes_tube=2,
-        flow_arrangement="counterflow",
-    )
+    bundle = _bundle(finned=True, contact=2.0e-4)
     network = calculate_resistance_network(
         bundle=bundle,
         alpha_inside=800.0,
@@ -1099,53 +1051,38 @@ def _assert_finned_wall_ordering(simulation, *, inside_hotter: bool) -> None:
             )
 
 
-def test_welded_wall_ordering_inside_hotter() -> None:
-    """Case A: D_root == D_o (welded), inside bulk hotter than outside."""
-    hx = BareTubeHeatExchanger(_welded_bundle(contact=None))
+@pytest.mark.parametrize(
+    ("welded", "inside_hotter"),
+    [
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
+    ],
+    ids=[
+        "welded-inside-hotter",
+        "welded-outside-hotter",
+        "root-layer-inside-hotter",
+        "root-layer-outside-hotter",
+    ],
+)
+def test_finned_wall_ordering_across_contact_topology_and_hot_side(
+    welded: bool, inside_hotter: bool
+) -> None:
+    """Case A/B: D_root == D_o (welded). Case C/D: D_root > D_o (continuous
+    root layer). Each topology is checked with both sides hotter."""
+    bundle = _welded_bundle(contact=None) if welded else _bundle(finned=True)
+    expected_topology = (
+        "fin_branch_only"
+        if welded
+        else "series_before_primary_and_fin_parallel_branches"
+    )
+    hx = BareTubeHeatExchanger(bundle)
     inside_provider, outside_provider = _providers()
+    T_in_inside, T_in_outside = (650.0, 300.0) if inside_hotter else (300.0, 650.0)
     simulation = hx.simulate(
-        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=650.0, p=P),
-        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=300.0, p=P),
+        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=T_in_inside, p=P),
+        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=T_in_outside, p=P),
     )
-    assert simulation.finned_tube_diagnostics.contact_topology == "fin_branch_only"
-    _assert_finned_wall_ordering(simulation, inside_hotter=True)
-
-
-def test_welded_wall_ordering_outside_hotter() -> None:
-    """Case B: D_root == D_o (welded), outside bulk hotter than inside."""
-    hx = BareTubeHeatExchanger(_welded_bundle(contact=None))
-    inside_provider, outside_provider = _providers()
-    simulation = hx.simulate(
-        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=300.0, p=P),
-        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=650.0, p=P),
-    )
-    assert simulation.finned_tube_diagnostics.contact_topology == "fin_branch_only"
-    _assert_finned_wall_ordering(simulation, inside_hotter=False)
-
-
-def test_root_layer_wall_ordering_inside_hotter() -> None:
-    """Case C: D_root > D_o (continuous root layer), inside bulk hotter."""
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
-    inside_provider, outside_provider = _providers()
-    simulation = hx.simulate(
-        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=650.0, p=P),
-        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=300.0, p=P),
-    )
-    assert simulation.finned_tube_diagnostics.contact_topology == (
-        "series_before_primary_and_fin_parallel_branches"
-    )
-    _assert_finned_wall_ordering(simulation, inside_hotter=True)
-
-
-def test_root_layer_wall_ordering_outside_hotter() -> None:
-    """Case D: D_root > D_o (continuous root layer), outside bulk hotter."""
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
-    inside_provider, outside_provider = _providers()
-    simulation = hx.simulate(
-        HXSideInput(provider=inside_provider, m_dot=M_DOT_INSIDE, T_in=300.0, p=P),
-        HXSideInput(provider=outside_provider, m_dot=M_DOT_OUTSIDE, T_in=650.0, p=P),
-    )
-    assert simulation.finned_tube_diagnostics.contact_topology == (
-        "series_before_primary_and_fin_parallel_branches"
-    )
-    _assert_finned_wall_ordering(simulation, inside_hotter=False)
+    assert simulation.finned_tube_diagnostics.contact_topology == expected_topology
+    _assert_finned_wall_ordering(simulation, inside_hotter=inside_hotter)

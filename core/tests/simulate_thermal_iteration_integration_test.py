@@ -257,6 +257,55 @@ def test_warnings_propagate_from_thermal_state_to_simulation_result() -> None:
     ), "warning must propagate exactly once, not be duplicated"
 
 
+def test_iterate_false_forces_a_single_pass_and_drops_thermal_state() -> None:
+    print("iterate=False: escape hatch is a guaranteed single inlet-only pass with no thermal_state")
+    hx = BareTubeHeatExchanger(build_bundle())
+    inside = HXSideInput(provider=_INSIDE_PROVIDER, m_dot=_M_DOT_INSIDE, T_in=c_to_k(30.0), p=_P)
+    outside = HXSideInput(provider=_OUTSIDE_PROVIDER, m_dot=_M_DOT_OUTSIDE, T_in=c_to_k(400.0), p=_P)
+
+    result_corrected = hx.simulate(inside, outside)
+    result_inlet_only = hx.simulate(inside, outside, iterate=False)
+
+    # v0.5.3: the default (corrected) path always carries a thermal_state;
+    # the iterate=False escape hatch never does, and always converges in
+    # exactly one pass since it skips iterative refinement entirely.
+    assert result_corrected.thermal_state is not None
+    assert result_inlet_only.thermal_state is None
+    assert result_inlet_only.converged is True
+    assert result_inlet_only.iterations == 1
+    assert result_corrected.iterations > 1
+
+
+def test_surface_margin_derates_duty_monotonically_and_zero_margin_is_exact() -> None:
+    print("surface_margin: 0.0 reproduces the undecorated result bit-for-bit; positive margins derate q monotonically")
+    hx = BareTubeHeatExchanger(build_bundle())
+    inside = HXSideInput(provider=_INSIDE_PROVIDER, m_dot=_M_DOT_INSIDE, T_in=c_to_k(30.0), p=_P)
+    outside = HXSideInput(provider=_OUTSIDE_PROVIDER, m_dot=_M_DOT_OUTSIDE, T_in=c_to_k(400.0), p=_P)
+
+    baseline = hx.simulate(inside, outside)
+    margin_zero = hx.simulate(inside, outside, surface_margin=0.0)
+    margin_low = hx.simulate(inside, outside, surface_margin=0.2)
+    margin_high = hx.simulate(inside, outside, surface_margin=0.5)
+
+    # surface_margin=0.0 regression: must be bit-for-bit identical to the
+    # margin-less case, not merely close.
+    assert margin_zero.q == baseline.q
+    assert margin_zero.T_out_inside == baseline.T_out_inside
+    assert margin_zero.T_out_outside == baseline.T_out_outside
+    assert margin_zero.Q_full == margin_zero.Q_derated == margin_zero.q
+
+    # Positive margins must strictly derate duty, monotonically with margin.
+    assert margin_low.q < margin_zero.q
+    assert margin_high.q < margin_low.q
+    assert margin_low.Q_full > margin_low.Q_derated
+    assert margin_high.Q_full > margin_high.Q_derated
+
+    # Simulation never calculates a Rating overdesign factor; the shared
+    # reporting field is explicitly zero regardless of derating.
+    for result in (baseline, margin_zero, margin_low, margin_high):
+        assert result.overdesign_factor == 0.0
+
+
 def main() -> None:
     test_simulate_consumes_sentinel_thermal_state()
     test_real_dry_air_heated_case_matches_corrected_diagnostics()
@@ -264,6 +313,8 @@ def main() -> None:
     test_rate_include_simulation_consistency()
     test_resistance_reconstruction_simulate_and_rate()
     test_warnings_propagate_from_thermal_state_to_simulation_result()
+    test_iterate_false_forces_a_single_pass_and_drops_thermal_state()
+    test_surface_margin_derates_duty_monotonically_and_zero_margin_is_exact()
 
     print("\nALL SMOKE CHECKS PASSED")
 

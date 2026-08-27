@@ -27,7 +27,7 @@ from core.phase_change.integration import (
     check_single_active_side,
 )
 from core.phase_change.regime import ThermalRegime, decide_regime
-from core.phase_change.types import PhaseChangeDirection, PhaseChangeMode
+from core.phase_change.types import PhaseChangeMode
 from core.phase_change.wet_gas_composition import wet_gas_spec_at_water_ratio
 
 
@@ -116,25 +116,11 @@ def test_wet_gas_capable_but_no_condensation_matches_sensible_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Wet gas outside, AUTO -> active condensation.
-# ---------------------------------------------------------------------------
-def test_wet_gas_outside_auto_condensation_active() -> None:
-    hx = _hx()
-    inside = HXSideInput(provider=GasMixturePropertyProvider(_dry_air_spec()), m_dot=15.0, T_in=290.0, p=101325.0)
-    outside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.17)), m_dot=6.0, T_in=420.0, p=101325.0)
-
-    result = hx.simulate(inside, outside)
-    pc = result.outside_phase_change
-
-    assert pc.active is True
-    assert pc.direction is PhaseChangeDirection.CONDENSATION
-    assert pc.m_dot_condensate > 0.0
-    assert pc.W_out < pc.W_in
-    assert pc.Q_latent > 0.0
-    assert pc.Q_total == pytest.approx(pc.Q_sensible + pc.Q_latent, rel=1e-9)
-
-
-# ---------------------------------------------------------------------------
+# Wet gas outside, AUTO -> active condensation on this exact fixture is
+# covered canonically by outside_water_condensation_integration_test.py
+# (test_condensation_is_active_and_partial plus its Q balance test); not
+# duplicated here.
+#
 # Same case, DISABLED -> sensible-only, but flagged as possible.
 # ---------------------------------------------------------------------------
 def test_wet_gas_outside_disabled_gives_sensible_only_with_warning() -> None:
