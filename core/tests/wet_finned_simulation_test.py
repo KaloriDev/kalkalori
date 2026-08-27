@@ -234,66 +234,71 @@ def test_disabled_mode_returns_the_exact_dry_simulation_with_sensitivity() -> No
 
 
 def test_endpoint_onset_uses_bounded_0d_wet_zone_when_mean_fin_is_dry() -> None:
-    """Exercise the non-segmented fallback used by economizer-like pinches."""
+    """Exercise the non-segmented fallback used by economizer-like pinches.
+
+    Fixture is a synthetic finned economizer, unrelated to any specific
+    project geometry, chosen empirically to trigger the same endpoint
+    wet-zone-fallback code path as the case that originally motivated it.
+    """
 
     core = BareTube(
-        D_i=0.016,
-        D_o=0.018,
-        length_total=3.33,
-        length_effective=3.30,
-        wall_k=15.0,
+        D_i=0.0189,
+        D_o=0.0212,
+        length_total=2.75,
+        length_effective=2.72,
+        wall_k=45.0,
     )
     tube = CircularFinnedTube(
         core_tube=core,
-        fin_k=200.0,
-        D_fin=0.045,
-        D_root=0.0196,
-        fin_thickness_root=0.0003,
-        fin_thickness_tip=0.0002,
-        fin_pitch=0.0023,
-        fin_contact_efficiency=0.95,
+        fin_k=175.0,
+        D_fin=0.0508,
+        D_root=0.0224,
+        fin_thickness_root=0.00035,
+        fin_thickness_tip=0.00018,
+        fin_pitch=0.0028,
+        fin_contact_efficiency=0.92,
     )
     hx = BareTubeHeatExchanger(
         TubeBundle(
             tube=tube,
-            n_rows=15,
-            n_tubes_per_row=110,
-            pitch_transverse=0.047,
-            pitch_longitudinal=0.0407,
+            n_rows=12,
+            n_tubes_per_row=84,
+            pitch_transverse=0.052,
+            pitch_longitudinal=0.045,
             layout="staggered",
-            n_passes_tube=18,
-            n_passes_transverse=6,
+            n_passes_tube=16,
+            n_passes_transverse=4,
             flow_arrangement="counterflow",
         )
     )
-    glycol_stub = ConstantPropertyProvider(
+    liquid_stub = ConstantPropertyProvider(
         FluidTransportProperties(
-            rho=1_020.0,
-            mu=2.0e-3,
-            k=0.42,
-            cp=3_650.0,
+            rho=1_010.0,
+            mu=1.6e-3,
+            k=0.38,
+            cp=3_550.0,
         )
     )
     wet_air = GasMixturePropertyProvider(
         gas_mixture_from_dry_composition_and_water_ratio(
-            dry_components={"N2": 0.79, "O2": 0.21},
+            dry_components={"N2": 0.77, "O2": 0.21, "CO2": 0.02},
             dry_basis="mole",
-            water_ratio=0.048,
+            water_ratio=0.055,
             imposed_phase="gas",
         )
     )
     result = hx.simulate(
         HXSideInput(
-            provider=glycol_stub,
-            m_dot=44_115.0 / 3600.0,
+            provider=liquid_stub,
+            m_dot=31_500.0 / 3600.0,
             T_in=293.15,
-            p=300_000.0,
+            p=250_000.0,
             phase_change_mode=PhaseChangeMode.DISABLED,
         ),
         HXSideInput(
             provider=wet_air,
-            m_dot=189_570.0 / 3600.0,
-            T_in=340.15,
+            m_dot=142_800.0 / 3600.0,
+            T_in=335.15,
             p=P,
             phase_change_mode=PhaseChangeMode.AUTO,
         ),
