@@ -17,7 +17,7 @@ import math
 import pytest
 
 from core.geometry.bundle import TubeBundle
-from core.geometry.tube import BareTube
+from core.geometry.tube import BareTube, CircularFinnedTube
 from core.geometry.pressure_drop_stages import (
     AreaChangeGeometry,
     AreaChangeType,
@@ -49,6 +49,7 @@ from core.pressure_drop.flow_path import (
     build_tube_side_pressure_drop_result,
 )
 from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
+from core.pressure_drop.finned_tube_pressure_drop import calculate_finned_tube_bank_hydraulics
 from core.pressure_drop.direction_changes import (
     CircularElbowGeometry,
     ElbowConstruction,
@@ -310,6 +311,37 @@ def test_outside_side_group_order() -> None:
     bundle = _bundle(n_passes_tube=1)
     result = build_outside_pressure_drop_result(_tube_bank_result(bundle))
     assert [group.group_id for group in result.groups] == ["inlet", "tube_bank", "outlet"]
+
+
+def test_finned_tube_bank_result_is_accepted_and_tagged_distinctly() -> None:
+    """The public type contract explicitly allows a FinnedTubeBankHydraulicResult,
+    not just the bare-tube OutsideTubeBankHydraulicResult; this is the only
+    test that actually passes one through."""
+    finned_tube = CircularFinnedTube(
+        core_tube=BareTube(D_i=0.021, D_o=0.025, length_total=2.0, length_effective=2.0, wall_k=45.0),
+        fin_k=200.0, D_fin=0.050, D_root=0.028,
+        fin_thickness_root=0.0005, fin_pitch=0.0024,
+    )
+    finned_bundle = TubeBundle(
+        tube=finned_tube, n_rows=4, n_tubes_per_row=6,
+        pitch_transverse=0.060, pitch_longitudinal=0.052,
+        layout="staggered", n_passes_tube=1, flow_arrangement="crossflow",
+    )
+    finned_tube_bank = calculate_finned_tube_bank_hydraulics(
+        m_dot=1.0,
+        bundle=finned_bundle,
+        inlet_props=_props(1.2, mu=1.8e-5, k=0.026, cp=1006.0),
+        temperature_in=300.0,
+    )
+
+    result = build_outside_pressure_drop_result(finned_tube_bank)
+
+    assert [group.group_id for group in result.groups] == ["inlet", "tube_bank", "outlet"]
+    core_stage = result.group("tube_bank").stages[0]
+    assert core_stage.stage_type == "circular_finned_tube_bank"
+    assert core_stage.method.startswith("finned_tube_bank_hydraulics_")
+    assert core_stage.dp_irreversible == pytest.approx(finned_tube_bank.dp_drag)
+    assert result.dp_core == pytest.approx(finned_tube_bank.dp_drag)
 
 
 # ---------------------------------------------------------------------------

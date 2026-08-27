@@ -417,6 +417,64 @@ def test_inside_disabled_returns_sensible_only_with_warning() -> None:
     assert any(w.code == PHASE_CHANGE_DISABLED_BUT_POSSIBLE for w in pc.warnings)
 
 
+def _horizontal_hx() -> BareTubeHeatExchanger:
+    tube = BareTube(
+        D_i=0.022,
+        D_o=0.025,
+        length_total=2.8,
+        length_effective=2.8,
+        wall_k=50.0,
+        tube_orientation=TubeOrientation.HORIZONTAL,
+    )
+    return BareTubeHeatExchanger(
+        TubeBundle(
+            tube=tube,
+            n_rows=5,
+            n_tubes_per_row=10,
+            pitch_transverse=0.035,
+            pitch_longitudinal=0.035,
+            layout="staggered",
+            n_passes_tube=2,
+            flow_arrangement="counterflow",
+        )
+    )
+
+
+def test_horizontal_orientation_condensation_routes_and_balances_close() -> None:
+    """Shah 2009 supports HORIZONTAL (unlike VERTICAL_UPWARD); this proves
+    the horizontal regime map is reachable end-to-end through Simulate,
+    not just unit-tested at the correlation layer."""
+    result = _horizontal_hx().simulate(
+        HXSideInput(
+            provider=GasMixturePropertyProvider(_wet_spec()),
+            m_dot=1.0,
+            T_in=360.0,
+            p=101_325.0,
+        ),
+        HXSideInput(
+            provider=GasMixturePropertyProvider(_dry_spec()),
+            m_dot=5.0,
+            T_in=290.0,
+            p=101_325.0,
+        ),
+    )
+    pc = result.inside_phase_change
+
+    assert result.converged is True
+    assert pc.direction is PhaseChangeDirection.CONDENSATION
+    assert pc.possible is True and pc.active is True and pc.converged is True
+    assert pc.m_dot_condensate > 0.0
+    assert pc.W_out < pc.W_in
+    assert pc.Q_sensible > 0.0
+    assert pc.Q_latent > 0.0
+    assert pc.Q_total == pytest.approx(pc.Q_sensible + pc.Q_latent, rel=1e-12)
+    assert pc.m_dot_water_vapor_in == pytest.approx(
+        pc.m_dot_water_vapor_out + pc.m_dot_condensate,
+        abs=1e-8,
+    )
+    assert not any(w.code == CONDENSATE_STATE_INCONSISTENT for w in pc.warnings)
+
+
 def test_pure_steam_inside_uses_v062_typed_result() -> None:
     result = _hx().simulate(
         HXSideInput(

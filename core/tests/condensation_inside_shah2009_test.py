@@ -174,4 +174,10 @@ def test_regime_transition_sweep_remains_finite_without_numerical_blowup():
         assert math.isfinite(result.alpha) and result.alpha > 0.0
         if previous is not None:
             assert previous / 50.0 < result.alpha < previous * 50.0
+
+
+def test_vertical_upward_orientation_is_explicitly_rejected():
+    inputs = dict(PLAIN_SI_INPUTS, orientation=TubeOrientation.VERTICAL_UPWARD)
+    with pytest.raises(ValueError, match="upward"):
+        shah2009_condensation_alpha_local(mass_flux=20.0, quality=0.5, **inputs)
         previous = result.alpha
