@@ -1014,7 +1014,54 @@ of the ordered 0D zones:
 SUPERHEAT -> CONDENSATION -> SUBCOOLING
 ```
 
-Each zone reports its own duty, outer-reference area, inside HTC, `U` and
+This order describes the **tube-side thermodynamic path only**. Since v0.7.6,
+the intended crossflow steam-air-heater geometry couples the outside stream to
+those zones in parallel. Every active zone receives the same global outside
+inlet state; no zone receives the outlet state of the preceding tube-side
+phase zone. The branch outlets are mixed after the zone calculations.
+
+For geometry that is uniform along tube length, the geometric allocation is
+the converged required gross-outside-area fraction, equivalently the
+represented tube-length and frontal-area fraction:
+
+```text
+f_z             = A_required,z / sum(A_required,z)
+m_dot_outside,z = f_z * m_dot_outside,total
+A_frontal,z     = f_z * A_frontal,total
+L_z / L_total   = f_z
+```
+
+Thus `m_dot_outside,z / A_frontal,z` equals the full-exchanger face mass flux.
+The whole-bank outside correlation and its physical film coefficient are
+preserved; partitioning the air flow does not spuriously lower local velocity
+or outside HTC. The branch mass flow is used with its corresponding frontal
+fraction for its energy balance and sensible capacity rate.
+
+The fractions are required-area fractions, not heat-duty fractions. The
+solver uses a deterministic bounded fixed-point allocation: it assigns branch
+flow from trial fractions, evaluates all zones from the common outside inlet,
+normalizes their required areas, and iterates until the flow and area
+fractions agree. Iteration and residual limits are explicit, and an
+unconverged allocation is not returned as successful. With one active zone,
+`f_z = 1` and the method reduces to the unchanged single-zone calculation.
+
+Each branch outlet uses the existing outside-property convention. The mixed
+outlet is recovered with the same convention from the total sensible-energy
+balance, with branch and global closure checked as
+
+```text
+sum(m_dot_outside,z * delta_h_outside,z)
+    ~= m_dot_outside,total * delta_h_outside,mixed
+    = Q_total
+```
+
+For a constant-`cp` outside fluid, this is the usual mass-weighted outlet
+temperature. The steam-zone correction does not introduce a competing fluid
+enthalpy model.
+
+Each zone reports its own duty, outer-reference area, area/tube-length
+fraction, outside mass flow and fraction, frontal area, face mass flux or
+velocity, outside inlet/outlet temperatures, inside/outside HTC, `U`, and
 `UA`. `zone_alpha_condensation` is the physical Shah (2009) condensation
 coefficient and remains the value used to validate the condensation
 correlation. `inside_alpha_area_weighted` is the arithmetic area-weighted
@@ -1070,10 +1117,13 @@ come from the final pressure/enthalpy solution and contain at least `T`, `p`,
 transport properties. It exposes stable physics and convergence fields, not
 the internal `SteamHeaterSolution` object or wall-clock runtime. Steam
 Simulation and Rating construct their diagnostics directly from the shared
-zone solution. The accepted outside temperature program is evaluated by the
-neutral `core.heat_transfer.outside_side` helper, while every trial duty in
-the steam solver still updates and caches its own outside mean properties and
-HTC. No fake tube-side fluid or sensible full-HX solve is used.
+zone solution. v0.7.6 diagnostics identify the allocation as
+`parallel_by_geometry`, report its iteration count, convergence and residual,
+sum the zone area fractions and air mass flows, and expose the mixed outside
+outlet and air-energy residual. The accepted outside temperature program is
+evaluated by the neutral `core.heat_transfer.outside_side` helper, while every
+trial duty in the steam solver still updates and caches its own outside mean
+properties and HTC. No fake tube-side fluid or sensible full-HX solve is used.
 
 `PhaseChangeMode.DISABLED` is allowed while the result stays in one phase,
 but raises the controlled
@@ -1090,8 +1140,11 @@ Cooling-model limits:
 - pure-steam phase change is supported only inside tubes and is outside the
   planned scope on the outside side;
 - one active phase-changing side per exchanger call;
-- the model is 0D and zone fractions are thermal surface allocations, not
-  resolved axial phase-front positions;
+- the model remains global multi-zone 0D: converged area/tube-length fractions
+  allocate parallel outside branches but are not resolved axial phase-front
+  positions, row-by-row temperatures, or longitudinal 1D segmentation;
+- no falling-film, liquid-level, drainage-hydraulic, flooded-pipe or general
+  1D steam-condensation model is included;
 - the Shah (2009) applicability diagnostics warn without clipping or
   calibration outside the published range;
 - two-phase pressure drop is not supported and is returned explicitly as
@@ -1099,7 +1152,8 @@ Cooling-model limits:
 
 See `core/tests/steam_condensation_examples.ipynb` for public Simulation
 examples covering saturated, wet, superheated, subcooled and low-mass-flux
-cases.
+cases. See `docs/steam_heater_zone_driving_force.md` for the detailed zone
+driving-force, parallel-air allocation, outlet-mixing and 0D-scope contract.
 
 ---
 

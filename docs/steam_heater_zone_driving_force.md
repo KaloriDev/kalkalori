@@ -1,20 +1,22 @@
-# Steam-Heater Zone Driving Force and Fin-Surface Diagnostics (v0.7.1)
+# Steam-Heater Zone Driving Force and Fin-Surface Diagnostics (v0.7.1/v0.7.6)
 
-This document describes two related v0.7.1 corrections to the pure-steam
-tube-side model in `core.phase_change.steam_heater`, and the new fin-surface
-temperature diagnostics that accompany them. Both are 0D engineering
-refinements to the existing multi-zone steam-heater solver; neither changes
+This document records the v0.7.1 zone-driving-force and fin-surface
+diagnostic work, together with the v0.7.6 correction to the outside-air
+topology in `core.phase_change.steam_heater`. Both are global 0D engineering
+refinements to the multi-zone steam-heater solver. Neither changes
 Briggs–Young, Robinson–Briggs, fin efficiency, contact topology, alpha
-semantics, pressure drop, or the phase-change dispatch.
+semantics, pressure drop, the steam property model, or phase-change dispatch.
 
-## 1. The corrected zone driving force
+## 1. Steam-zone driving force and outside-air topology
 
-### 1.1 The previous approximation
+### 1.1 Historical approximations
 
 The steam-heater solver partitions the tube-side enthalpy drop into up to
 three ordered zones — `SUPERHEAT`, `CONDENSATION`, `SUBCOOLING` — each with
-its own inside coefficient, `U`, and required area. Before this correction,
-every zone sized against the *same* driving force:
+its own inside coefficient, `U`, required area, and `UA`.
+
+Before v0.7.1, every zone was sized against the same whole-exchanger mean
+outside temperature:
 
 ```text
 T_mean_outside = 0.5 * (T_in_outside + T_out_outside)
@@ -22,94 +24,161 @@ delta_T_zone   = 0.5 * (T_zone_in + T_zone_out) - T_mean_outside
 A_zone         = Q_zone / (U_zone * delta_T_zone)
 ```
 
-`T_mean_outside` is one arithmetic mean built from the *whole exchanger's*
-inlet/outlet outside temperatures, shared unchanged across all three zones.
-For a condensing zone at high pressure this collapses toward the difference
-between the (isothermal) saturation temperature and the whole-exchanger mean
-outside temperature — for a representative 17 bara steam/air case this
-produces an EMTD around 71–72 K, well above what the corrected zone-resolved
-driving-force model gives for the same terminal states.
+For a representative 17 bara steam/air case this gave the condensation zone
+an EMTD around 71–72 K. v0.7.1 corrected that common-driving-force
+approximation by resolving each zone's terminals, but it marched one
+equivalent outside stream through the tube-side zones in series. That
+series-marched air path was a documented 0D approximation, not a physical
+claim about the crossflow bundle, and is superseded by v0.7.6.
 
-### 1.2 The corrected model
+### 1.2 Current v0.7.6 topology
 
-Each zone now sizes against its own thermodynamic driving force. An
-equivalent outside-stream temperature *path* is marched through the zones,
-in the same order the steam itself passes through them
-(`SUPERHEAT -> CONDENSATION -> SUBCOOLING`), reusing the exact same outside
-cp/property convention already used to compute the whole-exchanger outside
-outlet temperature (`_outside_outlet_temperature`):
+The tube-side thermodynamic path remains sequential and its enthalpy-derived
+zone duties remain authoritative:
 
 ```text
-T_outside_zone_0 = T_in_outside
-for each active zone, in partition order:
-    Q_zone           = m_dot_steam * (h_zone_in - h_zone_out)
-    T_air_zone_out    = outside_temperature_after(T_air_zone_in, Q_zone, m_dot_outside)
-    # this zone's driving force is resolved from (T_air_zone_in, T_air_zone_out)
-    next T_air_zone_in = T_air_zone_out
+steam inlet
+    -> SUPERHEAT
+    -> CONDENSATION
+    -> SUBCOOLING
+    -> condensate outlet
 ```
 
-The final zone's `T_air_zone_out` is required to close onto the
-independently-computed whole-exchanger outside outlet temperature within a
-tight numerical tolerance (the two are different fixed-point evaluations of
-the same energy balance — one coarse pass over the whole duty, several finer
-passes over each zone's sub-duty — so they need not be bit-identical for a
-temperature-dependent outside cp, only mutually consistent).
-
-This is explicitly an **equivalent 0D series allocation**, not a claim about
-the physical axial position of phase fronts in a two-dimensional crossflow
-bundle — see the `STEAM_HEATER_ZONE_ALLOCATION_0D_ESTIMATE` info warning
-attached to every steam-heater result.
-
-**Condensation zone.** The steam side is isothermal at `Tsat`. The zone uses
-the exact terminal log-mean driving force:
+The crossflow air does not follow that sequence. Each occupied tube-length or
+height region receives a parallel share of the global outside flow, every
+branch receives the same global outside inlet state, and the branch outlets
+are mixed only after all active zones have been evaluated:
 
 ```text
-dT_in  = Tsat - T_air_zone_in
-dT_out = Tsat - T_air_zone_out
-EMTD_zone = (dT_in - dT_out) / ln(dT_in / dT_out)      # -> dT_in as dT_out -> dT_in
-UA_zone   = Q_zone / EMTD_zone
+                       -> SUPERHEAT branch    -> T_air,out,superheat
+T_air,in (global) -----+-> CONDENSATION branch -> T_air,out,condensation -> MIX
+                       -> SUBCOOLING branch   -> T_air,out,subcooling
+```
+
+For geometry that is uniform along the active tube length, the converged
+gross outside-area fraction is also the represented tube-length and frontal
+area fraction:
+
+```text
+f_z = A_required,z / sum(A_required,z)
+
+m_dot_air,z   = f_z * m_dot_air,total
+A_frontal,z   = f_z * A_frontal,total
+L_z / L_total = f_z
+```
+
+Consequently, geometrical partitioning does not reduce the local face mass
+flux or velocity:
+
+```text
+m_dot_air,z / A_frontal,z
+    = m_dot_air,total / A_frontal,total
+```
+
+The existing outside correlation is therefore evaluated on the complete
+bank and its physical film coefficient is retained for every branch. The
+partitioned branch mass flow is used with the correspondingly partitioned
+frontal region for the branch energy balance and capacity rate; it is never
+passed through the full frontal area as though its velocity had fallen.
+
+The area fractions are not heat-duty fractions. They are obtained from a
+deterministic bounded fixed point because the required area depends on branch
+air flow, while branch air flow depends on required area:
+
+```text
+choose finite positive trial fractions
+    -> set m_dot_air,z = f_z * m_dot_air,total
+    -> solve every zone from the common T_air,in
+    -> set f_target,z = A_required,z / sum(A_required,z)
+    -> update the trial fractions and repeat to tolerance
+```
+
+The implementation uses explicit iteration and residual limits, bounded
+feasibility handling near a temperature pinch, and a maximum iteration count.
+It raises a controlled non-convergence error rather than accepting the last
+iterate. A single active zone is the exact `f_z = 1` limiting case. Duty
+fractions may provide an initial guess, but are never accepted as the final
+geometric allocation unless the required-area fixed point independently
+converges to the same values.
+
+Each branch outlet is evaluated with the existing outside-property convention.
+The mixed outlet is recovered from the total outside sensible-energy balance
+using that same convention, and the branch sum is checked against it:
+
+```text
+sum(m_dot_air,z * delta_h_air,z)
+    ~= m_dot_air,total * delta_h_air,mixed
+    = Q_total
+```
+
+For a constant-`cp` outside fluid this reduces to the ordinary mass-weighted
+outlet temperature. No second fluid-energy model or separate property backend
+is introduced for mixing.
+
+### 1.3 Per-zone driving forces
+
+**Condensation zone.** The steam side is isothermal at `Tsat`. The branch
+uses the exact terminal log-mean driving force:
+
+```text
+dT_in  = Tsat - T_air,in
+dT_out = Tsat - T_air,out,z
+EMTD_z = (dT_in - dT_out) / ln(dT_in / dT_out)
+UA_z   = Q_z / EMTD_z
 ```
 
 This is the `Cr -> 0` epsilon-NTU limit for an isothermal side
 (`eps = 1 - exp(-NTU)`); it is not obtained by calling the generic finite-`Cr`
 inversion. Non-positive terminal differences (`dT_in <= 0` or `dT_out <= 0`)
-are a genuine pinch violation for the assumed zone pairing and are never
-silently averaged, clipped, or replaced by a fake finite area — the zone
-reports an infeasible (non-finite) area, which the existing Rating/Simulation
-entry points already turn into a `ValueError`.
+are genuine branch pinch violations and are never silently averaged, clipped,
+or replaced by a fake finite area.
 
 **Sensible zones (`SUPERHEAT`, `SUBCOOLING`).** Both sides are sensible
-within the zone. Effective zone capacity rates are reconstructed from the
-zone's own duty and terminal temperatures (`C = Q_zone / |delta_T|`), and the
-established `core.heat_transfer.ntu.ntu_from_effectiveness` inversion is
-reused for the exchanger's declared `flow_arrangement`
-(`counterflow`/`cocurrentflow`/`crossflow`) — no epsilon-NTU equation is
+within a branch. Effective capacity rates are reconstructed from that zone's
+duty and terminal temperatures (`C = Q_z / |delta_T_z|`), including the
+branch air capacity rate. The established
+`core.heat_transfer.ntu.ntu_from_effectiveness` inversion is reused for the
+exchanger's declared `flow_arrangement`
+(`counterflow`/`cocurrentflow`/`crossflow`); no epsilon-NTU equation is
 duplicated in `steam_heater.py`.
 
-### 1.3 Whole-exchanger EMTD
+### 1.4 Whole-exchanger EMTD
 
-The whole-exchanger effective mean temperature difference is a single
-derived identity, never a separate calculation:
+The whole-exchanger effective mean temperature difference remains a derived
+identity, never a separate calculation:
 
 ```text
-UA_total  = sum(UA_zone)
-EMTD_total = Q_total / UA_total     # SteamHeaterSolution.EMTD
+UA_total   = sum(UA_zone)
+EMTD_total = Q_total / UA_total
 ```
 
 Public `Simulation`/`Rating` results expose the same identity through
 `result.EMTD == result.Q_required / result.UA_required` (or
-`result.Q_total / result.UA_total` for a `Simulation`).
+`result.Q_total / result.UA_total` for a `Simulation`). Per-zone diagnostics
+also expose the converged area/air fractions, branch outside mass flow,
+frontal area, face mass flux or velocity, outside inlet/outlet temperatures,
+and local heat-transfer quantities. Global diagnostics identify
+`parallel_by_geometry` and report allocation convergence and mixed-air energy
+closure.
 
-### 1.4 What did not change
+### 1.5 What did not change and model limits
 
-Actual geometry (`A_actual`, `UA_actual` for the same geometry/properties),
-Briggs–Young, Robinson–Briggs, fin efficiency, contact topology, wall
-resistance, the Shah (2009) condensation correlation, the steam property
-provider, and the v0.7.1 derived-steam-mass-flow Rating path
-(`m_dot = Q_required / (h_in - h_out_target)`) are all untouched. Only the
-phase-zone driving force / required UA / required area allocation changes,
-so `A_required`, `UA_required`, `EMTD` and `overdesign` for a Rating are
-expected to move.
+The actual exchanger geometry, Briggs–Young, Robinson–Briggs, fin efficiency,
+contact topology, wall resistance, Shah (2009) condensation correlation,
+single-phase inside correlations, steam properties, tube-side zone duties,
+pressure-drop correlations, and the v0.7.1 derived-steam-mass-flow Rating path
+(`m_dot = Q_required / (h_in - h_out_target)`) are unchanged. Required zone
+areas, branch outlet temperatures, `UA_required`, `EMTD`, and Rating overdesign
+may change for multi-zone cases because the outside coupling is intentionally
+different.
+
+This remains a **global multi-zone 0D model**. The converged area/tube-length
+fractions represent the occupied portions needed by the model; they are not a
+row-by-row or longitudinal temperature field and do not claim local phase-front
+accuracy. No falling-film, liquid-level, drainage-hydraulic, flooded-pipe, or
+general 1D model is introduced. The
+`STEAM_HEATER_ZONE_ALLOCATION_0D_ESTIMATE` information warning reports this
+scope on steam-heater results.
 
 ## 2. Fin-surface temperature diagnostics
 

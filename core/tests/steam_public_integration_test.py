@@ -220,9 +220,8 @@ def test_rating_reuses_same_zone_physics(inlet_kwargs, outlet_kwargs, expected_p
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
         **inlet_kwargs, **outlet_kwargs,
     )
-    # m_dot=100.0 (rather than a tighter historical 30.0) keeps the
-    # equivalent zone-by-zone outside-stream path from crossing the deeply
-    # subcooled steam outlet used by the T_out=350.0 fixtures above.
+    # The generous outside flow keeps every parallel branch away from its
+    # thermal pinch in the T_out=350.0 fixtures above.
     outside = BalanceSideSpec(
         provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=100.0, T_in=300.0,
     )
@@ -482,9 +481,8 @@ def test_public_steam_rating_uses_equivalent_alpha_without_internal_leakage():
         provider=IAPWS97WaterSteamProvider(), p=P, m_dot=1.0,
         T_in=520.0, T_out=350.0,
     )
-    # m_dot=100.0 (rather than a tighter historical 30.0) keeps the
-    # equivalent zone-by-zone outside-stream path from crossing the deeply
-    # subcooled steam outlet (T_out=350.0) used by this fixture.
+    # The generous outside flow keeps every parallel branch away from its
+    # thermal pinch in this deeply subcooled fixture.
     outside = BalanceSideSpec(
         provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=100.0, T_in=300.0,
     )
@@ -509,21 +507,82 @@ def test_public_steam_result_exposes_raw_zone_driving_force_diagnostics():
     outside = BalanceSideSpec(
         provider=OUTSIDE_PROVIDER, p=101325.0, m_dot=100.0, T_in=300.0,
     )
-    result = _hx().rate(inside, outside)
+    hx = _hx()
+    result = hx.rate(inside, outside)
     steam = result.inside_phase_change
+    cp_outside = OUTSIDE_PROVIDER.props.cp
+    frontal_area = hx.bundle.frontal_flow_area
+    face_mass_flux = outside.m_dot / frontal_area
     assert tuple(zone.kind for zone in steam.zones) == (
         SteamHeaterZoneKind.SUPERHEAT,
         SteamHeaterZoneKind.CONDENSATION,
         SteamHeaterZoneKind.SUBCOOLING,
+    )
+    assert steam.zone_allocation_method == "parallel_by_geometry"
+    assert steam.zone_allocation_converged is True
+    assert 1 <= steam.zone_allocation_iterations <= 80
+    assert 0.0 <= steam.zone_allocation_residual <= 1.0e-8
+    assert steam.sum_zone_area_fraction == pytest.approx(1.0, abs=2.0e-12)
+    assert steam.sum_zone_air_mass_flow == pytest.approx(outside.m_dot)
+    assert steam.Q_zone_sum == pytest.approx(steam.Q_total)
+    assert steam.mixed_outside_T_out == pytest.approx(
+        result.closed_balance.outside.T_out
+    )
+    assert abs(steam.mixed_air_energy_residual) <= max(
+        1.0e-6, 1.0e-12 * steam.Q_total
     )
     for zone in steam.zones:
         assert math.isfinite(zone.outside_T_in)
         assert math.isfinite(zone.outside_T_out)
         assert math.isfinite(zone.delta_T_terminal_in)
         assert math.isfinite(zone.delta_T_terminal_out)
+        assert zone.outside_T_in == pytest.approx(outside.T_in)
+        assert zone.area_fraction == pytest.approx(zone.area / steam.A_total)
+        assert zone.tube_length_fraction == pytest.approx(zone.area_fraction)
+        assert zone.outside_mass_flow == pytest.approx(
+            outside.m_dot * zone.outside_mass_flow_fraction
+        )
+        assert zone.outside_mass_flow_fraction == pytest.approx(
+            zone.area_fraction, abs=2.0e-8
+        )
+        assert zone.outside_frontal_area == pytest.approx(
+            frontal_area * zone.outside_mass_flow_fraction
+        )
+        assert zone.outside_face_mass_flux == pytest.approx(face_mass_flux)
+        assert zone.outside_mass_flow / zone.outside_frontal_area == pytest.approx(
+            face_mass_flux
+        )
+        assert zone.outside_velocity == pytest.approx(
+            result.final_result.outside_side_thermal.v
+        )
+        assert zone.Q == pytest.approx(
+            zone.outside_mass_flow
+            * cp_outside
+            * (zone.outside_T_out - zone.outside_T_in),
+            rel=2.0e-12,
+            abs=1.0e-6,
+        )
         assert zone.driving_force_method in (
             "isothermal_lmtd", "epsilon_ntu_crossflow",
         )
+    allocation_residual = max(
+        abs(zone.area_fraction - zone.outside_mass_flow_fraction)
+        for zone in steam.zones
+    )
+    assert steam.zone_allocation_residual == pytest.approx(
+        allocation_residual, rel=0.0, abs=2.0e-15
+    )
+    mixed_temperature = sum(
+        zone.outside_mass_flow * zone.outside_T_out for zone in steam.zones
+    ) / outside.m_dot
+    assert steam.mixed_outside_T_out == pytest.approx(mixed_temperature, rel=2.0e-12)
+    assert steam.Q_total == pytest.approx(
+        outside.m_dot
+        * cp_outside
+        * (steam.mixed_outside_T_out - outside.T_in),
+        rel=2.0e-12,
+        abs=1.0e-6,
+    )
     assert sum(zone.UA for zone in steam.zones) == pytest.approx(steam.UA_total, rel=1.0e-9)
     assert result.EMTD == pytest.approx(steam.Q_total / steam.UA_total, rel=1.0e-9)
 
