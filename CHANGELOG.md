@@ -5,6 +5,28 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.7.6] — Parallel air-side coupling for steam-heater zones
+
+### Changed
+
+- Steam-heater desuperheating, condensation and subcooling zones now share
+  the same crossflow-air inlet state and receive air flow in proportion to
+  their converged geometric area fraction.
+- Zone outlet air streams are mixed after the parallel zone calculations
+  instead of being marched sequentially through tube-side phase zones.
+- Multi-zone area allocation is iterated to consistency between zone area
+  fraction and air-flow fraction while preserving the whole-bank face
+  velocity and outside heat-transfer correlation.
+
+### Notes
+
+- Existing steam/condensate phase decomposition and local heat-transfer
+  correlations are unchanged.
+- The model remains global multi-zone 0D; no falling-film, drainage or
+  longitudinal 1D model is introduced.
+
+---
+
 ## [0.7.5] — Wet circular-finned outside condensation
 
 ### Added
