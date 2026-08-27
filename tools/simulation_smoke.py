@@ -16,8 +16,13 @@ do not make the wall-temperature correction trivial, so genuine iteration
 (usually a handful of passes) is still required. Only ``iterate=False``
 remains a guaranteed single pass.
 
+Note: the surface_margin and iterate=False checks this script prints have
+real pytest equivalents in
+core/tests/simulate_thermal_iteration_integration_test.py; this script
+remains as a runnable, CoolProp-free demonstration, not a coverage source.
+
 Run:
-    python -m core.tests.simulation_smoke
+    python -m tools.simulation_smoke
 """
 
 from __future__ import annotations
