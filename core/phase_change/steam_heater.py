@@ -4,26 +4,28 @@
 """Shared 0D multi-zone solver for a pure-water/steam tube side.
 
 The steam coordinate is specific enthalpy at constant nominal pressure.
-Crossing ``hg`` and ``hf`` creates at most three ordered zones:
+Crossing ``hg`` and ``hf`` creates at most three ordered tube-side zones:
 desuperheating, condensation, and condensate subcooling. Each zone owns its
 inside coefficient, overall U, required area, and UA. The authoritative
 whole-exchanger conductance is always ``sum(U_zone * A_zone)``.
 
-This remains a lumped 0D allocation. Each steam zone gets its own
-thermodynamic driving force: an equivalent opposing-stream temperature path
-is marched in series, in the same order as the steam zones themselves
-(desuperheat -> condensation -> subcooling), using the existing outside
-cp/property convention one zone at a time. Condensation zones (isothermal
-steam side) size on the exact terminal log-mean driving force; sensible
-zones (desuperheat/subcooling) size on the existing epsilon-NTU inversion
-for the exchanger's declared flow arrangement. This equivalent series
-allocation is still a 0D bookkeeping device, not a claim about the physical
-axial location of phase fronts in a two-dimensional crossflow bundle.
+The tube-side thermodynamic states remain sequential. For the crossflow
+steam-air-heater geometry, however, the outside stream is divided into
+parallel branches in proportion to the tube-length/gross-area fraction
+occupied by each zone. Every branch receives the global outside inlet state;
+the branch outlets are mixed after the zone calculations. A bounded damped
+fixed-point solve, with a scalar bracketed fallback for a stalled two-zone
+map, makes each air-flow fraction consistent with its required-area fraction
+while the whole-bank outside correlation preserves the unchanged local face
+mass flux and film coefficient.
+
+This remains a lumped multi-zone 0D allocation, not row-by-row or
+longitudinal 1D resolution of a phase front.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import math
 from time import perf_counter
@@ -68,6 +70,18 @@ class SteamEvaporationNotSupportedError(RuntimeError):
     warning_code = "STEAM_EVAPORATION_NOT_SUPPORTED"
 
 
+class SteamZoneAllocationConvergenceError(RuntimeError):
+    """Raised when the parallel air/area allocation fixed point fails."""
+
+    def __init__(self, *, iterations: int, residual: float):
+        self.iterations = iterations
+        self.residual = residual
+        super().__init__(
+            "Steam-heater parallel zone allocation did not converge within "
+            f"{iterations} iterations; max area-fraction residual={residual:.6g}."
+        )
+
+
 DRIVING_FORCE_ISOTHERMAL_LMTD = "isothermal_lmtd"
 DRIVING_FORCE_EPSILON_NTU_COUNTERFLOW = "epsilon_ntu_counterflow"
 DRIVING_FORCE_EPSILON_NTU_COCURRENTFLOW = "epsilon_ntu_cocurrentflow"
@@ -78,6 +92,14 @@ _EPSILON_NTU_DRIVING_FORCE_METHOD_BY_ARRANGEMENT = {
     "cocurrentflow": DRIVING_FORCE_EPSILON_NTU_COCURRENTFLOW,
     "crossflow": DRIVING_FORCE_EPSILON_NTU_CROSSFLOW,
 }
+
+ZONE_ALLOCATION_METHOD_PARALLEL_BY_GEOMETRY = "parallel_by_geometry"
+_ZONE_ALLOCATION_MAX_ITERATIONS = 80
+_ZONE_ALLOCATION_FRACTION_TOLERANCE = 1.0e-8
+_ZONE_ALLOCATION_DAMPING = 1.0
+_ZONE_ALLOCATION_MIN_DAMPING = 0.125
+_ZONE_ALLOCATION_STALL_RATIO = 0.95
+_ZONE_ALLOCATION_TWO_ZONE_BISECTION_TRIGGER = 16
 
 
 @dataclass(frozen=True)
@@ -100,6 +122,13 @@ class SteamHeaterZoneResult:
     delta_T_terminal_out: float
     effective_mean_temperature_difference: float
     driving_force_method: str
+    area_fraction: float
+    tube_length_fraction: float
+    outside_mass_flow: float
+    outside_mass_flow_fraction: float
+    outside_frontal_area: float
+    outside_face_mass_flux: float
+    outside_velocity: float
     quality_in: float | None = None
     quality_out: float | None = None
     condensation: SteamCondensationZoneResult | None = None
@@ -137,6 +166,15 @@ class SteamHeaterSolution:
     outside_props_mean: FluidTransportProperties
     U_equivalent: float
     zones: tuple[SteamHeaterZoneResult, ...]
+    zone_allocation_method: str
+    zone_allocation_iterations: int
+    zone_allocation_converged: bool
+    zone_allocation_residual: float
+    sum_zone_area_fraction: float
+    sum_zone_air_mass_flow: float
+    mixed_outside_T_out: float
+    Q_zone_sum: float
+    mixed_air_energy_residual: float
     converged: bool
     iterations: int
     root_iterations: int
@@ -201,6 +239,7 @@ class _ZoneSpec:
 class _TrialResult:
     h_out: float
     T_out_outside: float
+    mass_flow_outside: float
     zones: tuple[SteamHeaterZoneResult, ...]
     required_area: float
     UA_total: float
@@ -209,7 +248,20 @@ class _TrialResult:
     outside_props_mean: FluidTransportProperties
     outside_evaluation: OutsideSideEvaluation
     mass_flux: float
+    zone_allocation_iterations: int
+    zone_allocation_converged: bool
+    zone_allocation_residual: float
+    mixed_air_energy_residual: float
     warnings: tuple[ModelWarning, ...]
+
+
+@dataclass(frozen=True)
+class _ParallelZoneAllocation:
+    zones: tuple[SteamHeaterZoneResult, ...]
+    iterations: int
+    converged: bool
+    residual: float
+    mixed_air_energy_residual: float
 
 
 class _SolveCache:
@@ -219,6 +271,10 @@ class _SolveCache:
         self.p_outside = p_outside
         self.steam_states: dict[float, WaterSteamProperties] = {}
         self.outside_props: dict[float, FluidTransportProperties] = {}
+        self.zone_fraction_history: dict[
+            tuple[SteamHeaterZoneKind, ...],
+            list[tuple[float, tuple[float, ...]]],
+        ] = {}
         self.property_evaluations = 0
 
     def steam_state(self, h: float) -> WaterSteamProperties:
@@ -485,63 +541,33 @@ def _evaluate_duty(
         finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
-    # Equivalent 0D series allocation: march the opposing (outside) stream
-    # through the steam zones in the same order the steam itself passes
-    # through them (desuperheat -> condensation -> subcooling), reusing the
-    # exact same outside cp/property convention as the whole-exchanger
-    # T_out_outside above. This is a thermal bookkeeping device, not a claim
-    # about axial phase-front position; see STEAM_HEATER_ZONE_ALLOCATION_0D_ESTIMATE.
     flow_arrangement = hx.bundle.flow_arrangement
-    zones: list[SteamHeaterZoneResult] = []
+    specs = _partition_enthalpy(inlet_state.h, h_out, saturation)
+    allocation = _allocate_parallel_air_zones(
+        hx,
+        specs=specs,
+        saturation=saturation,
+        mass_flow_steam=mass_flow_steam,
+        mass_flow_outside=mass_flow_outside,
+        T_in_outside=T_in_outside,
+        T_out_outside=T_out_outside,
+        alpha_outside_physical=outside.alpha_physical,
+        outside_velocity=outside.velocity,
+        flow_arrangement=flow_arrangement,
+        orientation=orientation,
+        cache=cache,
+    )
+    zones = allocation.zones
     trial_warnings: list[ModelWarning] = list(outside.warnings)
-    outside_T_zone_in = T_in_outside
-    for spec in _partition_enthalpy(inlet_state.h, h_out, saturation):
-        Q_zone = mass_flow_steam * (spec.h_in - spec.h_out)
-        outside_T_zone_out = _outside_outlet_temperature(
-            Q_total=Q_zone,
-            mass_flow_outside=mass_flow_outside,
-            T_in_outside=outside_T_zone_in,
-            cache=cache,
-        )
-        zone = _evaluate_zone(
-            hx,
-            spec=spec,
-            saturation=saturation,
-            mass_flow_steam=mass_flow_steam,
-            alpha_outside_physical=outside.alpha_physical,
-            outside_T_in=outside_T_zone_in,
-            outside_T_out=outside_T_zone_out,
-            flow_arrangement=flow_arrangement,
-            orientation=orientation,
-            cache=cache,
-        )
-        zones.append(zone)
+    for zone in zones:
         trial_warnings.extend(zone.warnings)
-        outside_T_zone_in = outside_T_zone_out
-
-    if zones:
-        # The single-shot T_out_outside above and this zone-marched value are
-        # two independent fixed-point evaluations of the same outside-stream
-        # energy balance (one coarse pass over the whole duty vs. several
-        # finer passes over each zone's sub-duty); they need not be
-        # bit-identical for a strongly temperature-dependent outside cp, only
-        # mutually consistent to a physically tight tolerance.
-        if not math.isclose(
-            outside_T_zone_in, T_out_outside,
-            rel_tol=2.0e-3, abs_tol=1.0e-3,
-        ):
-            raise ValueError(
-                "Steam-heater equivalent outside-stream zone path "
-                f"({outside_T_zone_in:.6g} K) did not close onto the "
-                f"whole-exchanger outside outlet temperature "
-                f"({T_out_outside:.6g} K)."
-            )
 
     required_area = sum(zone.area for zone in zones)
     UA_total = sum(zone.UA for zone in zones)
     return _TrialResult(
         h_out=h_out,
         T_out_outside=T_out_outside,
+        mass_flow_outside=mass_flow_outside,
         zones=tuple(zones),
         required_area=required_area,
         UA_total=UA_total,
@@ -550,6 +576,10 @@ def _evaluate_duty(
         outside_props_mean=outside_props,
         outside_evaluation=outside,
         mass_flux=mass_flow_steam / hx.bundle.internal_flow_area_per_pass,
+        zone_allocation_iterations=allocation.iterations,
+        zone_allocation_converged=allocation.converged,
+        zone_allocation_residual=allocation.residual,
+        mixed_air_energy_residual=allocation.mixed_air_energy_residual,
         warnings=tuple(_deduplicate_warnings(trial_warnings)),
     )
 
@@ -576,6 +606,640 @@ def _partition_enthalpy(
     if h_out < cursor:
         specs.append(_ZoneSpec(SteamHeaterZoneKind.SUBCOOLING, cursor, h_out))
     return tuple(specs)
+
+
+def _allocate_parallel_air_zones(
+    hx,
+    *,
+    specs: tuple[_ZoneSpec, ...],
+    saturation: WaterSteamSaturationProperties,
+    mass_flow_steam: float,
+    mass_flow_outside: float,
+    T_in_outside: float,
+    T_out_outside: float,
+    alpha_outside_physical: float,
+    outside_velocity: float,
+    flow_arrangement: str,
+    orientation: TubeOrientation | None,
+    cache: _SolveCache,
+    max_iterations: int = _ZONE_ALLOCATION_MAX_ITERATIONS,
+    fraction_tolerance: float = _ZONE_ALLOCATION_FRACTION_TOLERANCE,
+    damping: float = _ZONE_ALLOCATION_DAMPING,
+) -> _ParallelZoneAllocation:
+    """Make parallel air-flow fractions consistent with zone area fractions.
+
+    Duty fractions are used only as a neutral, energy-feasible starting
+    iterate. They are never accepted as geometry: every finite multi-zone
+    result must converge to ``f_air ~= A_required / sum(A_required)``.
+    """
+    if not specs:
+        raise ValueError("Steam-heater duty did not produce an active thermal zone.")
+    if max_iterations <= 0 or fraction_tolerance <= 0.0:
+        raise ValueError("Parallel zone-allocation iteration controls must be positive.")
+    if not math.isfinite(damping) or not 0.0 < damping <= 1.0:
+        raise ValueError("Parallel zone-allocation damping must be in (0, 1].")
+
+    duties = tuple(
+        mass_flow_steam * (spec.h_in - spec.h_out) for spec in specs
+    )
+    zone_key = tuple(spec.kind for spec in specs)
+    total_duty = math.fsum(duties)
+    fractions = _parallel_fraction_starting_guess(
+        cache=cache,
+        zone_key=zone_key,
+        total_duty=total_duty,
+        duty_fractions=_normalize_positive_fractions(duties),
+    )
+
+    # The one-zone limit deliberately bypasses the iterative update. With
+    # f=1 its air state, outside correlation, driving force and required area
+    # are exactly the historical single-zone calculation.
+    if len(specs) == 1:
+        zones = _evaluate_parallel_zone_fractions(
+            hx,
+            specs=specs,
+            fractions=(1.0,),
+            saturation=saturation,
+            mass_flow_steam=mass_flow_steam,
+            mass_flow_outside=mass_flow_outside,
+            T_in_outside=T_in_outside,
+            alpha_outside_physical=alpha_outside_physical,
+            outside_velocity=outside_velocity,
+            flow_arrangement=flow_arrangement,
+            orientation=orientation,
+            cache=cache,
+        )
+        if not all(math.isfinite(zone.area) for zone in zones):
+            return _ParallelZoneAllocation(
+                zones=zones,
+                iterations=1,
+                converged=False,
+                residual=math.inf,
+                mixed_air_energy_residual=_parallel_air_energy_residual(
+                    zones=zones,
+                    mass_flow_outside=mass_flow_outside,
+                    T_in_outside=T_in_outside,
+                    T_out_outside=T_out_outside,
+                    cache=cache,
+                ),
+            )
+        zones = _set_zone_area_fractions(zones, (1.0,))
+        return _ParallelZoneAllocation(
+            zones=zones,
+            iterations=1,
+            converged=True,
+            residual=0.0,
+            mixed_air_energy_residual=_parallel_air_energy_residual(
+                zones=zones,
+                mass_flow_outside=mass_flow_outside,
+                T_in_outside=T_in_outside,
+                T_out_outside=T_out_outside,
+                cache=cache,
+            ),
+        )
+
+    last_finite_fractions: tuple[float, ...] | None = None
+    last_residual = math.inf
+    previous_residual = math.inf
+    active_damping = damping
+    tried_feasible_guess = False
+    two_zone_samples: list[tuple[float, float]] = []
+    for iteration in range(1, max_iterations + 1):
+        zones = _evaluate_parallel_zone_fractions(
+            hx,
+            specs=specs,
+            fractions=fractions,
+            saturation=saturation,
+            mass_flow_steam=mass_flow_steam,
+            mass_flow_outside=mass_flow_outside,
+            T_in_outside=T_in_outside,
+            alpha_outside_physical=alpha_outside_physical,
+            outside_velocity=outside_velocity,
+            flow_arrangement=flow_arrangement,
+            orientation=orientation,
+            cache=cache,
+        )
+        if not all(math.isfinite(zone.area) and zone.area > 0.0 for zone in zones):
+            if len(zones) == 2:
+                sample = _two_zone_signed_area_residual(
+                    zones=zones,
+                    first_air_fraction=fractions[0],
+                )
+                if sample is not None:
+                    two_zone_samples.append((fractions[0], sample[0]))
+                bracket = _closest_two_zone_residual_bracket(two_zone_samples)
+                if (
+                    (
+                        active_damping <= _ZONE_ALLOCATION_MIN_DAMPING
+                        or iteration >= _ZONE_ALLOCATION_TWO_ZONE_BISECTION_TRIGGER
+                    )
+                    and bracket is not None
+                ):
+                    return _bisect_two_zone_parallel_allocation(
+                        hx,
+                        specs=specs,
+                        positive_fraction=bracket[0],
+                        negative_fraction=bracket[1],
+                        saturation=saturation,
+                        mass_flow_steam=mass_flow_steam,
+                        mass_flow_outside=mass_flow_outside,
+                        T_in_outside=T_in_outside,
+                        T_out_outside=T_out_outside,
+                        alpha_outside_physical=alpha_outside_physical,
+                        outside_velocity=outside_velocity,
+                        flow_arrangement=flow_arrangement,
+                        orientation=orientation,
+                        cache=cache,
+                        start_iteration=iteration,
+                        max_iterations=max_iterations,
+                        fraction_tolerance=fraction_tolerance,
+                        zone_key=zone_key,
+                        total_duty=total_duty,
+                    )
+            # A damped step can cross a zone pinch. Backtrack toward the last
+            # finite allocation instead of accepting or clipping that state.
+            if last_finite_fractions is not None:
+                fractions = _normalize_positive_fractions(
+                    tuple(
+                        0.5 * (finite + current)
+                        for finite, current in zip(last_finite_fractions, fractions)
+                    )
+                )
+                continue
+            if not tried_feasible_guess:
+                tried_feasible_guess = True
+                feasible_guess = _feasible_parallel_fraction_guess(
+                    specs=specs,
+                    duties=duties,
+                    saturation=saturation,
+                    mass_flow_outside=mass_flow_outside,
+                    T_in_outside=T_in_outside,
+                    cache=cache,
+                )
+                if feasible_guess is not None and feasible_guess != fractions:
+                    fractions = feasible_guess
+                    continue
+            # This is a thermodynamic pinch/infeasible duty, not a finite
+            # fixed point that failed to converge. Simulation's outer area
+            # root uses the infinite required area to reduce its duty;
+            # Rating converts it to its existing controlled pinch error.
+            return _ParallelZoneAllocation(
+                zones=zones,
+                iterations=iteration,
+                converged=False,
+                residual=math.inf,
+                mixed_air_energy_residual=_parallel_air_energy_residual(
+                    zones=zones,
+                    mass_flow_outside=mass_flow_outside,
+                    T_in_outside=T_in_outside,
+                    T_out_outside=T_out_outside,
+                    cache=cache,
+                ),
+            )
+
+        area_fractions = _normalize_positive_fractions(
+            tuple(zone.area for zone in zones)
+        )
+        last_residual = max(
+            abs(area_fraction - air_fraction)
+            for area_fraction, air_fraction in zip(area_fractions, fractions)
+        )
+        if last_residual <= fraction_tolerance:
+            zones = _set_zone_area_fractions(zones, area_fractions)
+            _remember_parallel_fraction_solution(
+                cache=cache,
+                zone_key=zone_key,
+                total_duty=total_duty,
+                area_fractions=area_fractions,
+            )
+            return _ParallelZoneAllocation(
+                zones=zones,
+                iterations=iteration,
+                converged=True,
+                residual=last_residual,
+                mixed_air_energy_residual=_parallel_air_energy_residual(
+                    zones=zones,
+                    mass_flow_outside=mass_flow_outside,
+                    T_in_outside=T_in_outside,
+                    T_out_outside=T_out_outside,
+                    cache=cache,
+                ),
+            )
+
+        if len(zones) == 2:
+            two_zone_samples.append(
+                (fractions[0], area_fractions[0] - fractions[0])
+            )
+
+        if (
+            math.isfinite(previous_residual)
+            and last_residual >= _ZONE_ALLOCATION_STALL_RATIO * previous_residual
+        ):
+            active_damping = max(
+                _ZONE_ALLOCATION_MIN_DAMPING,
+                0.5 * active_damping,
+            )
+        bracket = _closest_two_zone_residual_bracket(two_zone_samples)
+        if (
+            len(zones) == 2
+            and (
+                active_damping <= _ZONE_ALLOCATION_MIN_DAMPING
+                or iteration >= _ZONE_ALLOCATION_TWO_ZONE_BISECTION_TRIGGER
+            )
+            and bracket is not None
+        ):
+            return _bisect_two_zone_parallel_allocation(
+                hx,
+                specs=specs,
+                positive_fraction=bracket[0],
+                negative_fraction=bracket[1],
+                saturation=saturation,
+                mass_flow_steam=mass_flow_steam,
+                mass_flow_outside=mass_flow_outside,
+                T_in_outside=T_in_outside,
+                T_out_outside=T_out_outside,
+                alpha_outside_physical=alpha_outside_physical,
+                outside_velocity=outside_velocity,
+                flow_arrangement=flow_arrangement,
+                orientation=orientation,
+                cache=cache,
+                start_iteration=iteration,
+                max_iterations=max_iterations,
+                fraction_tolerance=fraction_tolerance,
+                zone_key=zone_key,
+                total_duty=total_duty,
+            )
+        previous_residual = last_residual
+        last_finite_fractions = fractions
+        fractions = _normalize_positive_fractions(
+            tuple(
+                (1.0 - active_damping) * air_fraction
+                + active_damping * area_fraction
+                for air_fraction, area_fraction in zip(fractions, area_fractions)
+            )
+        )
+
+    raise SteamZoneAllocationConvergenceError(
+        iterations=max_iterations,
+        residual=last_residual,
+    )
+
+
+def _two_zone_signed_area_residual(
+    *,
+    zones: tuple[SteamHeaterZoneResult, ...],
+    first_air_fraction: float,
+) -> tuple[float, tuple[float, float] | None] | None:
+    """Return the scalar two-zone fixed-point residual, including pinch limits."""
+    if len(zones) != 2:
+        raise ValueError("Two-zone residual evaluation requires exactly two zones.")
+    finite = tuple(
+        math.isfinite(zone.area) and zone.area > 0.0 for zone in zones
+    )
+    if finite == (True, True):
+        area_fractions = _normalize_positive_fractions(
+            (zones[0].area, zones[1].area)
+        )
+        return area_fractions[0] - first_air_fraction, area_fractions
+    if finite == (False, True):
+        # As the first zone approaches its pinch, its required-area fraction
+        # tends to one. This supplies the positive side of the scalar bracket.
+        return 1.0 - first_air_fraction, None
+    if finite == (True, False):
+        # Symmetrically, an infinite second-zone area drives the first-zone
+        # required-area fraction toward zero.
+        return -first_air_fraction, None
+    return None
+
+
+def _closest_two_zone_residual_bracket(
+    samples: list[tuple[float, float]],
+) -> tuple[float, float] | None:
+    positive = [sample for sample in samples if sample[1] > 0.0]
+    negative = [sample for sample in samples if sample[1] < 0.0]
+    if not positive or not negative:
+        return None
+    positive_sample, negative_sample = min(
+        (
+            (positive_sample, negative_sample)
+            for positive_sample in positive
+            for negative_sample in negative
+            if positive_sample[0] != negative_sample[0]
+        ),
+        key=lambda pair: abs(pair[0][0] - pair[1][0]),
+        default=(None, None),
+    )
+    if positive_sample is None or negative_sample is None:
+        return None
+    return positive_sample[0], negative_sample[0]
+
+
+def _bisect_two_zone_parallel_allocation(
+    hx,
+    *,
+    specs: tuple[_ZoneSpec, ...],
+    positive_fraction: float,
+    negative_fraction: float,
+    saturation: WaterSteamSaturationProperties,
+    mass_flow_steam: float,
+    mass_flow_outside: float,
+    T_in_outside: float,
+    T_out_outside: float,
+    alpha_outside_physical: float,
+    outside_velocity: float,
+    flow_arrangement: str,
+    orientation: TubeOrientation | None,
+    cache: _SolveCache,
+    start_iteration: int,
+    max_iterations: int,
+    fraction_tolerance: float,
+    zone_key: tuple[SteamHeaterZoneKind, ...],
+    total_duty: float,
+) -> _ParallelZoneAllocation:
+    """Finish a stalled two-zone fixed point by bracketing its one degree of freedom."""
+    last_residual = math.inf
+    for iteration in range(start_iteration + 1, max_iterations + 1):
+        first_fraction = 0.5 * (positive_fraction + negative_fraction)
+        fractions = (first_fraction, 1.0 - first_fraction)
+        zones = _evaluate_parallel_zone_fractions(
+            hx,
+            specs=specs,
+            fractions=fractions,
+            saturation=saturation,
+            mass_flow_steam=mass_flow_steam,
+            mass_flow_outside=mass_flow_outside,
+            T_in_outside=T_in_outside,
+            alpha_outside_physical=alpha_outside_physical,
+            outside_velocity=outside_velocity,
+            flow_arrangement=flow_arrangement,
+            orientation=orientation,
+            cache=cache,
+        )
+        sample = _two_zone_signed_area_residual(
+            zones=zones,
+            first_air_fraction=first_fraction,
+        )
+        if sample is None:
+            break
+        signed_residual, area_fractions = sample
+        if area_fractions is not None:
+            last_residual = max(
+                abs(area_fraction - air_fraction)
+                for area_fraction, air_fraction in zip(area_fractions, fractions)
+            )
+            if last_residual <= fraction_tolerance:
+                zones = _set_zone_area_fractions(zones, area_fractions)
+                _remember_parallel_fraction_solution(
+                    cache=cache,
+                    zone_key=zone_key,
+                    total_duty=total_duty,
+                    area_fractions=area_fractions,
+                )
+                return _ParallelZoneAllocation(
+                    zones=zones,
+                    iterations=iteration,
+                    converged=True,
+                    residual=last_residual,
+                    mixed_air_energy_residual=_parallel_air_energy_residual(
+                        zones=zones,
+                        mass_flow_outside=mass_flow_outside,
+                        T_in_outside=T_in_outside,
+                        T_out_outside=T_out_outside,
+                        cache=cache,
+                    ),
+                )
+        if signed_residual > 0.0:
+            positive_fraction = first_fraction
+        elif signed_residual < 0.0:
+            negative_fraction = first_fraction
+        else:
+            break
+
+    raise SteamZoneAllocationConvergenceError(
+        iterations=max_iterations,
+        residual=last_residual,
+    )
+
+
+def _parallel_fraction_starting_guess(
+    *,
+    cache: _SolveCache,
+    zone_key: tuple[SteamHeaterZoneKind, ...],
+    total_duty: float,
+    duty_fractions: tuple[float, ...],
+) -> tuple[float, ...]:
+    """Warm-start repeated Simulation trials without changing their physics."""
+    history = cache.zone_fraction_history.get(zone_key, ())
+    if not history:
+        return duty_fractions
+    latest_duty, latest_fractions = history[-1]
+    if len(history) < 2:
+        return latest_fractions
+    previous_duty, previous_fractions = history[-2]
+    duty_span = latest_duty - previous_duty
+    if abs(duty_span) <= 1.0e-14 * max(abs(total_duty), 1.0):
+        return latest_fractions
+    extrapolation = (total_duty - latest_duty) / duty_span
+    if not math.isfinite(extrapolation) or abs(extrapolation) > 2.0:
+        return latest_fractions
+    predicted = tuple(
+        latest + extrapolation * (latest - previous)
+        for latest, previous in zip(latest_fractions, previous_fractions)
+    )
+    if any(not math.isfinite(value) or value <= 0.0 for value in predicted):
+        return latest_fractions
+    return _normalize_positive_fractions(predicted)
+
+
+def _remember_parallel_fraction_solution(
+    *,
+    cache: _SolveCache,
+    zone_key: tuple[SteamHeaterZoneKind, ...],
+    total_duty: float,
+    area_fractions: tuple[float, ...],
+) -> None:
+    history = cache.zone_fraction_history.setdefault(zone_key, [])
+    if history and math.isclose(
+        history[-1][0], total_duty, rel_tol=1.0e-14, abs_tol=1.0e-9
+    ):
+        history[-1] = (total_duty, area_fractions)
+    else:
+        history.append((total_duty, area_fractions))
+        del history[:-2]
+
+
+def _evaluate_parallel_zone_fractions(
+    hx,
+    *,
+    specs: tuple[_ZoneSpec, ...],
+    fractions: tuple[float, ...],
+    saturation: WaterSteamSaturationProperties,
+    mass_flow_steam: float,
+    mass_flow_outside: float,
+    T_in_outside: float,
+    alpha_outside_physical: float,
+    outside_velocity: float,
+    flow_arrangement: str,
+    orientation: TubeOrientation | None,
+    cache: _SolveCache,
+) -> tuple[SteamHeaterZoneResult, ...]:
+    if len(specs) != len(fractions):
+        raise ValueError("Steam zone specs and parallel air fractions must align.")
+    frontal_area_total = hx.bundle.frontal_flow_area
+    face_mass_flux = mass_flow_outside / frontal_area_total
+    zones: list[SteamHeaterZoneResult] = []
+    for spec, fraction in zip(specs, fractions):
+        if not math.isfinite(fraction) or fraction <= 0.0:
+            raise ValueError("Every active steam zone needs a positive air-flow fraction.")
+        Q_zone = mass_flow_steam * (spec.h_in - spec.h_out)
+        outside_mass_flow = fraction * mass_flow_outside
+        outside_frontal_area = fraction * frontal_area_total
+        outside_T_zone_out = _outside_outlet_temperature(
+            Q_total=Q_zone,
+            mass_flow_outside=outside_mass_flow,
+            T_in_outside=T_in_outside,
+            cache=cache,
+        )
+        zones.append(
+            _evaluate_zone(
+                hx,
+                spec=spec,
+                saturation=saturation,
+                mass_flow_steam=mass_flow_steam,
+                alpha_outside_physical=alpha_outside_physical,
+                outside_T_in=T_in_outside,
+                outside_T_out=outside_T_zone_out,
+                outside_mass_flow=outside_mass_flow,
+                outside_mass_flow_fraction=fraction,
+                outside_frontal_area=outside_frontal_area,
+                outside_face_mass_flux=face_mass_flux,
+                outside_velocity=outside_velocity,
+                flow_arrangement=flow_arrangement,
+                orientation=orientation,
+                cache=cache,
+            )
+        )
+    return tuple(zones)
+
+
+def _feasible_parallel_fraction_guess(
+    *,
+    specs: tuple[_ZoneSpec, ...],
+    duties: tuple[float, ...],
+    saturation: WaterSteamSaturationProperties,
+    mass_flow_outside: float,
+    T_in_outside: float,
+    cache: _SolveCache,
+) -> tuple[float, ...] | None:
+    """Find a strictly positive-temperature-approach starting allocation."""
+    minimum_fractions: list[float] = []
+    for spec, Q_zone in zip(specs, duties):
+        hot_out_temperature = (
+            saturation.Tsat
+            if spec.kind is SteamHeaterZoneKind.CONDENSATION
+            else cache.steam_state(spec.h_out).T
+        )
+        approach_margin = max(1.0e-6, 1.0e-9 * abs(hot_out_temperature))
+        maximum_air_outlet = hot_out_temperature - approach_margin
+        if maximum_air_outlet <= T_in_outside:
+            return None
+        properties_at_limit = cache.outside_state(
+            0.5 * (T_in_outside + maximum_air_outlet)
+        )
+        outside_capacity_per_fraction = (
+            mass_flow_outside
+            * properties_at_limit.cp
+            * (maximum_air_outlet - T_in_outside)
+        )
+        if (
+            not math.isfinite(outside_capacity_per_fraction)
+            or outside_capacity_per_fraction <= 0.0
+        ):
+            return None
+        # This is the direct inversion of the same midpoint-cp convention
+        # used by _outside_outlet_temperature at the limiting outlet state.
+        minimum_fraction = Q_zone / outside_capacity_per_fraction
+        minimum_fraction *= 1.0 + 1.0e-10
+        if not math.isfinite(minimum_fraction) or minimum_fraction >= 1.0:
+            return None
+        minimum_fractions.append(minimum_fraction)
+
+    minimum_sum = math.fsum(minimum_fractions)
+    if not math.isfinite(minimum_sum) or minimum_sum >= 1.0:
+        return None
+    duty_fractions = _normalize_positive_fractions(duties)
+    remainder = 1.0 - minimum_sum
+    return _normalize_positive_fractions(
+        tuple(
+            minimum + remainder * duty_fraction
+            for minimum, duty_fraction in zip(minimum_fractions, duty_fractions)
+        )
+    )
+
+
+def _normalize_positive_fractions(values: tuple[float, ...]) -> tuple[float, ...]:
+    if not values or any(not math.isfinite(value) or value <= 0.0 for value in values):
+        raise ValueError("Active steam-zone allocation weights must be positive and finite.")
+    total = math.fsum(values)
+    if not math.isfinite(total) or total <= 0.0:
+        raise ValueError("Active steam-zone allocation weights have no finite sum.")
+    return tuple(value / total for value in values)
+
+
+def _set_zone_area_fractions(
+    zones: tuple[SteamHeaterZoneResult, ...],
+    area_fractions: tuple[float, ...],
+) -> tuple[SteamHeaterZoneResult, ...]:
+    return tuple(
+        replace(
+            zone,
+            area_fraction=area_fraction,
+            tube_length_fraction=area_fraction,
+        )
+        for zone, area_fraction in zip(zones, area_fractions)
+    )
+
+
+def _parallel_air_energy_residual(
+    *,
+    zones: tuple[SteamHeaterZoneResult, ...],
+    mass_flow_outside: float,
+    T_in_outside: float,
+    T_out_outside: float,
+    cache: _SolveCache,
+) -> float:
+    branch_heat = math.fsum(
+        _outside_sensible_heat_rate(
+            mass_flow=zone.outside_mass_flow,
+            T_in=zone.outside_T_in,
+            T_out=zone.outside_T_out,
+            cache=cache,
+        )
+        for zone in zones
+    )
+    mixed_heat = _outside_sensible_heat_rate(
+        mass_flow=mass_flow_outside,
+        T_in=T_in_outside,
+        T_out=T_out_outside,
+        cache=cache,
+    )
+    zone_heat = math.fsum(zone.Q for zone in zones)
+    return max(
+        abs(branch_heat - zone_heat),
+        abs(mixed_heat - zone_heat),
+        abs(branch_heat - mixed_heat),
+    )
+
+
+def _outside_sensible_heat_rate(
+    *,
+    mass_flow: float,
+    T_in: float,
+    T_out: float,
+    cache: _SolveCache,
+) -> float:
+    properties_mean = cache.outside_state(0.5 * (T_in + T_out))
+    return mass_flow * properties_mean.cp * (T_out - T_in)
 
 
 def _log_mean_temperature_difference(delta_T_in: float, delta_T_out: float) -> float:
@@ -610,6 +1274,11 @@ def _evaluate_zone(
     alpha_outside_physical: float,
     outside_T_in: float,
     outside_T_out: float,
+    outside_mass_flow: float,
+    outside_mass_flow_fraction: float,
+    outside_frontal_area: float,
+    outside_face_mass_flux: float,
+    outside_velocity: float,
     flow_arrangement: str,
     orientation: TubeOrientation | None,
     cache: _SolveCache,
@@ -733,6 +1402,13 @@ def _evaluate_zone(
         delta_T_terminal_out=delta_T_terminal_out,
         effective_mean_temperature_difference=EMTD,
         driving_force_method=driving_force_method,
+        area_fraction=math.nan,
+        tube_length_fraction=math.nan,
+        outside_mass_flow=outside_mass_flow,
+        outside_mass_flow_fraction=outside_mass_flow_fraction,
+        outside_frontal_area=outside_frontal_area,
+        outside_face_mass_flux=outside_face_mass_flux,
+        outside_velocity=outside_velocity,
         quality_in=quality_in,
         quality_out=quality_out,
         condensation=condensation,
@@ -790,6 +1466,32 @@ def _build_solution(
         raise ValueError("Steam-heater zone energy balance is internally inconsistent.")
     if not math.isclose(UA_total, trial.UA_total, rel_tol=2.0e-12, abs_tol=1.0e-9):
         raise ValueError("Steam-heater zone-UA aggregation is internally inconsistent.")
+    if not trial.zone_allocation_converged:
+        raise ValueError(
+            "Accepted steam-heater duty has no converged parallel zone allocation."
+        )
+
+    sum_zone_area_fraction = math.fsum(
+        zone.area_fraction for zone in trial.zones
+    )
+    sum_zone_air_mass_flow = math.fsum(
+        zone.outside_mass_flow for zone in trial.zones
+    )
+    if not math.isclose(
+        sum_zone_area_fraction, 1.0, rel_tol=0.0, abs_tol=2.0e-12
+    ):
+        raise ValueError("Steam-heater zone area fractions do not sum to one.")
+    if not math.isclose(
+        sum_zone_air_mass_flow,
+        trial.mass_flow_outside,
+        rel_tol=2.0e-12,
+        abs_tol=1.0e-12,
+    ):
+        raise ValueError("Steam-heater parallel zone air flows do not sum to the total.")
+    if abs(trial.mixed_air_energy_residual) > max(1.0e-4, 2.0e-8 * Q_total):
+        raise ValueError(
+            "Steam-heater mixed outside-air energy balance is internally inconsistent."
+        )
 
     inside_alpha_area_weighted = sum(
         zone.alpha_inside * zone.area for zone in trial.zones
@@ -821,10 +1523,10 @@ def _build_solution(
         make_warning(
             code="STEAM_HEATER_ZONE_ALLOCATION_0D_ESTIMATE",
             message=(
-                "Steam phase-zone sizing uses an equivalent 0D series allocation "
-                "of the opposing-stream enthalpy rise. Zone driving forces are "
-                "thermodynamically resolved but do not represent spatial "
-                "phase-front locations in a two-dimensional crossflow bundle."
+                "Steam phase zones remain sequential on the tube side, while "
+                "crossflow air is allocated in parallel by converged geometric "
+                "area fraction with a common inlet and mixed outlet. This is a "
+                "multi-zone 0D allocation, not spatial phase-front resolution."
             ),
             source="steam_heater",
             severity="info",
@@ -869,7 +1571,16 @@ def _build_solution(
         outside_props_mean=trial.outside_props_mean,
         U_equivalent=U_equivalent,
         zones=trial.zones,
-        converged=converged,
+        zone_allocation_method=ZONE_ALLOCATION_METHOD_PARALLEL_BY_GEOMETRY,
+        zone_allocation_iterations=trial.zone_allocation_iterations,
+        zone_allocation_converged=trial.zone_allocation_converged,
+        zone_allocation_residual=trial.zone_allocation_residual,
+        sum_zone_area_fraction=sum_zone_area_fraction,
+        sum_zone_air_mass_flow=sum_zone_air_mass_flow,
+        mixed_outside_T_out=trial.T_out_outside,
+        Q_zone_sum=Q_total,
+        mixed_air_energy_residual=trial.mixed_air_energy_residual,
+        converged=converged and trial.zone_allocation_converged,
         iterations=iterations,
         root_iterations=root_iterations,
         property_evaluations=cache.property_evaluations,
@@ -878,8 +1589,11 @@ def _build_solution(
         warnings=tuple(_deduplicate_warnings(warnings)),
         assumptions=(
             "constant_nominal_steam_pressure",
-            "equivalent_0d_series_zone_allocation",
+            "tube_side_zones_sequential",
+            "outside_air_parallel_by_geometric_area_fraction",
+            "common_outside_inlet_and_mixed_outlet",
             "zone_UA_sum_is_authoritative",
+            "multi_zone_0d_not_longitudinal_1d",
             "two_phase_pressure_drop_not_supported",
         ),
     )

@@ -160,7 +160,7 @@ def test_practical_low_g_condensation_matches_independent_shah_reference(
         mass_flux=mass_flux,
         diameter=float(hx.bundle.tube.D_i),
     )
-    assert expected == pytest.approx(14625.31680202385, rel=2.0e-10)
+    assert expected == pytest.approx(15390.902436060176, rel=2.0e-10)
     assert steam.zone_alpha_condensation == pytest.approx(expected, rel=2.0e-12)
     warning_codes = {warning.code for warning in steam.warnings}
     assert "STEAM_CONDENSATION_SHAH_2009_OUTSIDE_RANGE" in warning_codes
@@ -212,4 +212,8 @@ def test_practical_low_g_public_invariants_and_diagnostics(practical_result):
     )
     assert not hasattr(steam, "solution")
     assert not hasattr(steam, "runtime_s")
-    assert steam.property_evaluations < 200
+    assert steam.zone_allocation_method == "parallel_by_geometry"
+    assert steam.zone_allocation_converged is True
+    assert steam.zone_allocation_residual <= 1.0e-8
+    # The phase-state solve now includes the bounded parallel-allocation loop.
+    assert steam.property_evaluations < 350

@@ -78,6 +78,7 @@ from core.phase_change.steam_heater import (
     SteamHeaterSolution,
     SteamHeaterZoneKind,
     SteamHeaterZoneResult,
+    SteamZoneAllocationConvergenceError,
     rate_steam_heater,
     solve_steam_heater,
 )
@@ -122,6 +123,7 @@ __all__ = [
     "SteamHeaterSolution",
     "SteamHeaterZoneKind",
     "SteamHeaterZoneResult",
+    "SteamZoneAllocationConvergenceError",
     "rate_steam_heater",
     "solve_steam_heater",
     "WaterEvaporationZoneResult",

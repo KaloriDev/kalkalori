@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.5`
+**Current version:** `v0.7.6`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change thermal balance and tube-bank hydraulic balance;
@@ -45,6 +45,24 @@ and distributed thermal resolution remain future work.
 ---
 
 ## Roadmap Overview
+
+---
+
+### v0.7.6 — Parallel Air-Side Steam-Zone Coupling
+
+**Delivered scope:**
+
+- sequential steam/condensate thermodynamic zones coupled to geometrically
+  parallel crossflow-air branches with one common outside inlet;
+- bounded iteration between required zone area fractions and outside-air
+  flow fractions, with explicit convergence and energy-closure diagnostics;
+- preserved whole-bank face velocity, outside correlation and existing local
+  steam-side heat-transfer correlations;
+- energy-consistent mixing of the branch outlets into the global outside
+  outlet state.
+
+This remains a global multi-zone 0D model; it does not add falling-film,
+drainage-hydraulic, row-wise or longitudinal 1D resolution.
 
 ---
 

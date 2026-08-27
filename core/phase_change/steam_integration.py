@@ -1372,6 +1372,15 @@ def _steam_result(
         inside_alpha_equivalent=solution.inside_alpha_equivalent,
         inside_alpha_area_weighted=solution.inside_alpha_area_weighted,
         zones=solution.zones,
+        zone_allocation_method=solution.zone_allocation_method,
+        zone_allocation_iterations=solution.zone_allocation_iterations,
+        zone_allocation_converged=solution.zone_allocation_converged,
+        zone_allocation_residual=solution.zone_allocation_residual,
+        sum_zone_area_fraction=solution.sum_zone_area_fraction,
+        sum_zone_air_mass_flow=solution.sum_zone_air_mass_flow,
+        mixed_outside_T_out=solution.mixed_outside_T_out,
+        Q_zone_sum=solution.Q_zone_sum,
+        mixed_air_energy_residual=solution.mixed_air_energy_residual,
     )
 
 

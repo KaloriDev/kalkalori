@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.5)
+## Current Capabilities (v0.7.6)
 
 - Rating can derive the required tube-side pure-steam mass flow from an
   independently known duty (explicit `Q`, or a fully specified opposing-side

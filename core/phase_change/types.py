@@ -350,6 +350,19 @@ class WaterSteamPhaseChangeResult:
     # ``driving_force_method``) beyond the aggregated per-kind scalars above.
     zones: tuple = ()
 
+    # Additive v0.7.6 steam-heater air-topology diagnostics. Pure-water
+    # evaporation retains the neutral defaults because its zone methodology
+    # is independent of the parallel steam-heater correction.
+    zone_allocation_method: str | None = None
+    zone_allocation_iterations: int = 0
+    zone_allocation_converged: bool | None = None
+    zone_allocation_residual: float = 0.0
+    sum_zone_area_fraction: float = 0.0
+    sum_zone_air_mass_flow: float = 0.0
+    mixed_outside_T_out: float | None = None
+    Q_zone_sum: float = 0.0
+    mixed_air_energy_residual: float = 0.0
+
     @property
     def Q_sensible(self) -> float:
         if self.direction is PhaseChangeDirection.EVAPORATION:

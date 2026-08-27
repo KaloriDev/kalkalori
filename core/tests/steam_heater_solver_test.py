@@ -41,15 +41,90 @@ def _hx(n_rows=10, n_tubes_per_row=10):
 
 
 def _rate(inlet, outlet, *, hx=None, m_dot=1.0, mass_flow_outside=100.0):
-    # mass_flow_outside=100.0 (rather than a tighter historical 30.0) keeps
-    # the equivalent zone-by-zone outside-stream path (see steam_heater's
-    # per-zone driving-force allocation) from crossing the deeply subcooled
-    # steam outlet used by several of these fixtures.
+    # The generous outside flow keeps every parallel branch away from its
+    # thermal pinch in the deeply subcooled fixtures used below.
     return rate_steam_heater(
         hx or _hx(), inlet_state=inlet, outlet_state=outlet,
         mass_flow_steam=m_dot, outside_provider=OUTSIDE,
         mass_flow_outside=mass_flow_outside, T_in_outside=300.0, p_outside=101325.0,
         orientation=SteamTubeOrientation.VERTICAL_DOWNWARD,
+    )
+
+
+def _assert_parallel_air_allocation(
+    result,
+    *,
+    hx,
+    mass_flow_outside=100.0,
+    T_in_outside=300.0,
+):
+    """Check geometry allocation and constant-cp outlet mixing invariants."""
+    cp_outside = OUTSIDE.props.cp
+    frontal_area = hx.bundle.frontal_flow_area
+    expected_face_mass_flux = mass_flow_outside / frontal_area
+    expected_face_velocity = expected_face_mass_flux / result.outside_props_mean.rho
+
+    assert result.zone_allocation_method == "parallel_by_geometry"
+    assert result.zone_allocation_converged is True
+    assert 1 <= result.zone_allocation_iterations <= 80
+    assert 0.0 <= result.zone_allocation_residual <= 1.0e-8
+    assert result.sum_zone_area_fraction == pytest.approx(1.0, abs=2.0e-12)
+    assert result.sum_zone_air_mass_flow == pytest.approx(mass_flow_outside)
+    assert result.mixed_outside_T_out == pytest.approx(result.T_out_outside)
+    assert result.Q_zone_sum == pytest.approx(result.Q_total)
+    assert abs(result.mixed_air_energy_residual) <= max(1.0e-6, 1.0e-12 * result.Q_total)
+
+    for zone in result.zones:
+        assert zone.outside_T_in == pytest.approx(T_in_outside)
+        assert zone.outside_T_out > zone.outside_T_in
+        assert zone.area_fraction == pytest.approx(zone.area / result.A_total)
+        assert zone.tube_length_fraction == pytest.approx(zone.area_fraction)
+        assert zone.outside_mass_flow == pytest.approx(
+            mass_flow_outside * zone.outside_mass_flow_fraction
+        )
+        assert zone.outside_mass_flow_fraction == pytest.approx(
+            zone.area_fraction, abs=2.0e-8
+        )
+        assert zone.outside_frontal_area == pytest.approx(
+            frontal_area * zone.outside_mass_flow_fraction
+        )
+        assert zone.outside_face_mass_flux == pytest.approx(expected_face_mass_flux)
+        assert zone.outside_mass_flow / zone.outside_frontal_area == pytest.approx(
+            expected_face_mass_flux
+        )
+        assert zone.outside_velocity == pytest.approx(expected_face_velocity)
+        assert zone.alpha_outside == pytest.approx(result.outside_alpha)
+        assert zone.alpha_outside_physical == pytest.approx(
+            result.outside_alpha_physical
+        )
+        assert zone.Q == pytest.approx(
+            zone.outside_mass_flow
+            * cp_outside
+            * (zone.outside_T_out - zone.outside_T_in),
+            rel=2.0e-12,
+            abs=1.0e-6,
+        )
+
+    area_residual = max(
+        abs(zone.area_fraction - zone.outside_mass_flow_fraction)
+        for zone in result.zones
+    )
+    assert result.zone_allocation_residual == pytest.approx(
+        area_residual, rel=0.0, abs=2.0e-15
+    )
+    assert sum(zone.outside_mass_flow_fraction for zone in result.zones) == pytest.approx(
+        1.0
+    )
+    mixed_temperature = sum(
+        zone.outside_mass_flow * zone.outside_T_out for zone in result.zones
+    ) / mass_flow_outside
+    assert result.T_out_outside == pytest.approx(mixed_temperature, rel=2.0e-12)
+    assert result.Q_total == pytest.approx(
+        mass_flow_outside
+        * cp_outside
+        * (result.T_out_outside - T_in_outside),
+        rel=2.0e-12,
+        abs=1.0e-6,
     )
 
 
@@ -75,6 +150,19 @@ def test_rating_supports_representative_zone_transitions(inlet, outlet, expected
     assert result.state_out.h == pytest.approx(outlet.h)
     assert all(zone.Q > 0.0 and zone.area > 0.0 for zone in result.zones)
     assert math.isfinite(result.UA_total)
+
+
+def test_zero_duty_boundary_zone_is_omitted_before_parallel_normalization():
+    hx = _hx()
+    result = _rate(
+        water_steam_props_iapws97(T=520.0, p=P),
+        water_steam_props_iapws97(p=P, x=1.0),
+        hx=hx,
+    )
+    assert tuple(zone.kind for zone in result.zones) == (
+        SteamHeaterZoneKind.SUPERHEAT,
+    )
+    _assert_parallel_air_allocation(result, hx=hx)
 
 
 def test_reverse_evaporation_is_unsupported():
@@ -121,26 +209,63 @@ def test_equivalent_inside_alpha_reconstructs_outer_basis_resistance(inlet, outl
 
 
 @pytest.mark.parametrize(
-    ("inlet", "outlet", "zone_kind"),
+    (
+        "inlet",
+        "outlet",
+        "zone_kind",
+        "expected_area",
+        "expected_UA",
+        "expected_outside_T_out",
+        "expected_alpha_inside",
+    ),
     [
         (
             water_steam_props_iapws97(p=P, x=1.0),
-            water_steam_props_iapws97(p=P, x=0.4),
+            water_steam_props_iapws97(p=P, x=0.0),
             SteamHeaterZoneKind.CONDENSATION,
+            28.661144675225202,
+            14108.76015346184,
+            320.04414620248014,
+            8826.095321215491,
         ),
         (
             water_steam_props_iapws97(T=520.0, p=P),
             water_steam_props_iapws97(T=480.0, p=P),
             SteamHeaterZoneKind.SUPERHEAT,
+            3.592158897826218,
+            460.1422854716331,
+            300.9105525423216,
+            203.00640157303883,
+        ),
+        (
+            water_steam_props_iapws97(p=P, x=0.0),
+            water_steam_props_iapws97(T=350.0, p=P),
+            SteamHeaterZoneKind.SUBCOOLING,
+            28.43958784441023,
+            4909.416618347276,
+            304.379916602776,
+            307.89897058408707,
         ),
     ],
 )
-def test_single_zone_equivalent_and_area_weighted_alpha_equal_zone_alpha(
-    inlet, outlet, zone_kind
+def test_single_zone_parallel_limit_preserves_numerical_regression(
+    inlet,
+    outlet,
+    zone_kind,
+    expected_area,
+    expected_UA,
+    expected_outside_T_out,
+    expected_alpha_inside,
 ):
-    result = _rate(inlet, outlet)
+    hx = _hx()
+    result = _rate(inlet, outlet, hx=hx)
+    _assert_parallel_air_allocation(result, hx=hx)
     assert tuple(zone.kind for zone in result.zones) == (zone_kind,)
     zone_alpha = result.zones[0].alpha_inside
+    assert result.A_total == pytest.approx(expected_area, rel=2.0e-12)
+    assert result.UA_total == pytest.approx(expected_UA, rel=2.0e-12)
+    assert result.T_out_outside == pytest.approx(expected_outside_T_out, rel=2.0e-12)
+    assert zone_alpha == pytest.approx(expected_alpha_inside, rel=2.0e-12)
     assert result.inside_alpha_equivalent == pytest.approx(zone_alpha, rel=2.0e-12)
     assert result.inside_alpha_area_weighted == pytest.approx(zone_alpha, rel=2.0e-12)
     assert result.inside_alfa_mean == result.inside_alpha_equivalent
@@ -247,6 +372,7 @@ def test_simulation_allocates_all_available_area_and_conserves_energy():
         result.Q_desuperheat + result.Q_condensation + result.Q_subcooling
     )
     assert result.UA_total == pytest.approx(sum(zone.UA for zone in result.zones))
+    # The nested phase-state and parallel-allocation solves remain bounded.
     assert result.property_evaluations < 300
 
 
@@ -340,26 +466,48 @@ def test_condensation_zone_non_positive_approach_rejects_finite_solution():
         rate_steam_heater(
             _hx(), inlet_state=inlet, outlet_state=outlet,
             mass_flow_steam=1.0, outside_provider=OUTSIDE,
-            # A small outside mass flow drives the equivalent outside-path
-            # temperature at zone-out up past Tsat itself.
+            # A small outside mass flow drives the sole branch outlet above Tsat.
             mass_flow_outside=0.05, T_in_outside=Tsat - 5.0, p_outside=101325.0,
             orientation=SteamTubeOrientation.VERTICAL_DOWNWARD,
         )
 
 
-def test_mixed_superheat_condensation_zone_path_is_contiguous_and_sums_to_emtd():
-    """T4: contiguous equivalent outside path; EMTD_total == Q_total/UA_total."""
-    result = _rate(
-        water_steam_props_iapws97(T=520.0, p=P),
-        water_steam_props_iapws97(p=P, x=0.5),
+@pytest.mark.parametrize(
+    ("inlet", "outlet", "expected_kinds"),
+    [
+        (
+            water_steam_props_iapws97(T=520.0, p=P),
+            water_steam_props_iapws97(p=P, x=0.5),
+            (SteamHeaterZoneKind.SUPERHEAT, SteamHeaterZoneKind.CONDENSATION),
+        ),
+        (
+            water_steam_props_iapws97(p=P, x=0.8),
+            water_steam_props_iapws97(T=350.0, p=P),
+            (SteamHeaterZoneKind.CONDENSATION, SteamHeaterZoneKind.SUBCOOLING),
+        ),
+        (
+            water_steam_props_iapws97(T=520.0, p=P),
+            water_steam_props_iapws97(T=350.0, p=P),
+            (
+                SteamHeaterZoneKind.SUPERHEAT,
+                SteamHeaterZoneKind.CONDENSATION,
+                SteamHeaterZoneKind.SUBCOOLING,
+            ),
+        ),
+    ],
+)
+def test_multizone_air_branches_share_inlet_and_converge_by_geometry(
+    inlet, outlet, expected_kinds
+):
+    """T4: parallel branches allocate by area and mix by constant-cp energy."""
+    hx = _hx()
+    result = _rate(inlet, outlet, hx=hx)
+    assert tuple(zone.kind for zone in result.zones) == expected_kinds
+    _assert_parallel_air_allocation(result, hx=hx)
+    assert any(
+        zone.area_fraction != pytest.approx(zone.Q / result.Q_total, rel=1.0e-4)
+        for zone in result.zones
     )
-    assert tuple(zone.kind for zone in result.zones) == (
-        SteamHeaterZoneKind.SUPERHEAT, SteamHeaterZoneKind.CONDENSATION,
-    )
-    assert result.zones[0].outside_T_in == pytest.approx(300.0)
-    assert result.zones[-1].outside_T_out == pytest.approx(result.T_out_outside)
-    for earlier, later in zip(result.zones, result.zones[1:]):
-        assert earlier.outside_T_out == pytest.approx(later.outside_T_in)
     assert sum(zone.Q for zone in result.zones) == pytest.approx(result.Q_total)
     assert sum(zone.UA for zone in result.zones) == pytest.approx(result.UA_total)
     assert result.Q_total / result.UA_total == pytest.approx(result.EMTD, rel=1.0e-12)
@@ -395,23 +543,31 @@ def test_sensible_zone_ua_matches_public_ntu_contract():
     assert zone.area == pytest.approx(zone.UA / zone.U, rel=1.0e-9)
 
 
-def test_bare_vs_finned_driving_force_independence():
-    """T6: identical thermodynamic terminals give identical zone driving
-    forces (and UA) for bare vs. finned geometry; only U and area differ."""
+def test_bare_vs_finned_geometry_changes_parallel_allocation_not_inside_states():
+    """T6: geometry changes branch allocation, not prescribed steam states."""
     inlet = water_steam_props_iapws97(T=520.0, p=P)
     outlet = water_steam_props_iapws97(T=350.0, p=P)
-    bare_result = _rate(inlet, outlet, hx=_hx())
-    finned_result = _rate(inlet, outlet, hx=_finned_hx())
+    bare_hx = _hx()
+    finned_hx = _finned_hx()
+    bare_result = _rate(inlet, outlet, hx=bare_hx)
+    finned_result = _rate(inlet, outlet, hx=finned_hx)
+    _assert_parallel_air_allocation(bare_result, hx=bare_hx)
+    _assert_parallel_air_allocation(finned_result, hx=finned_hx)
     assert tuple(z.kind for z in bare_result.zones) == tuple(z.kind for z in finned_result.zones)
     for bare_zone, finned_zone in zip(bare_result.zones, finned_result.zones):
         assert bare_zone.T_in == pytest.approx(finned_zone.T_in)
         assert bare_zone.T_out == pytest.approx(finned_zone.T_out)
         assert bare_zone.outside_T_in == pytest.approx(finned_zone.outside_T_in)
-        assert bare_zone.outside_T_out == pytest.approx(finned_zone.outside_T_out)
         assert bare_zone.driving_force_method == finned_zone.driving_force_method
-        assert bare_zone.effective_mean_temperature_difference == pytest.approx(
-            finned_zone.effective_mean_temperature_difference, rel=1.0e-9
-        )
-        assert bare_zone.UA == pytest.approx(finned_zone.UA, rel=1.0e-6)
+        assert bare_zone.alpha_inside == pytest.approx(finned_zone.alpha_inside)
         assert bare_zone.U != pytest.approx(finned_zone.U)
         assert bare_zone.area != pytest.approx(finned_zone.area)
+    assert any(
+        bare_zone.outside_mass_flow_fraction
+        != pytest.approx(finned_zone.outside_mass_flow_fraction)
+        for bare_zone, finned_zone in zip(bare_result.zones, finned_result.zones)
+    )
+    assert any(
+        bare_zone.outside_T_out != pytest.approx(finned_zone.outside_T_out)
+        for bare_zone, finned_zone in zip(bare_result.zones, finned_result.zones)
+    )
