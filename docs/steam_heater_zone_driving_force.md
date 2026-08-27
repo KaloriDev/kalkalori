@@ -95,11 +95,13 @@ choose finite positive trial fractions
 
 The implementation uses explicit iteration and residual limits, bounded
 feasibility handling near a temperature pinch, and a maximum iteration count.
-It raises a controlled non-convergence error rather than accepting the last
-iterate. A single active zone is the exact `f_z = 1` limiting case. Duty
-fractions may provide an initial guess, but are never accepted as the final
-geometric allocation unless the required-area fixed point independently
-converges to the same values.
+If damping stalls in a two-zone case, the single independent area-fraction
+residual is bracketed and solved by deterministic bisection within the same
+iteration bound. The solver raises a controlled non-convergence error rather
+than accepting the last iterate. A single active zone is the exact `f_z = 1`
+limiting case. Duty fractions may provide an initial guess, but are never
+accepted as the final geometric allocation unless the required-area fixed
+point independently converges to the same values.
 
 Each branch outlet is evaluated with the existing outside-property convention.
 The mixed outlet is recovered from the total outside sensible-energy balance

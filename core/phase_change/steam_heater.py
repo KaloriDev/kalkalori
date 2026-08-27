@@ -14,9 +14,10 @@ steam-air-heater geometry, however, the outside stream is divided into
 parallel branches in proportion to the tube-length/gross-area fraction
 occupied by each zone. Every branch receives the global outside inlet state;
 the branch outlets are mixed after the zone calculations. A bounded damped
-fixed point makes each air-flow fraction consistent with its required-area
-fraction while the whole-bank outside correlation preserves the unchanged
-local face mass flux and film coefficient.
+fixed-point solve, with a scalar bracketed fallback for a stalled two-zone
+map, makes each air-flow fraction consistent with its required-area fraction
+while the whole-bank outside correlation preserves the unchanged local face
+mass flux and film coefficient.
 
 This remains a lumped multi-zone 0D allocation, not row-by-row or
 longitudinal 1D resolution of a phase front.
@@ -98,6 +99,7 @@ _ZONE_ALLOCATION_FRACTION_TOLERANCE = 1.0e-8
 _ZONE_ALLOCATION_DAMPING = 1.0
 _ZONE_ALLOCATION_MIN_DAMPING = 0.125
 _ZONE_ALLOCATION_STALL_RATIO = 0.95
+_ZONE_ALLOCATION_TWO_ZONE_BISECTION_TRIGGER = 16
 
 
 @dataclass(frozen=True)
@@ -701,6 +703,7 @@ def _allocate_parallel_air_zones(
     previous_residual = math.inf
     active_damping = damping
     tried_feasible_guess = False
+    two_zone_samples: list[tuple[float, float]] = []
     for iteration in range(1, max_iterations + 1):
         zones = _evaluate_parallel_zone_fractions(
             hx,
@@ -717,6 +720,42 @@ def _allocate_parallel_air_zones(
             cache=cache,
         )
         if not all(math.isfinite(zone.area) and zone.area > 0.0 for zone in zones):
+            if len(zones) == 2:
+                sample = _two_zone_signed_area_residual(
+                    zones=zones,
+                    first_air_fraction=fractions[0],
+                )
+                if sample is not None:
+                    two_zone_samples.append((fractions[0], sample[0]))
+                bracket = _closest_two_zone_residual_bracket(two_zone_samples)
+                if (
+                    (
+                        active_damping <= _ZONE_ALLOCATION_MIN_DAMPING
+                        or iteration >= _ZONE_ALLOCATION_TWO_ZONE_BISECTION_TRIGGER
+                    )
+                    and bracket is not None
+                ):
+                    return _bisect_two_zone_parallel_allocation(
+                        hx,
+                        specs=specs,
+                        positive_fraction=bracket[0],
+                        negative_fraction=bracket[1],
+                        saturation=saturation,
+                        mass_flow_steam=mass_flow_steam,
+                        mass_flow_outside=mass_flow_outside,
+                        T_in_outside=T_in_outside,
+                        T_out_outside=T_out_outside,
+                        alpha_outside_physical=alpha_outside_physical,
+                        outside_velocity=outside_velocity,
+                        flow_arrangement=flow_arrangement,
+                        orientation=orientation,
+                        cache=cache,
+                        start_iteration=iteration,
+                        max_iterations=max_iterations,
+                        fraction_tolerance=fraction_tolerance,
+                        zone_key=zone_key,
+                        total_duty=total_duty,
+                    )
             # A damped step can cross a zone pinch. Backtrack toward the last
             # finite allocation instead of accepting or clipping that state.
             if last_finite_fractions is not None:
@@ -787,6 +826,11 @@ def _allocate_parallel_air_zones(
                 ),
             )
 
+        if len(zones) == 2:
+            two_zone_samples.append(
+                (fractions[0], area_fractions[0] - fractions[0])
+            )
+
         if (
             math.isfinite(previous_residual)
             and last_residual >= _ZONE_ALLOCATION_STALL_RATIO * previous_residual
@@ -794,6 +838,36 @@ def _allocate_parallel_air_zones(
             active_damping = max(
                 _ZONE_ALLOCATION_MIN_DAMPING,
                 0.5 * active_damping,
+            )
+        bracket = _closest_two_zone_residual_bracket(two_zone_samples)
+        if (
+            len(zones) == 2
+            and (
+                active_damping <= _ZONE_ALLOCATION_MIN_DAMPING
+                or iteration >= _ZONE_ALLOCATION_TWO_ZONE_BISECTION_TRIGGER
+            )
+            and bracket is not None
+        ):
+            return _bisect_two_zone_parallel_allocation(
+                hx,
+                specs=specs,
+                positive_fraction=bracket[0],
+                negative_fraction=bracket[1],
+                saturation=saturation,
+                mass_flow_steam=mass_flow_steam,
+                mass_flow_outside=mass_flow_outside,
+                T_in_outside=T_in_outside,
+                T_out_outside=T_out_outside,
+                alpha_outside_physical=alpha_outside_physical,
+                outside_velocity=outside_velocity,
+                flow_arrangement=flow_arrangement,
+                orientation=orientation,
+                cache=cache,
+                start_iteration=iteration,
+                max_iterations=max_iterations,
+                fraction_tolerance=fraction_tolerance,
+                zone_key=zone_key,
+                total_duty=total_duty,
             )
         previous_residual = last_residual
         last_finite_fractions = fractions
@@ -804,6 +878,142 @@ def _allocate_parallel_air_zones(
                 for air_fraction, area_fraction in zip(fractions, area_fractions)
             )
         )
+
+    raise SteamZoneAllocationConvergenceError(
+        iterations=max_iterations,
+        residual=last_residual,
+    )
+
+
+def _two_zone_signed_area_residual(
+    *,
+    zones: tuple[SteamHeaterZoneResult, ...],
+    first_air_fraction: float,
+) -> tuple[float, tuple[float, float] | None] | None:
+    """Return the scalar two-zone fixed-point residual, including pinch limits."""
+    if len(zones) != 2:
+        raise ValueError("Two-zone residual evaluation requires exactly two zones.")
+    finite = tuple(
+        math.isfinite(zone.area) and zone.area > 0.0 for zone in zones
+    )
+    if finite == (True, True):
+        area_fractions = _normalize_positive_fractions(
+            (zones[0].area, zones[1].area)
+        )
+        return area_fractions[0] - first_air_fraction, area_fractions
+    if finite == (False, True):
+        # As the first zone approaches its pinch, its required-area fraction
+        # tends to one. This supplies the positive side of the scalar bracket.
+        return 1.0 - first_air_fraction, None
+    if finite == (True, False):
+        # Symmetrically, an infinite second-zone area drives the first-zone
+        # required-area fraction toward zero.
+        return -first_air_fraction, None
+    return None
+
+
+def _closest_two_zone_residual_bracket(
+    samples: list[tuple[float, float]],
+) -> tuple[float, float] | None:
+    positive = [sample for sample in samples if sample[1] > 0.0]
+    negative = [sample for sample in samples if sample[1] < 0.0]
+    if not positive or not negative:
+        return None
+    positive_sample, negative_sample = min(
+        (
+            (positive_sample, negative_sample)
+            for positive_sample in positive
+            for negative_sample in negative
+            if positive_sample[0] != negative_sample[0]
+        ),
+        key=lambda pair: abs(pair[0][0] - pair[1][0]),
+        default=(None, None),
+    )
+    if positive_sample is None or negative_sample is None:
+        return None
+    return positive_sample[0], negative_sample[0]
+
+
+def _bisect_two_zone_parallel_allocation(
+    hx,
+    *,
+    specs: tuple[_ZoneSpec, ...],
+    positive_fraction: float,
+    negative_fraction: float,
+    saturation: WaterSteamSaturationProperties,
+    mass_flow_steam: float,
+    mass_flow_outside: float,
+    T_in_outside: float,
+    T_out_outside: float,
+    alpha_outside_physical: float,
+    outside_velocity: float,
+    flow_arrangement: str,
+    orientation: TubeOrientation | None,
+    cache: _SolveCache,
+    start_iteration: int,
+    max_iterations: int,
+    fraction_tolerance: float,
+    zone_key: tuple[SteamHeaterZoneKind, ...],
+    total_duty: float,
+) -> _ParallelZoneAllocation:
+    """Finish a stalled two-zone fixed point by bracketing its one degree of freedom."""
+    last_residual = math.inf
+    for iteration in range(start_iteration + 1, max_iterations + 1):
+        first_fraction = 0.5 * (positive_fraction + negative_fraction)
+        fractions = (first_fraction, 1.0 - first_fraction)
+        zones = _evaluate_parallel_zone_fractions(
+            hx,
+            specs=specs,
+            fractions=fractions,
+            saturation=saturation,
+            mass_flow_steam=mass_flow_steam,
+            mass_flow_outside=mass_flow_outside,
+            T_in_outside=T_in_outside,
+            alpha_outside_physical=alpha_outside_physical,
+            outside_velocity=outside_velocity,
+            flow_arrangement=flow_arrangement,
+            orientation=orientation,
+            cache=cache,
+        )
+        sample = _two_zone_signed_area_residual(
+            zones=zones,
+            first_air_fraction=first_fraction,
+        )
+        if sample is None:
+            break
+        signed_residual, area_fractions = sample
+        if area_fractions is not None:
+            last_residual = max(
+                abs(area_fraction - air_fraction)
+                for area_fraction, air_fraction in zip(area_fractions, fractions)
+            )
+            if last_residual <= fraction_tolerance:
+                zones = _set_zone_area_fractions(zones, area_fractions)
+                _remember_parallel_fraction_solution(
+                    cache=cache,
+                    zone_key=zone_key,
+                    total_duty=total_duty,
+                    area_fractions=area_fractions,
+                )
+                return _ParallelZoneAllocation(
+                    zones=zones,
+                    iterations=iteration,
+                    converged=True,
+                    residual=last_residual,
+                    mixed_air_energy_residual=_parallel_air_energy_residual(
+                        zones=zones,
+                        mass_flow_outside=mass_flow_outside,
+                        T_in_outside=T_in_outside,
+                        T_out_outside=T_out_outside,
+                        cache=cache,
+                    ),
+                )
+        if signed_residual > 0.0:
+            positive_fraction = first_fraction
+        elif signed_residual < 0.0:
+            negative_fraction = first_fraction
+        else:
+            break
 
     raise SteamZoneAllocationConvergenceError(
         iterations=max_iterations,
