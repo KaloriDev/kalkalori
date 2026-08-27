@@ -249,7 +249,7 @@ Recommended gas-mixture path range in `v0.4.x`:
 | CO2 fraction         |              user-defined | backend support must be checked               |
 | SO2 / acid gases     | user-defined with caution | acid dew point is not modelled                |
 | Phase                |                  gas only | use `imposed_phase="gas"`                     |
-| Condensation         |             not supported | do not use for wet-surface heat balance       |
+| Condensation         | provider evaluation only | use the section 15 HX solver for wet-surface balance |
 
 CoolProp supports phase imposition through input keys such as `T|gas`, which can avoid automatic PT-flash problems for known gas-phase states. KalKalori uses this for gas-mixture calculations when `imposed_phase="gas"` is selected.
 
@@ -558,7 +558,7 @@ latent heat balance along the bundle,
 change of humidity ratio along the heat exchanger,
 change of gas composition due to water removal,
 condensate film resistance,
-wet fin/tube surface correction,
+wet fin/tube surface response (the v0.7.5 solver requires `GasMixtureSpec`),
 acid dew point,
 sulfuric acid condensation,
 mixed water/acid condensation,
@@ -711,8 +711,9 @@ Recommended procedure:
 ### Case D — Condensing economizer / wet surface
 
 Water condensation from wet gas is supported inside tubes with a dry outside
-surface and outside bare-tube banks
-in v0.6.1, with these 0D limits:
+surface and outside bare-tube banks since v0.6.1. v0.7.5 also supports the
+outside surface of `CircularFinnedTube`, including independent primary/root
+and radial annular-fin condensation, with these 0D limits:
 
 ```text
 one active side,
@@ -770,13 +771,13 @@ the calculation is sensible-only,
 gas properties are needed inside or outside tubes.
 ```
 
-Use `GasMixtureSpec` together with the v0.6.1 phase-change solver when:
+Use `GasMixtureSpec` together with the wet-gas phase-change solver when:
 
 ```text
 H2O condenses from a gas with a non-condensable carrier,
 latent heat and condensate removal must be included,
-the wet gas flows inside tubes with a dry outside surface or outside bare-tube
-banks.
+the wet gas flows inside tubes with a dry outside surface or outside bare or
+circular-finned tube banks.
 ```
 
 Pure-water phase change inside tubes uses the separate v0.6.2/v0.6.3
@@ -790,15 +791,30 @@ H2O-only wet-gas model.
 ## 15. v0.6.1 — Wet-Gas Water Condensation
 
 The wet-process / wet-economizer solver referenced as future work in
-sections 8 and 14 above is now available for **partial H2O condensation
-from a `GasMixtureSpec`-based gas mixture flowing either inside tubes with a
-dry outside surface (including a dry circular-finned outside) or outside a
-bare-tube bank**, solved by
+sections 8 and 14 above is available for **partial H2O condensation from a
+`GasMixtureSpec`-based gas mixture flowing either inside tubes with a dry
+outside surface or outside a bare-tube bank** since v0.6.1. v0.7.5 extends the
+outside route to a **`CircularFinnedTube` primary/root surface and annular
+fins**, solved by
 `BareTubeHeatExchanger.simulate()` / `.rate()`. It does not replace the
 property-path decision tree above --
 you still choose `GasMixtureSpec` (with H2O as a component) exactly as
 sections 4 and 7 describe. What changes is what the *heat-exchanger
 solver* does with that composition once the wall runs below the dew point.
+
+For the v0.7.5 finned outside route, the dry Briggs--Young physical film HTC
+still defines sensible convection and the existing Chilton--Colburn path
+defines H2O mass transfer. A deterministic nonlinear radial finite-volume
+solve resolves both fin faces and tip as dry, partially wet or fully wet while
+the exposed primary/root cylinder condenses independently. The nested
+`WetFinnedSurfaceResult` reports primary and fin sensible/latent/total duties,
+condensate rates, wet areas, temperatures, contact topology, convergence and
+split residuals. The generic `outside_phase_change` result remains
+authoritative for the whole-side water and energy balance. A separately named
+`outside_alpha_wet_effective_gross_core_basis` is a total-duty reconstruction;
+`outside_alpha_physical` is never redefined to include latent heat. Equations,
+area bases, wet-boundary convention and references are documented in
+[`finned_tube_model.md`](finned_tube_model.md#wet-annular-fin-condensation-v075).
 
 ### 15.1 `imposed_phase` vs. `PhaseChangeMode` -- two different knobs
 
@@ -836,7 +852,16 @@ is set does the solver actually make phase change **active** and run the
 coupled side-specific solve. A capable
 medium that never reaches its dew point produces an ordinary sensible-only
 result under `AUTO`, bit-for-bit identical to not having this feature at
-all.
+all. A small activation band straddling the dew-point margin resolves to a
+**near-onset** result (`possible=True`, `active=False`,
+`near_onset=True`) instead of oscillating between the dry and wet solve on
+repeated calls close to onset.
+
+`active=False` -- whether dry, near-onset, or a not-capable side -- is
+always a valid, converged result, never a calculation failure. Its
+`PhaseChangeResult.Q_sensible`/`Q_total` equal the real exchanger duty
+(`Q_latent = 0`, `m_dot_condensate = 0`) exactly like `DISABLED` below, so a
+caller never has to check `active` before reading them.
 
 ### 15.3 `PhaseChangeMode.DISABLED`
 
@@ -849,7 +874,41 @@ have been possible from the dry baseline and attaches a
 forced approximation, not a "this case has no condensation" statement; the
 true duty and outlet temperature may differ from the dry result.
 
-### 15.4 Scope (v0.6.1)
+### 15.35 Rating with a single unknown non-condensing-side variable (v0.7.5)
+
+Active outside condensation does not inherently require every one of the
+non-condensing (typically inside) side's `m_dot`/`T_in`/`T_out` to be
+explicit. Exactly as for a dry `Rating` call, `BalanceSideSpec` may still
+leave a single supported unknown --  `m_dot` (with `T_out` known) or
+`T_out` (with `m_dot` known) -- for the solver to close, provided the wet
+outside side is itself fully specified (`m_dot`, `T_in`, `T_out`).
+
+Unlike the dry case, this cannot be recovered by one more algebraic
+`close_heat_balance` step: the wet outside stream's own duty is not pinned
+down by its `(T_in, T_out, m_dot)` alone once condensation is active (how
+much water actually condenses is an extra physical degree of freedom, set
+only by the mass-transfer-coefficient-driven physics at the real wall
+temperature, which itself depends on the unknown flow through the inside
+film coefficient). `core.phase_change.rating_integration` instead runs an
+outer, bounded, bracketed scalar root search over the single unknown,
+re-evaluating the whole Rating call at each trial and comparing the
+resulting nonlinear wet-fin surface's own physically-driven duty against
+the duty the trial's inside energy balance requires. This is currently
+implemented only for a `CircularFinnedTube` outside surface (a bare-tube
+outside surface does not yet expose an equivalent independent raw duty and
+raises a clear, typed error if this closure is attempted on one).
+
+Each trial may resolve dry, near-onset or actively condensing -- AUTO
+legitimately crosses regime boundaries during the search, and a dry/near-
+onset trial is not treated as a search failure. A genuinely underdetermined
+side (both `m_dot` and `T_out` missing) is still rejected, and a target
+that cannot be reached by any physically valid flow/temperature raises a
+diagnostic `RatingClosureError` (no fabricated "closest" result is
+returned). This search is materially more expensive than a plain Rating
+call (each trial re-runs the full nonlinear wet-fin solve); it is not
+attempted unless exactly one supported unknown triggers it.
+
+### 15.4 Scope (v0.6.1/v0.7.5)
 
 `GasMixturePropertyProvider` represents the gas phase, not a pre-existing
 liquid-water inventory transported with that gas.  Public Simulation and
@@ -858,7 +917,7 @@ equilibrium vapor capacity before evaluating gas-mixture properties.  An
 exactly saturated inlet (within `1e-10 kg/kg` absolute plus `1e-8` relative
 tolerance) is accepted; a composition above that capacity is rejected with
 `LIQUID_WATER_IN_GAS_INLET_NOT_SUPPORTED`.  Droplet, mist, wall-film and
-other carried-liquid evaporation are not included in v0.6.3.
+  other carried-liquid evaporation are not included in the wet-gas model.
 
 - Only H2O condenses from a wet gas with a non-condensable dry carrier;
   either the **inside** or **outside** stream may be active.
@@ -877,10 +936,17 @@ other carried-liquid evaporation are not included in v0.6.3.
 - The model remains **0D**: no axial/segmented resolution. `.simulate()`
   requires `iterate=True` for an active condensation case (the
   `iterate=False` single-pass escape hatch cannot represent condensation).
-- `wet_surface_fraction` is a linear 0D wall-envelope estimate, not a
-  spatially resolved wetted-area fraction. Sensible convection still uses
-  the full side area; only latent/mass transfer uses `A_wet` and the
-  representative wet-wall temperature.
+- For a bare surface, `wet_surface_fraction` remains the linear 0D wall-
+  envelope estimate: sensible convection uses the full side area while
+  latent/mass transfer uses the estimated `A_wet` and representative wet-wall
+  temperature. For a circular-finned outside surface, the fraction instead
+  comes from the nonlinear 160-cell radial fin field plus the independently
+  solved primary surface. Its typed state is `DRY`, `PARTIALLY_WET` or
+  `FULLY_WET`. If endpoint onset is active but that one bulk-mean radial field
+  is wholly dry, a declared fallback applies the existing linear 0D endpoint
+  fraction and representative cold-zone temperature to mass/latent transfer;
+  it does not add axial marching or use rows/passes as thermal segments. See
+  [`finned_tube_model.md`](finned_tube_model.md#wet-annular-fin-condensation-v075).
 - The Chilton-Colburn heat/mass-transfer analogy uses `lewis_number=1.0`
   by default -- a configurable first-model assumption, not a universal
   constant (see `docs/references.md`).
@@ -889,9 +955,14 @@ other carried-liquid evaporation are not included in v0.6.3.
   conditions are detected and rejected with `FROSTING_NOT_SUPPORTED` rather
   than silently clamped).
 - Two-phase gas/liquid pressure drop and condensate-film resistance are not
-  modelled. Inside and outside hydraulic point states use only the remaining
-  gas-phase `m_dot`; friction/acceleration therefore reflect gas composition,
-  density and gas-flow changes without adding liquid-film momentum.
+  modelled. Inside and bare-outside hydraulic point states use only the
+  remaining gas-phase `m_dot`; friction/acceleration therefore reflect gas
+  composition, density and gas-flow changes without adding liquid-film
+  momentum. During circular-finned outside condensation, the existing dry
+  finned-bank pressure drop is retained only as `outside_dp_dry_reference`;
+  `wet_pressure_drop_supported` is false, `outside_dp_reference_only` is true,
+  and the
+  `circular_finned_tube_wet_pressure_drop_reference_only` warning is emitted.
 
 See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
 and heat/mass-transfer model details, and
@@ -1013,8 +1084,9 @@ Cooling-model limits:
 
 - this v0.6.2 path covers cooling/condensation; the heating direction uses
   the v0.6.3 model in section 17;
-- the opposing outside surface may be bare or a dry circular-finned tube;
-  an active wet/condensing finned outside surface remains unsupported;
+- the opposing outside surface may be bare or circular-finned while that side
+  remains dry; simultaneous active outside wet-gas condensation is unsupported
+  because only one exchanger side may have active phase change;
 - pure-steam phase change is supported only inside tubes and is outside the
   planned scope on the outside side;
 - one active phase-changing side per exchanger call;
@@ -1120,8 +1192,9 @@ defines its duty.
 Current limits:
 
 - pure-water evaporation is supported only inside tubes;
-- the opposing outside surface may be bare or a dry circular-finned tube;
-  active wet/condensing finned outside surfaces remain unsupported;
+- the opposing outside surface may be bare or circular-finned while that side
+  remains dry; simultaneous active outside wet-gas condensation is unsupported
+  because only one exchanger side may have active phase change;
 - at most one side may have active phase change;
 - Shah (1982) does not predict CHF, dryout quality or post-dryout heat
   transfer; warnings expose those applicability limits without clipping;

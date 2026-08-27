@@ -52,6 +52,10 @@ from core.properties.water import (
     water_saturation_liquid_enthalpy,
 )
 from core.heat_transfer.thermal_iteration import ThermalIterationDiagnostics, _evaluate_local_wall_state
+from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_HT_PROVIDER,
+    FinnedTubeDiagnostics,
+)
 from core.common.warnings import ModelWarning, make_warning
 
 from core.phase_change.types import PhaseChangeCapability
@@ -70,6 +74,10 @@ from core.phase_change.wet_gas_enthalpy import (
 )
 from core.phase_change.mass_heat_transfer import condensation_rate
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
+from core.phase_change.wet_finned_surface import (
+    WetFinConvergenceError,
+    solve_wet_finned_surface,
+)
 from core.phase_change import warning_codes as WC
 from core.phase_change.condensation_solver_helpers import (
     condensate_enthalpy_flow,
@@ -82,6 +90,7 @@ from core.phase_change.condensation_solver_helpers import (
 
 if TYPE_CHECKING:
     from core.models.bare_tube import BareTubeHeatExchanger
+    from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
 
 SOURCE = "outside_condensation_solver"
 
@@ -138,6 +147,8 @@ class OutsideCondensationSolution:
     # solution fields.
     wall_temperature_wet_mean: float | None = None
     W_sat_wet_surface: float | None = None
+    wet_finned_surface: "WetFinnedSurfaceResult | None" = None
+    finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
 
 
 def solve_outside_condensation(
@@ -154,6 +165,9 @@ def solve_outside_condensation(
     T_out_inside_init: float,
     T_out_outside_init: float,
     euler_provider: str = "zukauskas",
+    finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
+    finned_condensation_area_fraction: float | None = None,
+    finned_condensation_temperature_offset_K: float = 0.0,
     lewis_number: float = 1.0,
     activation_band_K: float = 0.5,
     max_iterations: int = 50,
@@ -191,11 +205,41 @@ def solve_outside_condensation(
         raise ValueError("relaxation_factor must be in (0, 1].")
     if not outside_capability.capable:
         raise ValueError("solve_outside_condensation requires a capable outside_capability.")
+    if finned_condensation_area_fraction is not None and (
+        not math.isfinite(finned_condensation_area_fraction)
+        or not 0.0 <= finned_condensation_area_fraction <= 1.0
+    ):
+        raise ValueError(
+            "finned_condensation_area_fraction must be None or in [0, 1]."
+        )
+    if (
+        not math.isfinite(finned_condensation_temperature_offset_K)
+        or finned_condensation_temperature_offset_K > 0.0
+    ):
+        raise ValueError(
+            "finned_condensation_temperature_offset_K must be finite and "
+            "<= 0 K."
+        )
 
     bundle = hx.bundle
     A_i = bundle.total_inner_area
     A_o = bundle.total_outer_area
     R_w = hx.tube_wall_resistance()
+    is_circular_finned = (
+        getattr(getattr(bundle.tube, "surface_type", None), "value", None)
+        == "circular_finned"
+    )
+    # The wet radial response can be much stiffer than the established bare
+    # interface when a large fin bank changes latent duty near a whole-HX
+    # temperature pinch.  Cap only this new path's outer fixed-point step;
+    # bare condensation retains its historical user-supplied relaxation
+    # exactly.  The inner radial Newton solve remains undamped at its API
+    # boundary and enforces its own residual-merit line search.
+    outer_relaxation_factor = (
+        min(relaxation_factor, 0.25)
+        if is_circular_finned
+        else relaxation_factor
+    )
 
     W_in = outside_capability.W_in
     assert W_in is not None
@@ -221,6 +265,7 @@ def solve_outside_condensation(
         outside_capability,
     )
     h_in_outside = enthalpy_evaluator.enthalpy(T_in_outside, W_in)
+    finned_wet_zone_fallback_locked = False
 
     for iteration in range(1, max_iterations + 1):
         T_mean_inside = mean_temperature(T_in_inside, T_out_inside)
@@ -243,145 +288,287 @@ def solve_outside_condensation(
             inside_wall_temperature=T_wall_inside_prev,
             outside_wall_temperature=T_wall_outside_prev,
             euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
         )
         all_warnings.extend(local.warnings)
 
         alfa_i = local.alfa_i
-        alfa_o_dry = local.alfa_o
         cp_gas_bulk = local.outside_bulk_props.cp
         R_i = 1.0 / (alfa_i * A_i)
         R_downstream = R_i + R_w
-        R_o_film = 1.0 / (alfa_o_dry * A_o)
+        wet_finned_surface = None
 
-        # --- Partial wet-area estimate for this iteration (fix) ---------
-        T_wall_inlet_est = sensible_only_wall_temperature(
-            T_bulk_wet_gas=T_in_outside,
-            T_bulk_other=T_mean_inside,
-            R_wet_film=R_o_film,
-            R_downstream=R_downstream,
-        )
-        T_wall_outlet_est = sensible_only_wall_temperature(
-            T_bulk_wet_gas=T_out_outside,
-            T_bulk_other=T_mean_inside,
-            R_wet_film=R_o_film,
-            R_downstream=R_downstream,
-        )
-        T_wall_min_raw = min(T_wall_inlet_est, T_wall_outlet_est)
-        T_wall_max_raw = max(T_wall_inlet_est, T_wall_outlet_est)
-        T_shape_mean = 0.5 * (T_wall_min_raw + T_wall_max_raw)
+        if is_circular_finned:
+            # The radial response is the sole outside interface solve for a
+            # wet circular fin.  It consumes the physical Briggs-Young film
+            # coefficient and the already-resolved dry contact/root network;
+            # the whole-HX loop below continues to own outlet enthalpy,
+            # humidity, and water/energy closure.
+            def solve_local_finned_surface(
+                *,
+                condensation_area_fraction: float = 1.0,
+                condensation_temperature_offset_K: float = 0.0,
+            ):
+                try:
+                    return solve_wet_finned_surface(
+                        hx.bundle,
+                        local.resistance_network,
+                        gas_bulk_temperature=T_mean_outside,
+                        inside_bulk_temperature=T_mean_inside,
+                        cp_gas=cp_gas_bulk,
+                        W_bulk=W_mean,
+                        p_total=p_outside,
+                        M_dry=outside_capability.M_dry,
+                        M_h2o=outside_capability.M_condensable,
+                        m_dot_water_vapor_available=m_dot_dry_carrier * W_mean,
+                        lewis_number=lewis_number,
+                        condensation_area_fraction=condensation_area_fraction,
+                        condensation_temperature_offset_K=(
+                            condensation_temperature_offset_K
+                        ),
+                        max_iterations=max_iterations,
+                        temperature_tolerance_K=min(
+                            temperature_tolerance_K,
+                            wall_temperature_tolerance_K,
+                            1.0e-6,
+                        ),
+                        relative_heat_tolerance=min(
+                            relative_Q_tolerance,
+                            1.0e-8,
+                        ),
+                        condensate_tolerance_kg_s=min(
+                            condensate_tolerance_kg_s,
+                            1.0e-10,
+                        ),
+                        relaxation_factor=1.0,
+                    )
+                except WetFinConvergenceError as exc:
+                    enriched = dict(exc.residuals)
+                    enriched.update(
+                        {
+                            "whole_hx_iteration": float(iteration),
+                            "gas_bulk_temperature_K": T_mean_outside,
+                            "inside_bulk_temperature_K": T_mean_inside,
+                            "bulk_water_ratio": W_mean,
+                            "outside_alpha_physical_W_m2K": (
+                                local.alfa_o_physical
+                            ),
+                            "condensation_area_fraction": (
+                                condensation_area_fraction
+                            ),
+                            "condensation_temperature_offset_K": (
+                                condensation_temperature_offset_K
+                            ),
+                        }
+                    )
+                    raise WetFinConvergenceError(
+                        "Whole-HX outside condensation iteration "
+                        f"{iteration} failed its wet circular-fin response: "
+                        f"{exc}",
+                        iterations=exc.iterations,
+                        residuals=enriched,
+                    ) from exc
 
-        # Preserve the inexpensive two-point envelope's span, but centre it
-        # on the current global wall state.  The first iteration has no
-        # coupled wall iterate yet and therefore retains the sensible-only
-        # midpoint; later iterations use the previous relaxed global wall
-        # temperature.  This keeps Tmin/Tmean/Tmax on one consistent state
-        # without introducing a spatial wall model.
-        T_wall_mean_reference = (
-            T_wall_outside_prev
-            if T_wall_outside_prev is not None
-            else T_shape_mean
-        )
-        wall_envelope_shift = T_wall_mean_reference - T_shape_mean
-        T_wall_min_iter = T_wall_min_raw + wall_envelope_shift
-        T_wall_max_iter = T_wall_max_raw + wall_envelope_shift
-
-        dew_point_local = local_dew_point_or_triple_point(
-            outside_capability, W_mean, p_wet_gas=p_outside,
-        )
-
-        wet_fraction_estimate = estimate_wet_surface_fraction(
-            dew_point_temperature=dew_point_local,
-            wall_temperature_min=T_wall_min_iter,
-            wall_temperature_mean=T_wall_mean_reference,
-            wall_temperature_max=T_wall_max_iter,
-            temperature_span_tolerance_K=WET_FRACTION_SPAN_TOLERANCE_K,
-            activation_band_K=activation_band_K,
-        )
-        wet_surface_fraction_calculated = wet_fraction_estimate.wet_surface_fraction
-        if iteration == 1:
+            finned_wet_zone_fallback_used = (
+                finned_wet_zone_fallback_locked
+            )
+            if finned_wet_zone_fallback_locked:
+                wet_finned_surface = solve_local_finned_surface(
+                    condensation_area_fraction=(
+                        finned_condensation_area_fraction
+                    ),
+                    condensation_temperature_offset_K=(
+                        finned_condensation_temperature_offset_K
+                    ),
+                )
+            else:
+                wet_finned_surface = solve_local_finned_surface()
+            if (
+                not finned_wet_zone_fallback_locked
+                and wet_finned_surface.m_dot_condensate == 0.0
+                and finned_condensation_area_fraction is not None
+                and finned_condensation_area_fraction > 0.0
+                and (
+                    finned_condensation_area_fraction < 1.0
+                    or finned_condensation_temperature_offset_K < 0.0
+                )
+            ):
+                # A cold endpoint can activate the global 0D regime while
+                # its bulk-mean radial field remains entirely dry.  Reuse the
+                # dry onset envelope's area fraction and representative cold-
+                # zone offset for mass/latent sources only.  This is the same
+                # linear 0D envelope convention as the established bare wet
+                # solver, not longitudinal marching or a pass/row map.
+                wet_finned_surface = solve_local_finned_surface(
+                    condensation_area_fraction=(
+                        finned_condensation_area_fraction
+                    ),
+                    condensation_temperature_offset_K=(
+                        finned_condensation_temperature_offset_K
+                    ),
+                )
+                finned_wet_zone_fallback_used = True
+                finned_wet_zone_fallback_locked = True
+            alfa_o_dry = local.alfa_o_physical
+            T_wall_mean = wet_finned_surface.core_wall_temperature
+            Q_sensible = wet_finned_surface.Q_sensible
+            Q_latent = wet_finned_surface.Q_latent
+            Q_total = wet_finned_surface.Q_total
+            m_dot_condensate = wet_finned_surface.m_dot_condensate
+            T_wall_wet_mean_new = wet_finned_surface.wall_temperature_wet_mean
+            W_sat_wet_surface = wet_finned_surface.W_sat_wet_surface
+            wet_surface_fraction_calculated = (
+                wet_finned_surface.wet_surface_fraction
+            )
             wet_surface_fraction_new = wet_surface_fraction_calculated
+            A_wet = wet_finned_surface.wet_area
+            wet_surface_fraction_method = (
+                "nonlinear_radial_annular_fin_fvm_plus_primary_surface"
+                + (
+                    "_with_0d_endpoint_wet_zone_fallback"
+                    if finned_wet_zone_fallback_used
+                    else ""
+                )
+            )
+            exposed_temperatures = (
+                wet_finned_surface.primary_surface_temperature,
+                wet_finned_surface.fin_base_temperature,
+                wet_finned_surface.fin_tip_temperature,
+            )
+            T_wall_min_iter = min(exposed_temperatures) + (
+                wet_finned_surface.condensation_temperature_offset_K
+            )
+            T_wall_max_iter = max(exposed_temperatures)
         else:
-            wet_surface_fraction_new = wet_surface_fraction + relaxation_factor * (
-                wet_surface_fraction_calculated - wet_surface_fraction
+            # Preserve the established bare-tube wet-interface equations and
+            # convergence path: only circular-finned surfaces branch above.
+            alfa_o_dry = local.alfa_o
+            R_o_film = 1.0 / (alfa_o_dry * A_o)
+            T_wall_inlet_est = sensible_only_wall_temperature(
+                T_bulk_wet_gas=T_in_outside,
+                T_bulk_other=T_mean_inside,
+                R_wet_film=R_o_film,
+                R_downstream=R_downstream,
             )
-        # Numerical safety clamp only -- estimate_wet_surface_fraction
-        # already returns a value in [0, 1]; relaxing between two such
-        # values cannot leave the interval, this only guards float noise.
-        wet_surface_fraction_new = max(0.0, min(1.0, wet_surface_fraction_new))
-
-        T_wall_wet_mean_calculated = (
-            wet_fraction_estimate.wall_temperature_wet_mean
-        )
-        # Use the helper's temperature directly.  It already changes
-        # smoothly with the shifted linear envelope, while additionally
-        # relaxing it would add a second lag to the tightly bounded outer
-        # solve.  ``None`` remains a state marker and is never relaxed.
-        T_wall_wet_mean_new = T_wall_wet_mean_calculated
-        if T_wall_wet_mean_new is None:
-            # A dry target has no temperature at which wet equilibrium can
-            # be evaluated.  Keep area and temperature as one consistent
-            # discrete state instead of retaining a relaxed positive area
-            # paired with ``None``.
-            wet_surface_fraction_new = 0.0
-
-        A_wet = A_o * wet_surface_fraction_new
-        if not (0.0 <= A_wet <= A_o):
-            raise ValueError(
-                f"outside_condensation_solver: A_wet={A_wet:.6g} m2 outside "
-                f"the valid range [0, {A_o:.6g}] m2."
+            T_wall_outlet_est = sensible_only_wall_temperature(
+                T_bulk_wet_gas=T_out_outside,
+                T_bulk_other=T_mean_inside,
+                R_wet_film=R_o_film,
+                R_downstream=R_downstream,
             )
-
-        if (
-            A_wet > 0.0
-            and T_wall_wet_mean_new is not None
-            and T_wall_wet_mean_new <= WATER_TRIPLE_POINT_TEMPERATURE_K
-        ):
-            raise FrostingNotSupportedError(
-                "outside_condensation_solver: representative wet-surface "
-                f"temperature {T_wall_wet_mean_new:.3f} K is at/below the "
-                f"water triple point ({WATER_TRIPLE_POINT_TEMPERATURE_K} K); "
-                "frost/ice condensate is not supported in v0.6.0."
+            T_wall_min_raw = min(T_wall_inlet_est, T_wall_outlet_est)
+            T_wall_max_raw = max(T_wall_inlet_est, T_wall_outlet_est)
+            T_shape_mean = 0.5 * (T_wall_min_raw + T_wall_max_raw)
+            T_wall_mean_reference = (
+                T_wall_outside_prev
+                if T_wall_outside_prev is not None
+                else T_shape_mean
             )
+            wall_envelope_shift = T_wall_mean_reference - T_shape_mean
+            T_wall_min_iter = T_wall_min_raw + wall_envelope_shift
+            T_wall_max_iter = T_wall_max_raw + wall_envelope_shift
 
-        (
-            T_wall_mean,
-            Q_sensible,
-            Q_latent,
-            m_dot_condensate,
-            W_sat_wet_surface,
-        ) = solve_condensing_interface_state(
-            alfa_dry=alfa_o_dry,
-            A_total=A_o,
-            A_wet=A_wet,
-            T_wall_wet_mean=T_wall_wet_mean_new,
-            T_bulk_wet_gas=T_mean_outside,
-            T_bulk_other=T_mean_inside,
-            R_downstream=R_downstream,
-            cp_gas=cp_gas_bulk,
-            W_bulk=W_mean,
-            p_wet_gas=p_outside,
-            M_dry=outside_capability.M_dry,
-            m_dot_water_vapor_available=m_dot_dry_carrier * W_mean,
-            lewis_number=lewis_number,
-        )
-
-        if T_wall_mean <= WATER_TRIPLE_POINT_TEMPERATURE_K:
-            raise FrostingNotSupportedError(
-                f"outside_condensation_solver: global wall temperature "
-                f"{T_wall_mean:.3f} K is at/below the water triple point "
-                f"({WATER_TRIPLE_POINT_TEMPERATURE_K} K); frost/ice "
-                "condensate is not supported in v0.6.0."
+            dew_point_local = local_dew_point_or_triple_point(
+                outside_capability,
+                W_mean,
+                p_wet_gas=p_outside,
             )
+            wet_fraction_estimate = estimate_wet_surface_fraction(
+                dew_point_temperature=dew_point_local,
+                wall_temperature_min=T_wall_min_iter,
+                wall_temperature_mean=T_wall_mean_reference,
+                wall_temperature_max=T_wall_max_iter,
+                temperature_span_tolerance_K=WET_FRACTION_SPAN_TOLERANCE_K,
+                activation_band_K=activation_band_K,
+            )
+            wet_surface_fraction_calculated = (
+                wet_fraction_estimate.wet_surface_fraction
+            )
+            if iteration == 1:
+                wet_surface_fraction_new = wet_surface_fraction_calculated
+            else:
+                wet_surface_fraction_new = (
+                    wet_surface_fraction
+                    + relaxation_factor
+                    * (
+                        wet_surface_fraction_calculated
+                        - wet_surface_fraction
+                    )
+                )
+            wet_surface_fraction_new = max(
+                0.0,
+                min(1.0, wet_surface_fraction_new),
+            )
+            T_wall_wet_mean_new = (
+                wet_fraction_estimate.wall_temperature_wet_mean
+            )
+            if T_wall_wet_mean_new is None:
+                wet_surface_fraction_new = 0.0
 
-        Q_total = Q_sensible + Q_latent
+            A_wet = A_o * wet_surface_fraction_new
+            if not (0.0 <= A_wet <= A_o):
+                raise ValueError(
+                    "outside_condensation_solver: "
+                    f"A_wet={A_wet:.6g} m2 outside the valid range "
+                    f"[0, {A_o:.6g}] m2."
+                )
+            if (
+                A_wet > 0.0
+                and T_wall_wet_mean_new is not None
+                and T_wall_wet_mean_new
+                <= WATER_TRIPLE_POINT_TEMPERATURE_K
+            ):
+                raise FrostingNotSupportedError(
+                    "outside_condensation_solver: representative wet-surface "
+                    f"temperature {T_wall_wet_mean_new:.3f} K is at/below "
+                    "the water triple point "
+                    f"({WATER_TRIPLE_POINT_TEMPERATURE_K} K); frost/ice "
+                    "condensate is not supported in v0.6.0."
+                )
+
+            (
+                T_wall_mean,
+                Q_sensible,
+                Q_latent,
+                m_dot_condensate,
+                W_sat_wet_surface,
+            ) = solve_condensing_interface_state(
+                alfa_dry=alfa_o_dry,
+                A_total=A_o,
+                A_wet=A_wet,
+                T_wall_wet_mean=T_wall_wet_mean_new,
+                T_bulk_wet_gas=T_mean_outside,
+                T_bulk_other=T_mean_inside,
+                R_downstream=R_downstream,
+                cp_gas=cp_gas_bulk,
+                W_bulk=W_mean,
+                p_wet_gas=p_outside,
+                M_dry=outside_capability.M_dry,
+                m_dot_water_vapor_available=m_dot_dry_carrier * W_mean,
+                lewis_number=lewis_number,
+            )
+            if T_wall_mean <= WATER_TRIPLE_POINT_TEMPERATURE_K:
+                raise FrostingNotSupportedError(
+                    "outside_condensation_solver: global wall temperature "
+                    f"{T_wall_mean:.3f} K is at/below the water triple point "
+                    f"({WATER_TRIPLE_POINT_TEMPERATURE_K} K); frost/ice "
+                    "condensate is not supported in v0.6.0."
+                )
+            Q_total = Q_sensible + Q_latent
+            wet_surface_fraction_method = wet_fraction_estimate.method
+
         W_out_new = max(0.0, W_in - m_dot_condensate / m_dot_dry_carrier)
 
-        condensate_enthalpy_rate = condensate_enthalpy_flow(
-            m_dot_condensate=m_dot_condensate,
-            condensation_mass_tolerance=condensate_tolerance_kg_s,
-            wet_surface_fraction=wet_surface_fraction_new,
-            wet_area=A_wet,
-            wall_temperature_wet_mean=T_wall_wet_mean_new,
+        condensate_enthalpy_rate = (
+            wet_finned_surface.condensate_enthalpy_rate
+            if wet_finned_surface is not None
+            else condensate_enthalpy_flow(
+                m_dot_condensate=m_dot_condensate,
+                condensation_mass_tolerance=condensate_tolerance_kg_s,
+                wet_surface_fraction=wet_surface_fraction_new,
+                wet_area=A_wet,
+                wall_temperature_wet_mean=T_wall_wet_mean_new,
+            )
         )
         h_drained_per_kg_dry = condensate_enthalpy_rate / m_dot_dry_carrier
         h_out_target = h_in_outside - Q_total / m_dot_dry_carrier - h_drained_per_kg_dry
@@ -399,10 +586,18 @@ def solve_outside_condensation(
         cp_inside_mean = inside_provider.at(T=T_mean_inside, p=p_inside).cp
         T_out_inside_new = T_in_inside + Q_total / (m_dot_inside * cp_inside_mean)
 
-        T_out_inside_relaxed = T_out_inside + relaxation_factor * (T_out_inside_new - T_out_inside)
-        T_out_outside_relaxed = T_out_outside + relaxation_factor * (T_out_outside_new - T_out_outside)
-        W_out_relaxed = W_out + relaxation_factor * (W_out_new - W_out)
-        T_wall_inside_new = T_mean_inside + Q_total * R_i
+        T_out_inside_relaxed = T_out_inside + outer_relaxation_factor * (
+            T_out_inside_new - T_out_inside
+        )
+        T_out_outside_relaxed = T_out_outside + outer_relaxation_factor * (
+            T_out_outside_new - T_out_outside
+        )
+        W_out_relaxed = W_out + outer_relaxation_factor * (W_out_new - W_out)
+        T_wall_inside_new = (
+            wet_finned_surface.inside_wall_temperature
+            if wet_finned_surface is not None
+            else T_mean_inside + Q_total * R_i
+        )
 
         finite_values = [
             Q_sensible,
@@ -442,12 +637,18 @@ def solve_outside_condensation(
                 T_wall_wet_mean_new - T_wall_wet_mean_prev
             )
 
-        wall_envelope_center_residual = abs(
-            T_wall_mean - 0.5 * (T_wall_min_iter + T_wall_max_iter)
-        )
-        wall_envelope_contains_mean = (
-            T_wall_min_iter <= T_wall_mean <= T_wall_max_iter
-        )
+        if wet_finned_surface is None:
+            wall_envelope_center_residual = abs(
+                T_wall_mean - 0.5 * (T_wall_min_iter + T_wall_max_iter)
+            )
+            wall_envelope_contains_mean = (
+                T_wall_min_iter <= T_wall_mean <= T_wall_max_iter
+            )
+        else:
+            # The finned bounds are radial exposed-metal extrema, not the
+            # centred endpoint-envelope proxy used by the bare 0D model.
+            wall_envelope_center_residual = 0.0
+            wall_envelope_contains_mean = True
         mass_balance_residual = abs(
             m_dot_dry_carrier * (W_in - W_out_relaxed)
             - m_dot_condensate
@@ -481,6 +682,14 @@ def solve_outside_condensation(
                 wet_surface_fraction_new - wet_surface_fraction
             ),
         }
+        if wet_finned_surface is not None:
+            residuals["outer_relaxation_factor"] = outer_relaxation_factor
+            residuals.update(
+                {
+                    f"wet_finned_{name}": value
+                    for name, value in wet_finned_surface.residuals.items()
+                }
+            )
 
         solution_state = dict(
             T_out_inside=T_out_inside_relaxed,
@@ -498,7 +707,7 @@ def solve_outside_condensation(
             wall_temperature_max=T_wall_max_iter,
             wall_temperature_wet_mean=T_wall_wet_mean_new,
             wet_surface_fraction=wet_surface_fraction_new,
-            wet_surface_fraction_method=wet_fraction_estimate.method,
+            wet_surface_fraction_method=wet_surface_fraction_method,
             wet_area=A_wet,
             W_sat_wet_surface=W_sat_wet_surface,
             outside_bulk_props=local.outside_bulk_props,
@@ -509,6 +718,8 @@ def solve_outside_condensation(
             outside_nusselt_base=local.outside_nusselt_base,
             outside_nusselt=local.outside_nusselt,
             outside_wall_property_correction=local.outside_wall_property_correction,
+            wet_finned_surface=wet_finned_surface,
+            finned_tube_diagnostics=local.finned_tube_diagnostics,
         )
 
         Q_total_prev = Q_total
@@ -542,7 +753,43 @@ def solve_outside_condensation(
     if not solution_state:
         raise ValueError("outside_condensation_solver: failed to produce a complete iterate.")
 
-    if not (
+    final_wet_finned_surface = solution_state["wet_finned_surface"]
+    if (
+        final_wet_finned_surface is not None
+        and final_wet_finned_surface.m_dot_condensate <= 0.0
+    ):
+        # The dry-baseline onset screen (a cheap two-point linear envelope)
+        # activated this call, but the converged nonlinear radial field --
+        # resolved with the same physical fin conduction/efficiency that
+        # makes the coldest point warmer than that linear estimate -- found
+        # no point below the local saturation line, even after the 0D
+        # endpoint wet-zone fallback. ``solve_wet_finned_surface`` only ever
+        # returns a genuinely converged, internally consistent iterate (an
+        # unconverged nonlinear solve raises ``WetFinConvergenceError``
+        # instead, propagated separately); a converged zero-condensate
+        # result is therefore a legitimate near-boundary collapse, not a
+        # contradiction. Report it as a diagnostic warning and let the
+        # caller decide how to represent the regime, instead of failing an
+        # otherwise physically valid AUTO call.
+        all_warnings.append(
+            make_warning(
+                code=WC.PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY,
+                message=(
+                    "outside_condensation_solver: the locked active wet "
+                    "circular-fin regime converged with zero condensate "
+                    "after both the bulk-mean radial solve and its "
+                    "dry-envelope 0D wet-zone fallback. The nonlinear "
+                    "radial field is internally self-consistent (zero "
+                    "latent duty matches zero condensate); this call "
+                    "reports a converged sensible-only state rather than "
+                    "forcing an active wet result."
+                ),
+                source=SOURCE,
+                severity="warning",
+            )
+        )
+
+    if solution_state["wet_finned_surface"] is None and not (
         solution_state["wall_temperature_min"]
         <= solution_state["T_wall_outside"]
         <= solution_state["wall_temperature_max"]
@@ -569,27 +816,43 @@ def solve_outside_condensation(
         )
 
     A_o_local = A_o
-    T_bulk_outside_final = mean_temperature(T_in_outside, solution_state["T_out_outside"])
-    delta_T_film = T_bulk_outside_final - solution_state["T_wall_outside"]
-    alfa_floor = solution_state["alfa_o_dry"] * 1.0e-3
-    min_delta_T = 1.0e-3
-    if abs(delta_T_film) < min_delta_T:
-        alfa_o_effective = max(solution_state["alfa_o_dry"], alfa_floor)
-        all_warnings.append(
-            make_warning(
-                code=WC.EFFECTIVE_OUTSIDE_ALPHA_LIMITED,
-                message=(
-                    "outside_condensation_solver: bulk-to-surface temperature "
-                    f"difference ({delta_T_film:.3e} K) is too small to "
-                    "reconstruct alfa_outside_effective from Q_total; "
-                    "falling back to alfa_outside_dry."
-                ),
-                source=SOURCE,
-                severity="info",
-            )
+    if final_wet_finned_surface is not None:
+        # Reuse the coefficient reconstructed by the same converged radial
+        # response.  Its explicit name/basis prevents latent duty from being
+        # mistaken for the physical Briggs-Young sensible film coefficient.
+        alfa_o_effective = (
+            final_wet_finned_surface
+            .outside_alpha_wet_effective_gross_core_basis
         )
     else:
-        alfa_o_effective = solution_state["Q_total"] / (A_o_local * delta_T_film)
+        T_bulk_outside_final = mean_temperature(
+            T_in_outside,
+            solution_state["T_out_outside"],
+        )
+        delta_T_film = (
+            T_bulk_outside_final - solution_state["T_wall_outside"]
+        )
+        alfa_floor = solution_state["alfa_o_dry"] * 1.0e-3
+        min_delta_T = 1.0e-3
+        if abs(delta_T_film) < min_delta_T:
+            alfa_o_effective = max(solution_state["alfa_o_dry"], alfa_floor)
+            all_warnings.append(
+                make_warning(
+                    code=WC.EFFECTIVE_OUTSIDE_ALPHA_LIMITED,
+                    message=(
+                        "outside_condensation_solver: bulk-to-surface "
+                        f"temperature difference ({delta_T_film:.3e} K) is "
+                        "too small to reconstruct alfa_outside_effective "
+                        "from Q_total; falling back to alfa_outside_dry."
+                    ),
+                    source=SOURCE,
+                    severity="info",
+                )
+            )
+        else:
+            alfa_o_effective = (
+                solution_state["Q_total"] / (A_o_local * delta_T_film)
+            )
 
     R_i_final = 1.0 / (solution_state["alfa_i"] * A_i)
     R_o_effective = 1.0 / (alfa_o_effective * A_o_local)
@@ -642,6 +905,8 @@ def solve_outside_condensation(
         outside_wall_props=solution_state["outside_wall_props"],
         diagnostics=diagnostics,
         warnings=tuple(all_warnings),
+        wet_finned_surface=solution_state["wet_finned_surface"],
+        finned_tube_diagnostics=solution_state["finned_tube_diagnostics"],
     )
 
 

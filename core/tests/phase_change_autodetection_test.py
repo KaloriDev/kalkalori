@@ -75,6 +75,15 @@ def test_dry_provider_has_no_capability_and_matches_sensible_only() -> None:
     assert result.T_out_inside == expected.T_out_inside
     assert result.T_out_outside == expected.T_out_outside
 
+    # Fix (v0.7.5 patch, spec section 6): a non-active PhaseChangeResult must
+    # expose the real duty, not a hardcoded zero -- clients should not have
+    # to branch on `active` before reading Q_sensible/Q_total.
+    for pc in (result.inside_phase_change, result.outside_phase_change):
+        assert pc.Q_sensible == pytest.approx(result.q)
+        assert pc.Q_total == pytest.approx(result.q)
+        assert pc.Q_latent == 0.0
+        assert pc.m_dot_condensate == 0.0
+
 
 # ---------------------------------------------------------------------------
 # Wet gas, capable, but the dry baseline never reaches the dew point.
@@ -97,6 +106,13 @@ def test_wet_gas_capable_but_no_condensation_matches_sensible_only() -> None:
     assert result.q == expected.q
     assert result.T_out_inside == expected.T_out_inside
     assert result.T_out_outside == expected.T_out_outside
+
+    # Fix (v0.7.5 patch, spec section 6): capable-but-inactive AUTO must
+    # still expose the real sensible duty on both sides.
+    assert pc.Q_sensible == pytest.approx(result.q)
+    assert pc.Q_total == pytest.approx(result.q)
+    assert result.inside_phase_change.Q_sensible == pytest.approx(result.q)
+    assert result.inside_phase_change.Q_total == pytest.approx(result.q)
 
 
 # ---------------------------------------------------------------------------

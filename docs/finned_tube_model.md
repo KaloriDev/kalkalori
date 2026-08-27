@@ -1,7 +1,8 @@
-# Circular-Finned-Tube Model (v0.7.0; applicability extended through v0.7.4)
+# Circular-Finned-Tube Model (v0.7.0; applicability extended through v0.7.5)
 
 This document describes the v0.7.0 release-candidate dry
-circular-finned-tube model pending independent reference validation.
+circular-finned-tube model and its v0.7.5 wet-surface extension, pending
+independent reference validation.
 It is a 0D engineering model with explicitly declared geometry and
 correlation boundaries. v0.7.2 adds a practical dimensionless
 `fin_contact_efficiency` alternative to the explicit `fin_contact_resistance`
@@ -9,13 +10,16 @@ input; see [Fin/root contact input](#finroot-contact-input) below. v0.7.4
 makes positive one- to three-row Briggs--Young requests calculable with an
 explicit unvalidated-extrapolation warning. Neither change introduces a new
 correlation or changes the fin-efficiency, root-conduction, Briggs--Young or
-Robinson--Briggs equations described here.
+Robinson--Briggs equations described here. v0.7.5 adds nonlinear H2O
+condensation from a wet gas on the exposed primary/root surface and annular
+fins without changing the legacy dry route.
 
 ## Scope
 
 The model covers round core tubes with individual, full circular fins and a
-dry, single-phase gas in crossflow. A continuous helical fin is represented
-as an equivalent periodic train of complete annular fins. The 0D model uses
+dry single-phase gas, or a gas-phase mixture with H2O as its single
+condensable species, in crossflow. A continuous helical fin is represented as
+an equivalent periodic train of complete annular fins. The 0D model uses
 the fractional count `length_effective / fin_pitch`; it does not round the
 number of fins and therefore does not introduce area jumps when tube length
 changes.
@@ -25,10 +29,12 @@ banks.
 `TubeBundle(layout="inline")` remains valid public geometry, but the built-in
 Briggs--Young and Robinson--Briggs providers reject it as unsupported.
 
-Segmented, serrated, wavy and plate fins; elliptical or flattened tubes; wet
-surfaces; condensation; frost/ice; condensate retention or carry-over;
-radiation; and detailed fin-to-tube joint mechanics are outside this model.
-No smooth-tube correlation is used as a fallback.
+Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
+frost/ice; acid or multiple-species condensation; condensate retention,
+flooding, bridging, re-evaporation, carry-over or re-entrainment; drainage
+geometry; wet pressure-drop correction; radiation; and detailed fin-to-tube
+joint mechanics are outside this model. No smooth-tube correlation is used as
+a fallback.
 
 ## Public geometry
 
@@ -369,16 +375,232 @@ different meanings and must not be compared interchangeably.
   whole outside path. The whole-exchanger source of truth is `UA`, with
   `U_gross_outside = UA/A_outside_gross`.
 
+During active condensation, `outside_alpha_physical` keeps exactly the same
+sensible-film meaning. Latent heat is not folded into that field. The wet
+surface result additionally reports
+`outside_alpha_wet_effective_gross_core_basis`, defined diagnostically as
+
+```text
+outside_alpha_wet_effective_gross_core_basis
+    = Q_total / [A_outside_gross (T_gas,bulk - T_core_wall)]
+```
+
+This is a named reconstruction on the authoritative gross outside area and
+the bulk-gas-to-core-wall driving-force basis, not a new physical film
+correlation. It is the standard `Q = h A deltaT` coefficient definition used
+as a reporting identity (Incropera et al., *Fundamentals of Heat and Mass
+Transfer*), not an empirical wet-surface law. Sensible, latent and total
+duties remain separate. The existing dry `outside_alpha_effective_gross`
+field is not redefined.
+
 For compatibility, `OutsideThermalDispatchResult.alpha` and
 `FinnedTubeDiagnostics.outside_htc` remain aliases for the **physical** film
 HTC. Generic top-level `alfa_o` / `outside_alfa_mean` fields instead report
 the **effective gross-area** value (the values coincide for a plain tube).
+
+## Wet annular-fin condensation (v0.7.5)
+
+`PhaseChangeMode.AUTO` first evaluates the dry surface-temperature envelope.
+If no condensation is possible, execution stays on the unchanged v0.7.4 dry
+`CircularFinnedTube` route. If the outside provider declares a gas mixture
+with H2O condensation capability, the existing whole-exchanger wet-gas solver
+calls a radial wet-surface component. The outer 0D iteration remains
+authoritative for gas outlet temperature, outlet humidity ratio, dry-carrier
+and water-vapor flows, condensate availability and the overall enthalpy
+balance. `PhaseChangeMode.DISABLED` still returns the dry result and warns
+when phase change would have been possible.
+
+### Local heat and mass transfer
+
+The wet solver retains the dry annular-fin finite-volume geometry: linear
+radial conduction through a constant or linearly tapered fin, both exposed
+faces, and the physical tip boundary. Each surface control volume at
+temperature `T_s` uses
+
+```text
+h_m = (h_o / cp_gas) Le**(-2/3)
+m_cond'' = h_m max[W_bulk - W_sat(T_s, p), 0]
+q_sensible'' = h_o (T_gas,bulk - T_s)
+q_latent'' = m_cond'' h_fg(T_s)
+q_total'' = q_sensible'' + q_latent''
+```
+
+The `h_m` expression and dry-carrier humidity-ratio basis are the existing
+Chilton--Colburn analogy documented under [Outside Water
+Condensation](references.md#outside-water-condensation-v060). The coupled
+wet-annular-fin source form follows Sharqawy, Moinuddin & Zubair (2012) and
+Sharqawy & Zubair (2007); the partial-wet radial treatment is also consistent
+with Rosario & Rahman (1999). `W_sat` and `h_fg` come from the existing IAPWS
+water-property path. Full bibliographic details and DOI links are in
+[Wet annular fins (v0.7.5)](references.md#wet-annular-fins-v075).
+
+A cell for which `W_bulk <= W_sat` has exactly zero condensate and latent
+source and therefore behaves as a dry-fin cell. The wet/dry boundary is never
+an input. The nonlinear temperature and saturation field determines one of
+the typed states `DRY`, `PARTIALLY_WET` or `FULLY_WET`.
+
+For a partially wet fin, `wet_dry_boundary_radius` is the single radial
+dew-point crossing obtained by linearly interpolating the humidity-ratio
+driving force between adjacent radial temperature nodes. The wet face area is
+integrated from the root radius to that crossing,
+
+```text
+A_wet,faces = 2 pi S (r_boundary**2 - r_root**2)
+```
+
+where `S` is the tapered-face slope factor defined under [Periodic areas and
+volume](#periodic-areas-and-volume). The tip area is wet only when the tip
+itself is below its local dew point. The radius is `None` for dry and fully
+wet fins. It is also `None` in the special aggregate-partial case described
+below when the representative cold-zone fin is wet to its tip but only part
+of the 0D endpoint envelope is wet: no radial crossing exists to report.
+This radial boundary and area convention follows the partial-wet radial-fin
+formulation of Sharqawy & Zubair (2007) and Rosario & Rahman (1999).
+
+The dry onset audit spans inlet/outlet endpoint probes, whereas the nonlinear
+radial response normally uses one bulk-mean state. If that mean radial field
+is completely dry after a cold endpoint has already activated `AUTO`, the
+solver reuses the established linear 0D wall-envelope estimate as a bounded
+cold-zone fallback. Its area fraction multiplies mass/latent sources, and its
+representative wet-zone temperature is applied to saturation, latent heat and
+drained-liquid enthalpy; sensible convection remains on the full area at the
+solved bulk-mean metal temperature. This onset-consistency fallback is exposed
+through `condensation_area_fraction`,
+`condensation_temperature_offset_K`, assumptions and the wet-area warning. It
+does not march temperatures axially and does not use rows, circuits or
+`n_passes_transverse` as thermal segments.
+
+### AUTO regime and non-active results
+
+`PhaseChangeMode.AUTO` legitimately resolves to any of `DRY`, `NEAR_ONSET`,
+`PARTIALLY_WET` or `FULLY_WET`; `outside_phase_change.active == False` is a
+valid converged result (the dry or near-onset regime), never a calculation
+failure. The near-onset activation band exists so a borderline operating
+point does not oscillate between the dry and wet solve on repeated calls
+close to the dew point; it is deliberately held on the dry route rather than
+shrunk to force activation. A regime-independent result must not be read by
+first checking `active`: whenever phase change was evaluated,
+`Q_sensible`/`Q_total` on the returned `PhaseChangeResult` always equal the
+real exchanger duty (`HXSimulationResult.q` / `HXRatingResult.Q_required`)
+and `Q_latent`/`m_dot_condensate` are `0.0` for a non-active result, exactly
+as for any other side/provider without condensation capability.
+
+If the dry-baseline onset screen (a cheap two-point linear wall-temperature
+envelope) activates `AUTO`, but the converged nonlinear radial field --
+including its 0D endpoint wet-zone fallback -- finds no point below the
+local saturation line, the call returns the same dry AUTO result described
+above together with a `PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY` warning,
+instead of raising. This is a legitimate near-boundary collapse (the coarse
+onset screen is more conservative than the resolved fin-efficiency field),
+not a solver contradiction: `solve_wet_finned_surface` only ever returns a
+converged, internally consistent iterate (an unconverged nonlinear solve
+raises `WetFinConvergenceError` instead, which is not converted to a dry
+result).
+
+### Primary surface, area and contact accounting
+
+The exposed primary/root cylinder is a separate nonlinear surface node and
+can condense independently of the fin. The authoritative area network closes
+without overlap:
+
+```text
+Q_outside = Q_primary + Q_fin
+m_dot_condensate = m_dot_condensate_primary + m_dot_condensate_fin
+A_wet = A_wet,primary + A_wet,fin
+```
+
+Primary and fin duties each retain sensible, latent and total components.
+These are conservation identities on the disjoint authoritative primary and
+fin areas. If `external_area_per_length` is supplied, the physical per-fin
+temperature field is retained while an equivalent fin count is derived from
+the authoritative fin area; this preserves the existing override without
+double-counting area.
+
+The v0.7.2 contact precedence is unchanged:
+
+```text
+explicit fin_contact_resistance (including 0.0)
+    > fin_contact_efficiency
+    > ideal-contact default
+```
+
+The established dry operating-point network first resolves the equivalent
+contact resistance, then the wet nonlinear chain applies that loss exactly
+once. For `D_root == D_o`, the exposed primary surface bypasses the contact
+affected fin branch. For `D_root > D_o`, root conduction and contact are
+common series terms before the primary and fin branches. Humidity does not
+alter mechanical contact quality, and no separate wet contact efficiency is
+defined.
+
+### Numerical method and diagnostics
+
+The default wet mesh has 160 radial cells. A latent-free linear solve supplies
+the dry-field initialization, followed by a damped Newton solve of the coupled
+tridiagonal heat/mass residual. A residual-RMS backtracking line search keeps
+the step within the bulk-temperature bounds. At the non-differentiable
+dew-point switch, a frozen-latent-source Picard direction is tried if the
+Newton direction cannot reduce the merit norm; the same full nonlinear
+residual is still used for acceptance and final convergence. Convergence
+requires scale-aware maximum heat-equation and energy residuals, a bounded
+temperature step and a bounded condensate-rate step. The
+default iteration limit is 80; failure raises `WetFinConvergenceError` with
+the iteration count and last residuals instead of returning an unconverged
+field. Production code requires neither NumPy nor SciPy.
+
+IAPWS saturation ratio, latent heat and saturated-liquid condensate enthalpy
+are evaluated from the authoritative project functions and linearly
+interpolated on a deterministic 0.25 K temperature grid. The fin response is
+then coupled to the existing whole-HX convergence controls and water-
+availability bound.
+
+`WetFinnedSurfaceResult`, reachable as `wet_finned_surface` from `HXResult`,
+`HXSimulationResult` and `HXRatingResult` (and as `wet_surface` inside the
+finned diagnostics), reports at least:
+
+- the fin wet state, wet fraction and wet/dry boundary radius;
+- wet and dry fin area, plus wet primary and whole-surface area/fraction;
+- fin and primary sensible, latent and total duties and condensate rates;
+- fin-base, fin-tip, primary, root, core-wall, exposed-area-mean and wet-mean
+  temperatures; generic phase-change min/mean/max use exposed-surface values,
+  while the core temperature remains explicitly nested for the wet-effective
+  coefficient basis;
+- physical and explicitly named wet-effective coefficients and their bases;
+- contact topology and resolved contact-input diagnostics;
+- iterations, temperature/heat/mass residuals, split mass/energy errors and
+  assumptions. Applicable structured integration warnings, including the
+  dry-reference-only pressure-drop warning, are propagated through the
+  authoritative phase-change and finned-diagnostics results.
+
+The generic `outside_phase_change` result remains the authoritative
+whole-side condensate, sensible/latent/total duty, outlet composition and
+mass/energy balance. The nested wet-finned result supplies only the
+geometry-specific primary/fin decomposition of that same converged state.
+For Rating, the specified temperature program and closed enthalpy balance set
+the authoritative whole-side duty and condensate rate. The converged radial
+response sets temperatures, wet state/area and the primary/fin distribution;
+that distribution is normalized to the closed Rating totals, with its raw
+transport duty/rate, gaps and scale factors retained in `residuals` and the
+normalization declared in `assumptions`.
+When `Rating(..., include_simulation=True)` is requested, the achievable-duty
+bridge runs the public phase-aware Simulation once after Rating convergence;
+it is a separate achievable operating point and is never a dry internal
+Rating snapshot.
+
+All formed condensate is removed from the modelled gas phase as fully drained
+saturated liquid. No liquid inventory is retained. The existing dry
+Robinson--Briggs bank pressure loss continues to be calculated, but active
+wet-finned results expose it as `outside_dp_dry_reference`, set
+`wet_pressure_drop_supported = False` and `outside_dp_reference_only = True`,
+and emit
+`circular_finned_tube_wet_pressure_drop_reference_only`. It must not be read
+as the actual pressure drop of a wet bank.
 
 ## Correlations and applicability
 
 | Model | Source | Application | Reference diameter | Reference velocity | Reynolds range | Layout | Area basis | Main limitations |
 |---|---|---|---|---|---:|---|---|---|
 | Annular-fin conduction | Gardner (1945); extended-surface texts | Fin and overall surface efficiency | `D_root` to `D_fin` radial domain | n/a | n/a | Individual full circular fin | Actual two faces plus tip | 1D radial conduction, uniform physical `h_o`, linear taper |
+| Wet annular-fin conduction and condensation | Sharqawy, Moinuddin & Zubair (2012); Sharqawy & Zubair (2007); Rosario & Rahman (1999) | Outside H2O condensation from a non-condensable carrier gas | `D_root` to `D_fin` radial domain | Same Briggs--Young `V_max` basis | Same dry-correlation applicability | Individual full circular fin in the supported staggered bank | Authoritative disjoint primary and fin areas; both faces plus tip | Nonlinear 0D radial field; one condensable; full drainage; no wet hydraulic correction |
 | Briggs--Young (1963) | *Chem. Eng. Prog. Symp. Ser.* 59(41), 1--10 | Dry outside HTC | `D_root` | `V_max` on `A_min` | 1,100--18,000 | Staggered equilateral triangular; positive row count; source banks had 6 and a later recommendation is at least 4 | Physical film coefficient on exposed gross surface; efficiency separate | Air data; 1--3 rows and other gases are unvalidated extrapolations; no inline or row correction |
 | Robinson--Briggs (1966) | *Chem. Eng. Prog. Symp. Ser.* 62(64), 177--184 | Dry bank pressure loss | `D_root` | `V_max` on `A_min` | 2,000--50,000 | Staggered equilateral triangular; at least 4 rows, source banks had 6 | Dynamic pressure based on `V_max`; coefficient is per row | Isothermal air data; materially isosceles layouts are outside the verified v0.7.0 scope |
 
@@ -459,24 +681,36 @@ warning for one to three rows. A 0.1% relative tolerance on `P_d/P_t` accepts
 ordinary rounded dimensions without extending the model to arbitrary
 isosceles geometry.
 
-An active wet or condensing **outside** surface on a `CircularFinnedTube` is
-conservatively rejected with a dedicated controlled unsupported error. The
-existing tube-side evaporation, steam-condensation and wet-gas-condensation
-paths remain available when the finned outside surface is dry; they use the
-same topology-aware outside resistance network. Wet-gas cases also remain
-available as dry sensible calculations when phase change is explicitly
-disabled and the requested state remains valid.
+An active **outside** H2O-condensing surface on a `CircularFinnedTube` is
+supported when the outside capability is a gas mixture with a
+non-condensable carrier and H2O as the single condensable species. The public
+`CircularFinnedTubeWetSurfaceNotSupportedError` remains available for
+genuinely unsupported capability, species, direction or simultaneous phase-
+change combinations rather than being removed. Existing tube-side
+evaporation, steam-condensation and wet-gas-condensation paths remain
+available opposite a dry finned outside surface and use the same topology-
+aware outside resistance network. Wet-gas cases also remain available as dry
+sensible calculations when phase change is explicitly disabled and the
+requested state remains valid.
 
 ## Validation limits
 
-The original experiments used air, and the integrated default labels the
-outside correlation state as air. The low-level contracts can label another
-dry gas and emit an extrapolation warning; arbitrary property providers do
-not expose enough phase metadata for the engine to infer gas versus liquid,
-so the caller remains responsible for supplying a dry single-phase gas state.
+The original Briggs--Young experiments used air, and the integrated default
+labels its correlation state as air. The low-level contracts can label another
+gas and emit an extrapolation warning; the wet path requires an explicit
+provider capability declaring the supported gas-mixture/H2O-condensation
+case rather than inferring phase behavior from arbitrary properties.
 Briggs--Young was based on equilateral triangular banks. The tracked
 Robinson--Briggs provenance does not establish an unambiguous production
 mapping for arbitrary isosceles pitch geometry, so v0.7.0 conservatively
 supports only the equilateral case. Correlation warnings are engineering
 diagnostics, not permission to extrapolate blindly. Industrial/vendor data
 should be used for final design validation.
+
+The v0.7.5 wet extension remains one global 0D exchanger. It does not perform
+row-by-row or longitudinal marching, circuit-by-circuit temperature mapping,
+or thermal segmentation through `n_passes_transverse`. It does not cover
+freezing, acid dew point, multiple condensables, flow maldistribution,
+condensate-film resistance, retention, flooding, bridging, re-evaporation,
+carryover/re-entrainment, explicit drainage geometry or wet pressure-drop
+correction. At most one exchanger side may have active phase change.

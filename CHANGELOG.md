@@ -5,6 +5,69 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.7.5] — Wet circular-finned outside condensation
+
+### Added
+
+- Added nonlinear radial wet annular-fin heat and mass transfer for outside
+  H2O condensation from a gas mixture with a non-condensable carrier,
+  including naturally resolved dry, partially wet and fully wet fin states.
+- Added independent primary/root and fin sensible duty, latent duty, total
+  duty, condensate, wet-area and temperature diagnostics, together with
+  typed wet-finned convergence, residual, assumption and warning results.
+- Added a separately named wet effective coefficient on the gross-outside-area
+  and bulk-gas-to-core-wall driving-force basis without redefining the
+  physical sensible film coefficient.
+- Added explicit wet-hydraulic contract diagnostics: the calculated
+  finned-bank pressure drop is a dry reference and wet pressure-drop support
+  is false.
+
+### Changed
+
+- Integrated active wet circular-finned outside surfaces into Simulation,
+  Rating and `PhaseChangeMode.AUTO`; dry onset checks continue to use the
+  unchanged v0.7.4 circular-finned result route, and
+  `PhaseChangeMode.DISABLED` retains its dry sensitivity and warning.
+- Preserved welded-fin and continuous-root/contact topology, authoritative
+  primary/fin areas, external-area overrides and v0.7.2 contact-input
+  precedence while applying contact and fin effects once in the wet solve.
+- Narrowed the wet-finned capability guard to permit the supported outside
+  gas-mixture/H2O-condensation case while retaining controlled errors for
+  unsupported species, directions and simultaneous phase-change cases.
+- `PhaseChangeMode.AUTO` dry/near-onset results now expose a complete
+  sensible-only `PhaseChangeResult`: `Q_sensible`/`Q_total` report the real
+  exchanger duty (matching `HXSimulationResult.q` / `HXRatingResult.
+  Q_required`) instead of `0.0`, so callers no longer need to branch on
+  `active` before reading them. `active=False` is a valid converged dry or
+  near-onset AUTO result, never a calculation failure.
+- Restored Rating closure of a single unknown non-condensing-side mass flow
+  or outlet temperature when outside H2O condensation is active.
+- Hardened the active wet circular-fin solve against a near-boundary
+  collapse: if the dry-baseline onset screen activates AUTO but the
+  converged nonlinear radial field (including its 0D endpoint wet-zone
+  fallback) finds zero net condensate, the call now returns the exact dry
+  AUTO result with a `PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY` warning
+  instead of raising.
+
+### Notes
+
+- The wet extension remains a global 0D model. It uses a deterministic
+  160-cell radial finite-volume field and assumes all formed condensate drains
+  from the modelled gas phase. When a cold endpoint activates condensation but
+  the bulk-mean radial field is dry, a declared linear 0D endpoint wet-zone
+  fallback reconciles onset without adding longitudinal segmentation. The new
+  wet-finned whole-HX fixed point uses a bounded relaxation step near thermal
+  pinches; bare condensation keeps its existing controls.
+- Wet-surface pressure-drop correction is not supported. Active condensation
+  emits `circular_finned_tube_wet_pressure_drop_reference_only`; the exposed
+  pressure drop must be interpreted only as the dry-bank reference.
+- Frost/ice, acid or multiple-condensable condensation, liquid-film inventory
+  and resistance, retention, flooding, drainage geometry, carryover,
+  re-entrainment, re-evaporation, flow maldistribution and thermal
+  segmentation remain outside scope.
+
+---
+
 ## [0.7.4] — Briggs–Young small-row applicability
 
 ### Changed

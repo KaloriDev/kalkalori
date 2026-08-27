@@ -24,6 +24,7 @@ Run:
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,8 +34,10 @@ from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput
 from core.properties.gas_mixture import GasMixtureSpec, GasMixturePropertyProvider
 from core.phase_change.mass_heat_transfer import condensation_rate
+from core.phase_change.integration import PhaseChangeSettings, evaluate_side_onset
 from core.phase_change.regime import evaluate_condensation_onset
-from core.phase_change.types import PhaseChangeMode
+from core.phase_change.types import PhaseChangeCapability, PhaseChangeMode
+from core.phase_change.water_equilibrium import saturated_water_ratio
 from core.phase_change.wet_surface_fraction import (
     DEGENERATE_METHOD_NAME,
     LINEAR_METHOD_NAME,
@@ -455,3 +458,46 @@ def test_thermal_state_consistent_with_wet_solution() -> None:
     R_w = hx.tube_wall_resistance()
     UA_reconstructed = 1.0 / (1.0 / (ts.alfa_i * A_i) + R_w + 1.0 / (ts.alfa_o * A_o))
     assert UA_reconstructed == pytest.approx(ts.UA, rel=1e-9)
+
+
+def test_finned_outside_onset_uses_exposed_skin_not_colder_core_node() -> None:
+    p = 101_325.0
+    M_dry = 0.029
+    capability = PhaseChangeCapability(
+        capable=True,
+        component="H2O",
+        provider_kind="gas_mixture",
+        M_dry=M_dry,
+        M_condensable=0.01801528,
+        W_in=saturated_water_ratio(
+            p_total=p,
+            T=320.0,
+            M_dry=M_dry,
+        ),
+    )
+    thermal_state = SimpleNamespace(outside_wall_temperature=300.0)
+    envelope = SimpleNamespace(
+        inside_min=290.0,
+        inside_max=295.0,
+        outside_min=300.0,
+        outside_max=310.0,
+        outside_skin_min=325.0,
+        outside_skin_max=330.0,
+    )
+
+    onset, dew_point, wall_min, wall_mean, wall_max = evaluate_side_onset(
+        side="outside",
+        mode=PhaseChangeMode.AUTO,
+        capability=capability,
+        p=p,
+        thermal_state=thermal_state,
+        envelope=envelope,
+        settings=PhaseChangeSettings(),
+    )
+
+    assert dew_point == pytest.approx(320.0, abs=1.0e-5)
+    assert wall_min == 325.0
+    assert wall_max == 330.0
+    assert wall_mean == 300.0  # core node retained only for reporting
+    assert onset.possible is False
+    assert onset.active is False

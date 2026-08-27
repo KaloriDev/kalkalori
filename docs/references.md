@@ -206,6 +206,34 @@ Used for the v0.7.0 implementation described in
   conversion to Pa;
 - annular-fin conduction and applicability diagnostics.
 
+### Wet annular fins (v0.7.5)
+
+- Sharqawy, M. H.; Moinuddin, S. M.; Zubair, S. M. (2012).
+  "Heat and mass transfer from annular fins of different cross-sectional
+  area. Part I. Temperature distribution and fin efficiency",
+  *International Journal of Refrigeration*, 35(2), 365--376.
+  DOI: [`10.1016/j.ijrefrig.2011.11.004`](https://doi.org/10.1016/j.ijrefrig.2011.11.004).
+
+- Sharqawy, M. H.; Zubair, S. M. (2007).
+  "Efficiency and optimization of an annular fin with combined heat and mass
+  transfer -- An analytical solution", *International Journal of
+  Refrigeration*, 30(5), 751--757.
+  DOI: [`10.1016/j.ijrefrig.2006.12.008`](https://doi.org/10.1016/j.ijrefrig.2006.12.008).
+
+- Rosario, L.; Rahman, M. M. (1999).
+  "Analysis of heat transfer in a partially wet radial fin assembly during
+  dehumidification", *International Journal of Heat and Fluid Flow*, 20(6),
+  642--648.
+  DOI: [`10.1016/S0142-727X(99)00057-0`](https://doi.org/10.1016/S0142-727X(99)00057-0).
+
+These sources support the combined sensible/latent radial-fin energy balance,
+the emergence of fully dry, partially wet and fully wet states, and treatment
+of a radial dew-point crossing. KalKalori uses their public physical framework,
+not proprietary data or an undocumented calibration. Its H2O saturation,
+latent heat and drained saturated-liquid enthalpy remain supplied by IAPWS,
+and its dry-carrier mass-transfer coefficient remains the existing
+Chilton--Colburn implementation described below.
+
 ---
 
 ## Psychrometrics and Moist Air
@@ -378,3 +406,21 @@ KalKalori correlations and property helpers should always be used with:
 - engineering judgment,
 - vendor data or experimental validation where available,
 - standards required for the specific equipment or project.
+
+---
+
+## Private Reference Sources
+
+This document and the source-file comments it points to store **bibliographic
+references only** -- author, title, publisher/journal, edition/chapter, and a
+DOI or publisher URL where one is already known and verified. They do not
+imply that the cited publication's full text is, or should be, present in
+this repository.
+
+Commercial books, licensed standards, and publisher/journal PDFs (for
+example the VDI Heat Atlas) must not be committed to KalKalori. If you keep
+a personal or company-licensed copy for local reference while developing,
+place it under `docs/private_sources/` (already excluded via `.gitignore`)
+or anywhere outside the repository -- never in a tracked path. Obtain such
+source material through your own legitimate personal, company, or library
+access.

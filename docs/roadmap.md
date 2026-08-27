@@ -35,15 +35,52 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.4`
+**Current version:** `v0.7.5`
 **Model level:** MVP_0D  
-**Scope:** Bare tube heat exchanger, forced external flow, 0D thermal balance
-and straight-tube-bundle hydraulic balance; local nozzle/chamber/tube-sheet/
-return losses remain future work.
+**Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
+0D sensible/phase-change thermal balance and tube-bank hydraulic balance;
+active wet-finned pressure drop, local nozzle/chamber/tube-sheet/return losses
+and distributed thermal resolution remain future work.
 
 ---
 
 ## Roadmap Overview
+
+---
+
+### v0.7.5 — Wet Circular-Finned Outside Condensation
+
+**Delivered scope:**
+
+- H2O condensation from a gas mixture with a non-condensable dry carrier on
+  the exposed primary/root cylinder and circular annular fins;
+- a deterministic nonlinear radial finite-volume fin field with dry,
+  partially wet and fully wet states, both faces and the physical fin tip;
+- independent primary/fin sensible duty, latent duty and condensate splits,
+  with authoritative whole-side mass and energy closure;
+- preserved welded-fin and continuous-root/contact topology, including the
+  v0.7.2 contact-input precedence and unchanged legacy dry route;
+- Simulation, Rating and `PhaseChangeMode.AUTO`, with the existing
+  `PhaseChangeMode.DISABLED` dry-result warning behavior;
+- typed wet-surface state, temperature, wet-area, iteration, residual,
+  assumption and warning diagnostics;
+- an explicit dry/reference-only finned-bank pressure drop during active
+  condensation; wet pressure-drop support remains false;
+- a regime-independent `PhaseChangeMode.AUTO` result contract: dry and
+  near-onset are valid converged regimes (`active=False` is not a failure),
+  the returned `Q_sensible`/`Q_total` always equal the real exchanger duty,
+  and a wet-fin solve that converges to zero net condensate near onset
+  returns the exact dry result with a diagnostic warning instead of raising.
+
+This is a global 0D extension. It does not add row-wise, longitudinal or
+circuit-wise thermal marching, and `n_passes_transverse` is not thermal
+segmentation. A cold endpoint / dry bulk-mean mismatch uses the declared
+linear 0D endpoint wet-zone fallback, not a spatial temperature map. Formed
+condensate is assumed to drain completely from the
+modelled gas phase. Film retention, drainage geometry, flooding/bridging,
+droplet carryover or re-entrainment, re-evaporation, frost/ice, acid dew point,
+multiple condensables, flow maldistribution, condensate-film resistance and
+wet hydraulics remain excluded.
 
 ---
 
@@ -58,10 +95,11 @@ or implementation order.
 - film retention and drainage
 - carryover and droplet re-entrainment
 - re-evaporation
-- wet-surface and drainage diagnostics
+- liquid-inventory, retention and drainage-path diagnostics
 
-These effects are strongly geometry-dependent (bundle layout, fins and drainage
-path) and should be reassessed after finned-tube geometry is implemented.
+These effects are strongly geometry-dependent (bundle layout, fin joints and
+drainage path) and require a dedicated liquid-inventory model beyond the
+implemented wet thermal surface response.
 The current 0D model continues to explicitly assume full condensate drainage
 where that assumption is documented.
 
@@ -91,8 +129,9 @@ where that assumption is documented.
 - KalKalori should provide thermodynamic states needed by hydraulics, including
   phase, vapor quality, mass flux, pressure and enthalpy
 - coupled thermal-hydraulic iteration should be managed by an orchestrator
-- absent two-phase pressure-drop support remains explicitly `unsupported`, not
-  replaced by an approximate single-phase result
+- absent two-phase pressure-drop support remains explicit. Active wet-finned
+  condensation may expose the existing dry-bank value only when labelled as a
+  reference, never as an approximate actual wet pressure drop
 
 **Out of scope for the whole v0.6.x line:** corrosion and material
 selection remain outside the solver's scope.
@@ -124,54 +163,27 @@ This stage explicitly anticipates **commercial extensions** based on
 manufacturer data and experimental correlations.
 
 ---
-## v0.9.x — Supercritical CO₂
 
-Initial support for **supercritical CO₂ (sCO₂) inside smooth circular tubes**.
+### v0.9.x — External Tube-Performance Provider Architecture
 
-The first implementation will focus on establishing the thermodynamic and model infrastructure required for future high-accuracy segmented calculations, while providing a limited 0D calculation capability for operating conditions sufficiently far from the pseudocritical region.
+**Goal:**
+Generalize v0.8.x's empirical non-standard-geometry support into a formal
+provider architecture for tube-side and/or outside performance data that
+cannot be derived from KalKalori's built-in correlations.
 
-### Scope
+**Intended for:**
+* elliptical / flattened tubes
+* proprietary tube profiles
+* externally supplied empirical correlations or performance data
 
-* pure CO₂ on the tube side
-* smooth circular tubes
-* supercritical single-phase operation
-* heating and cooling
-* CoolProp/HEOS as the default open property backend
-* generic thermodynamic property-provider interface supporting both integrated and external providers
-* optional compatibility with REFPROP or other proprietary/external property providers
-* thermodynamic state evaluation using both `T-p` and `p-h` inputs
-* energy balance based on enthalpy rather than constant or mean heat capacity
-* representative 0D state based on mean pressure and enthalpy
-* conventional smooth-tube turbulent heat-transfer correlation as a baseline model
-* supercritical-state detection
-* detection of pseudocritical-region crossing and excessive property variation
-* applicability warnings where the 0D approximation is not considered reliable
-
-### Limitations of the 0D implementation
-
-The 0D model will not attempt to accurately represent heat transfer where strong variations of density, heat capacity, viscosity or thermal conductivity occur across the exchanger.
-
-Cases with significant pseudocritical effects should return an applicability warning such as:
-
-`SCO2_SEGMENTATION_REQUIRED`
-
-rather than extrapolating the standard smooth-tube correlation outside its reliable range.
-
-### Deferred to segmented calculation
-
-Advanced sCO₂ modelling will be implemented together with the segmented heat-exchanger solver, including:
-
-* local `p-h` state tracking
-* local thermophysical properties
-* wall-temperature-dependent properties
-* dedicated supercritical heat-transfer correlations
-* Krasnoshchekov–Protopopov-type models
-* Jackson-type models
-* buoyancy effects
-* flow-acceleration effects
-* acceleration pressure drop
-* adaptive segmentation through the pseudocritical region
-* validation against published experimental sCO₂ heat-transfer datasets
+**Scope:**
+* generic tube-performance provider interface supporting both integrated and
+  externally supplied data
+* support for externally computed, tabulated or curve-fitted heat-transfer
+  and/or pressure-drop performance as an alternative to internal correlations
+* applicability/validation boundaries for externally supplied data
+* continued separation between the open-source core (interfaces, mechanisms)
+  and optional commercial modules (licensed datasets)
 
 ---
 
@@ -206,6 +218,34 @@ This release marks the **maturity of the 0D modelling approach**.
 **Impact:**
 - breaking API changes
 - fundamentally new solver architecture
+
+---
+
+### v2.x.x — Supercritical Fluids
+
+Initial target: **pure supercritical CO₂ inside smooth circular tubes**.
+Supercritical water may follow later using the same architecture.
+
+Full sCO₂ exchanger rating is intentionally deferred until the segmented
+solver is available. Thermophysical properties can vary very strongly near
+the pseudocritical temperature, and an accurate property backend (e.g.
+CoolProp/HEOS, with optional REFPROP) can give accurate properties at an
+individual state — but that does not solve the limitation of representing
+a whole exchanger with one 0D mean state. A heat exchanger may cross the
+pseudocritical region while its mean bulk temperature remains far from it,
+and dedicated supercritical heat-transfer correlations require meaningful
+local bulk and wall states. Local `p-h-T` states, wall temperatures and
+property evaluation are therefore handled segment-by-segment rather than
+as a single 0D approximation.
+
+**Expected scope:**
+* local `p-h` thermodynamic state tracking
+* CoolProp/HEOS property backend, with optional REFPROP
+* pseudocritical-temperature detection and pseudocritical crossing
+* local bulk/wall properties
+* dedicated public supercritical smooth-tube correlations
+* adaptive refinement/segmentation where property gradients are large
+* later consideration of acceleration and buoyancy effects
 
 ---
 

@@ -35,12 +35,17 @@ from core.models.heat_balance import BalanceSideSpec
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change.finned_tube_guard import (
     CircularFinnedTubeWetSurfaceNotSupportedError,
+    reject_circular_finned_tube_wet_surface,
 )
 from core.phase_change import (
     CircularFinnedTubeWetSurfaceNotSupportedError as PublicWetSurfaceError,
 )
 from core.phase_change.regime import OnsetDecision
-from core.phase_change.types import PhaseChangeCapability, PhaseChangeMode
+from core.phase_change.types import (
+    PhaseChangeCapability,
+    PhaseChangeDirection,
+    PhaseChangeMode,
+)
 from core.pressure_drop.finned_tube_pressure_drop import RobinsonBriggs1966Provider
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider
@@ -565,66 +570,48 @@ def _capability(provider, outside_provider):
     )
 
 
-def test_active_wet_simulation_and_rating_are_rejected_but_dry_disabled_runs(
-    monkeypatch,
-) -> None:
+def test_wet_finned_guard_allows_only_explicit_supported_h2o_condensation() -> None:
     hx = BareTubeHeatExchanger(_bundle(finned=True))
-    inside, outside = _side_inputs()
-    dry_result = run_simulation(hx, inside, outside)
-
-    import core.phase_change.integration as simulation_integration
-
-    monkeypatch.setattr(
-        simulation_integration,
-        "detect_phase_change_capability",
-        lambda provider: _capability(provider, outside.provider),
+    supported = PhaseChangeCapability(
+        capable=True,
+        component="H2O",
+        provider_kind="gas_mixture",
+        dry_mole_fractions={"N2": 0.79, "O2": 0.21},
+        M_dry=0.029,
+        M_condensable=0.018,
+        W_in=0.01,
     )
-    monkeypatch.setattr(
-        simulation_integration, "evaluate_side_onset", _active_outside_onset
+
+    reject_circular_finned_tube_wet_surface(
+        hx,
+        outside_active=True,
+        outside_capability=supported,
+        direction=PhaseChangeDirection.CONDENSATION,
     )
+
     with pytest.raises(
         CircularFinnedTubeWetSurfaceNotSupportedError,
         match="dry outside surface only.*unsupported",
     ):
-        simulation_integration.apply_phase_change(
-            hx, inside, outside, dry_result, iterate=True
+        reject_circular_finned_tube_wet_surface(
+            hx,
+            outside_active=True,
+            outside_capability=replace(supported, component="SO3"),
+            direction=PhaseChangeDirection.CONDENSATION,
         )
-
-    import core.phase_change.rating_integration as rating_integration
-
-    monkeypatch.setattr(
-        rating_integration,
-        "detect_phase_change_capability",
-        lambda provider: _capability(provider, outside.provider),
-    )
-    monkeypatch.setattr(
-        rating_integration, "evaluate_side_onset", _active_outside_onset
-    )
     with pytest.raises(
         CircularFinnedTubeWetSurfaceNotSupportedError,
         match="dry outside surface only.*unsupported",
     ):
-        hx.rate(
-            BalanceSideSpec(
-                provider=inside.provider,
-                p=P,
-                m_dot=M_DOT_INSIDE,
-                T_in=T_INSIDE,
-                T_out=dry_result.T_out_inside,
-            ),
-            BalanceSideSpec(
-                provider=outside.provider,
-                p=P,
-                m_dot=M_DOT_OUTSIDE,
-                T_in=T_OUTSIDE,
-                T_out=dry_result.T_out_outside,
-            ),
+        reject_circular_finned_tube_wet_surface(
+            hx,
+            outside_active=True,
+            outside_capability=supported,
+            direction=PhaseChangeDirection.EVAPORATION,
         )
-
-    dry_inside, dry_outside = _side_inputs(mode=PhaseChangeMode.DISABLED)
-    disabled = hx.simulate(dry_inside, dry_outside)
-    assert disabled.phase_change_active is False
-    assert disabled.finned_tube_diagnostics is not None
+    # Historical callers that omit capability/direction remain conservative.
+    with pytest.raises(CircularFinnedTubeWetSurfaceNotSupportedError):
+        reject_circular_finned_tube_wet_surface(hx, outside_active=True)
 
 
 def _inactive_outside_onset(*, side: str, **_kwargs):

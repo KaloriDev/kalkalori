@@ -33,6 +33,7 @@ from core.common.warnings import ModelWarning
 
 if TYPE_CHECKING:
     from core.properties.water import WaterSteamPhase, WaterSteamProperties
+    from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
 
 
 class PhaseChangeMode(str, Enum):
@@ -133,11 +134,14 @@ class PhaseChangeResult:
     (``iterations``, ``residuals``) which default to ``0``/an empty mapping.
 
     For active wet-gas condensation, ``wall_temperature_mean`` is the
-    global whole-surface mean used by the sensible resistance network,
-    whereas ``wall_temperature_wet_mean`` represents only the active wet
-    zone. ``W_sat_wet_surface`` is saturation at that wet-zone temperature;
-    latent heat and the drained saturated-liquid condensate enthalpy use the
-    same temperature.
+    exposed-area mean implied by the physical sensible film heat transfer.
+    For a circular-finned surface this is distinct from the core-wall
+    temperature used by the resistance network; that core temperature is
+    retained in ``wet_finned_surface`` together with its explicitly based wet
+    effective coefficient. ``wall_temperature_wet_mean`` represents only the
+    active wet zone. ``W_sat_wet_surface`` is saturation at that wet-zone
+    temperature; latent heat and the drained saturated-liquid condensate
+    enthalpy use the same temperature.
     """
 
     side: str  # "inside" | "outside"
@@ -177,9 +181,10 @@ class PhaseChangeResult:
     dew_point_in: float | None = None
     dew_point_out: float | None = None
 
-    # Global mean for the whole side surface.  Active outside condensation
+    # Exposed-area mean for the whole side surface. Active outside condensation
     # additionally reports the representative temperature of only the wet
-    # part below.
+    # part below; circular-fin core/root temperatures remain in the nested
+    # wet-finned result.
     wall_temperature_mean: float | None = None
     wall_temperature_min: float | None = None
     wall_temperature_max: float | None = None
@@ -214,6 +219,12 @@ class PhaseChangeResult:
     # backwards compatibility with the v0.6.0 public result.
     inside_total_area: float | None = None
     W_mid: float | None = None
+
+    # Geometry-specific split for the same converged outside state.  The
+    # generic fields above remain authoritative for whole-side balances;
+    # this shared object adds primary/fin area and duty detail without a
+    # separately recomputed diagnostic approximation.
+    wet_finned_surface: "WetFinnedSurfaceResult | None" = None
 
     @property
     def total_area(self) -> float | None:

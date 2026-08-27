@@ -92,6 +92,11 @@ extensions**.
 - Every non-trivial formula must include a **literature reference** in comments
 - Assumptions and applicability limits must be stated explicitly
 - Avoid undocumented “magic numbers”
+- Do not commit commercial standards, books, journal PDFs, or other
+  third-party full-text reference works unless their redistribution license
+  explicitly permits inclusion in the repository. Store only bibliographic
+  references (see `docs/references.md`) and obtain source material
+  separately through legitimate access.
 
 Example:
 # Darcy–Weisbach equation

@@ -251,6 +251,13 @@ class IterativeThermalState:
 
     finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
 
+    # Appended v0.7.5 active wet-surface total-duty equivalent. This is
+    # deliberately not named or presented as a physical film HTC: latent heat
+    # is included and the explicit basis is gross outside area times bulk-gas-
+    # to-core-wall temperature difference. NaN/empty on legacy dry states.
+    outside_alpha_wet_effective_gross_core_basis: float = math.nan
+    outside_alpha_wet_effective_basis: str = ""
+
 
 @dataclass(frozen=True)
 class WallTemperatureProbe:

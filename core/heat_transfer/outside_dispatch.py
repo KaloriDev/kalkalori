@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
@@ -42,6 +42,9 @@ from core.pressure_drop.finned_tube_pressure_drop import (
     calculate_finned_tube_bank_hydraulics,
 )
 from core.pressure_drop.outside_pressure_drop import EulerProvider
+
+if TYPE_CHECKING:
+    from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
 
 
 DEFAULT_BARE_EULER_PROVIDER = "zukauskas"
@@ -216,6 +219,18 @@ class FinnedTubeDiagnostics:
     heat_transfer_metadata: object | None
     pressure_drop_metadata: object | None
     warnings: tuple[ModelWarning, ...]
+
+    # Additive wet-surface / hydraulic-contract diagnostics.  The physical
+    # wet-surface result is populated only by the active condensation path;
+    # dry workflows retain ``None`` and all pre-v0.7.5 numerical fields above
+    # unchanged.  Circular-finned wet pressure-drop correction is not
+    # modelled: ``outside_dp_dry_reference`` preserves the existing dry-bank
+    # calculation, while ``outside_dp_reference_only`` says whether that
+    # value is reference-only for the current result.
+    wet_surface: "WetFinnedSurfaceResult | None" = None
+    outside_dp_dry_reference: float = math.nan
+    wet_pressure_drop_supported: bool = False
+    outside_dp_reference_only: bool = False
 
     @property
     def alpha(self) -> float:
@@ -417,6 +432,9 @@ def evaluate_outside_hydraulics(
     inlet_props: Any | None = None,
     midpoint_props: Any | None = None,
     outlet_props: Any | None = None,
+    m_dot_inlet: float | None = None,
+    m_dot_midpoint: float | None = None,
+    m_dot_outlet: float | None = None,
     euler_provider: str | EulerProvider = DEFAULT_BARE_EULER_PROVIDER,
     finned_pressure_drop_provider: (
         str | FinnedTubePressureDropProvider
@@ -447,6 +465,9 @@ def evaluate_outside_hydraulics(
             inlet_props=inlet_props if property_provider is None else None,
             midpoint_props=midpoint_props,
             outlet_props=outlet_props,
+            m_dot_inlet=m_dot_inlet,
+            m_dot_midpoint=m_dot_midpoint,
+            m_dot_outlet=m_dot_outlet,
         )
 
     _reject_bare_provider_on_finned(euler_provider)
@@ -465,6 +486,9 @@ def evaluate_outside_hydraulics(
         inlet_props=inlet_props,
         midpoint_props=midpoint_props,
         outlet_props=outlet_props,
+        m_dot_inlet=m_dot_inlet,
+        m_dot_midpoint=m_dot_midpoint,
+        m_dot_outlet=m_dot_outlet,
         pressure_drop_provider=finned_pressure_drop_provider,
     )
 
@@ -786,6 +810,9 @@ def build_finned_tube_diagnostics(
         heat_transfer_metadata=None if ht is None else ht.metadata,
         pressure_drop_metadata=None if bank is None else bank.metadata,
         warnings=warnings,
+        outside_dp_dry_reference=math.nan if bank is None else bank.dp_total,
+        wet_pressure_drop_supported=False,
+        outside_dp_reference_only=False,
     )
 
 
@@ -799,6 +826,11 @@ def merge_finned_tube_diagnostics(
         return hydraulic
     if hydraulic is None:
         return thermal
+    wet_surface = (
+        thermal.wet_surface
+        if thermal.wet_surface is not None
+        else hydraulic.wet_surface
+    )
     return replace(
         thermal,
         pressure_drop_coefficient=hydraulic.pressure_drop_coefficient,
@@ -806,6 +838,17 @@ def merge_finned_tube_diagnostics(
         outside_dp_drag=hydraulic.outside_dp_drag,
         outside_dp_acceleration=hydraulic.outside_dp_acceleration,
         outside_dp_total=hydraulic.outside_dp_total,
+        wet_surface=wet_surface,
+        outside_dp_dry_reference=hydraulic.outside_dp_dry_reference,
+        wet_pressure_drop_supported=(
+            thermal.wet_pressure_drop_supported
+            and hydraulic.wet_pressure_drop_supported
+        ),
+        outside_dp_reference_only=(
+            thermal.outside_dp_reference_only
+            or hydraulic.outside_dp_reference_only
+            or wet_surface is not None
+        ),
         pressure_drop_metadata=hydraulic.pressure_drop_metadata,
         warnings=_deduplicate_warnings((*thermal.warnings, *hydraulic.warnings)),
     )
