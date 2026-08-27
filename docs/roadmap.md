@@ -163,54 +163,27 @@ This stage explicitly anticipates **commercial extensions** based on
 manufacturer data and experimental correlations.
 
 ---
-## v0.9.x — Supercritical CO₂
 
-Initial support for **supercritical CO₂ (sCO₂) inside smooth circular tubes**.
+### v0.9.x — External Tube-Performance Provider Architecture
 
-The first implementation will focus on establishing the thermodynamic and model infrastructure required for future high-accuracy segmented calculations, while providing a limited 0D calculation capability for operating conditions sufficiently far from the pseudocritical region.
+**Goal:**
+Generalize v0.8.x's empirical non-standard-geometry support into a formal
+provider architecture for tube-side and/or outside performance data that
+cannot be derived from KalKalori's built-in correlations.
 
-### Scope
+**Intended for:**
+* elliptical / flattened tubes
+* proprietary tube profiles
+* externally supplied empirical correlations or performance data
 
-* pure CO₂ on the tube side
-* smooth circular tubes
-* supercritical single-phase operation
-* heating and cooling
-* CoolProp/HEOS as the default open property backend
-* generic thermodynamic property-provider interface supporting both integrated and external providers
-* optional compatibility with REFPROP or other proprietary/external property providers
-* thermodynamic state evaluation using both `T-p` and `p-h` inputs
-* energy balance based on enthalpy rather than constant or mean heat capacity
-* representative 0D state based on mean pressure and enthalpy
-* conventional smooth-tube turbulent heat-transfer correlation as a baseline model
-* supercritical-state detection
-* detection of pseudocritical-region crossing and excessive property variation
-* applicability warnings where the 0D approximation is not considered reliable
-
-### Limitations of the 0D implementation
-
-The 0D model will not attempt to accurately represent heat transfer where strong variations of density, heat capacity, viscosity or thermal conductivity occur across the exchanger.
-
-Cases with significant pseudocritical effects should return an applicability warning such as:
-
-`SCO2_SEGMENTATION_REQUIRED`
-
-rather than extrapolating the standard smooth-tube correlation outside its reliable range.
-
-### Deferred to segmented calculation
-
-Advanced sCO₂ modelling will be implemented together with the segmented heat-exchanger solver, including:
-
-* local `p-h` state tracking
-* local thermophysical properties
-* wall-temperature-dependent properties
-* dedicated supercritical heat-transfer correlations
-* Krasnoshchekov–Protopopov-type models
-* Jackson-type models
-* buoyancy effects
-* flow-acceleration effects
-* acceleration pressure drop
-* adaptive segmentation through the pseudocritical region
-* validation against published experimental sCO₂ heat-transfer datasets
+**Scope:**
+* generic tube-performance provider interface supporting both integrated and
+  externally supplied data
+* support for externally computed, tabulated or curve-fitted heat-transfer
+  and/or pressure-drop performance as an alternative to internal correlations
+* applicability/validation boundaries for externally supplied data
+* continued separation between the open-source core (interfaces, mechanisms)
+  and optional commercial modules (licensed datasets)
 
 ---
 
@@ -245,6 +218,34 @@ This release marks the **maturity of the 0D modelling approach**.
 **Impact:**
 - breaking API changes
 - fundamentally new solver architecture
+
+---
+
+### v2.x.x — Supercritical Fluids
+
+Initial target: **pure supercritical CO₂ inside smooth circular tubes**.
+Supercritical water may follow later using the same architecture.
+
+Full sCO₂ exchanger rating is intentionally deferred until the segmented
+solver is available. Thermophysical properties can vary very strongly near
+the pseudocritical temperature, and an accurate property backend (e.g.
+CoolProp/HEOS, with optional REFPROP) can give accurate properties at an
+individual state — but that does not solve the limitation of representing
+a whole exchanger with one 0D mean state. A heat exchanger may cross the
+pseudocritical region while its mean bulk temperature remains far from it,
+and dedicated supercritical heat-transfer correlations require meaningful
+local bulk and wall states. Local `p-h-T` states, wall temperatures and
+property evaluation are therefore handled segment-by-segment rather than
+as a single 0D approximation.
+
+**Expected scope:**
+* local `p-h` thermodynamic state tracking
+* CoolProp/HEOS property backend, with optional REFPROP
+* pseudocritical-temperature detection and pseudocritical crossing
+* local bulk/wall properties
+* dedicated public supercritical smooth-tube correlations
+* adaptive refinement/segmentation where property gradients are large
+* later consideration of acceleration and buoyancy effects
 
 ---
 
