@@ -58,3 +58,9 @@ Thumbs.db
 
 # Test outputs
 .outputs
+
+# Private local copies of commercial/licensed reference publications
+# (standards, handbooks, journal/publisher PDFs). Never commit full-text
+# third-party sources here -- see docs/references.md. Bibliographic
+# citations belong in tracked docs; the source files themselves do not.
+docs/private_sources/

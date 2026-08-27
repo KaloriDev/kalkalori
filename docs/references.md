@@ -406,3 +406,21 @@ KalKalori correlations and property helpers should always be used with:
 - engineering judgment,
 - vendor data or experimental validation where available,
 - standards required for the specific equipment or project.
+
+---
+
+## Private Reference Sources
+
+This document and the source-file comments it points to store **bibliographic
+references only** -- author, title, publisher/journal, edition/chapter, and a
+DOI or publisher URL where one is already known and verified. They do not
+imply that the cited publication's full text is, or should be, present in
+this repository.
+
+Commercial books, licensed standards, and publisher/journal PDFs (for
+example the VDI Heat Atlas) must not be committed to KalKalori. If you keep
+a personal or company-licensed copy for local reference while developing,
+place it under `docs/private_sources/` (already excluded via `.gitignore`)
+or anywhere outside the repository -- never in a tracked path. Obtain such
+source material through your own legitimate personal, company, or library
+access.
