@@ -362,20 +362,12 @@ def _dry_spec() -> GasMixtureSpec:
 
 # ---------------------------------------------------------------------------
 # Section 22: AUTO / DISABLED for a partially-wet case
+#
+# The AUTO-active/wet-area/condensate case on this exact fixture is covered
+# canonically by outside_water_condensation_integration_test.py
+# (test_condensation_is_active_and_partial, test_wet_surface_fraction_bounded,
+# test_wet_zone_saturation_drives_positive_condensation); not duplicated here.
 # ---------------------------------------------------------------------------
-def test_auto_partial_wetting_activates_with_positive_wet_area_and_condensate() -> None:
-    hx = _hx()
-    inside = HXSideInput(provider=GasMixturePropertyProvider(_dry_spec()), m_dot=15.0, T_in=290.0, p=101325.0)
-    outside = HXSideInput(provider=GasMixturePropertyProvider(_wet_spec()), m_dot=6.0, T_in=420.0, p=101325.0)
-
-    result = hx.simulate(inside, outside)
-    pc = result.outside_phase_change
-
-    assert pc.possible is True
-    assert pc.active is True
-    assert pc.wet_surface_fraction is not None and pc.wet_surface_fraction > 0.0
-    assert pc.wet_area is not None and pc.wet_area > 0.0
-    assert pc.m_dot_condensate > 0.0
 
 
 def test_disabled_reports_onset_and_wall_diagnostics_without_running_solver() -> None:
