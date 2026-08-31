@@ -56,8 +56,8 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
-# Test outputs
-.outputs
+# Private local engineering case studies and reporting tools
+.kon/
 
 # Private local copies of commercial/licensed reference publications
 # (standards, handbooks, journal/publisher PDFs). Never commit full-text
