@@ -128,10 +128,10 @@ With the default `flow_arrangement="auto"`, a single longitudinal section
 resolves to global `crossflow`, and one transverse pass per section with more
 than one tube-side pass resolves to global `counterflow`. Intermediate
 circuits containing both multiple transverse passes and multiple longitudinal
-sections also resolve to global `crossflow`; this is a conservative lumped-0D
-approximation, not section-wise thermal coupling or a segmented/distributed
-model. An explicit `crossflow`, `counterflow` or `cocurrentflow` value always
-overrides AUTO resolution.
+sections also resolve to global `crossflow`; this is a global/lumped 0D
+crossflow approximation, not section-wise thermal coupling or a segmented/
+distributed model. An explicit `crossflow`, `counterflow` or `cocurrentflow`
+value always overrides AUTO resolution.
 
 ---
 

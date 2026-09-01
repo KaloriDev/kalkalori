@@ -411,6 +411,46 @@ def test_rating_uses_auto_arrangement_resolved_from_tube_circuit() -> None:
     )
 
 
+def test_simulation_uses_auto_arrangement_resolved_from_tube_circuit() -> None:
+    """AUTO 6/6 and 6/1 circuiting must reach Simulation's epsilon-NTU path."""
+    crossflow_hx = BareTubeHeatExchanger(
+        build_auto_topology_bundle(n_passes_transverse=6)
+    )
+    counterflow_hx = BareTubeHeatExchanger(
+        build_auto_topology_bundle(n_passes_transverse=1)
+    )
+    assert crossflow_hx.bundle.flow_arrangement_resolved == "crossflow"
+    assert counterflow_hx.bundle.flow_arrangement_resolved == "counterflow"
+    inside = HXSideInput(
+        provider=ConstantPropertyProvider(
+            FluidTransportProperties(rho=1.13, mu=1.9e-5, k=0.027, cp=1007.0)
+        ),
+        p=101_325.0,
+        m_dot=3.0,
+        T_in=c_to_k(400.0),
+    )
+    outside = HXSideInput(
+        provider=ConstantPropertyProvider(
+            FluidTransportProperties(rho=0.50, mu=3.1e-5, k=0.052, cp=1180.0)
+        ),
+        p=101_325.0,
+        m_dot=5.0,
+        T_in=c_to_k(30.0),
+    )
+
+    crossflow = crossflow_hx.simulate(inside, outside, iterate=False)
+    counterflow = counterflow_hx.simulate(inside, outside, iterate=False)
+
+    C_min = min(inside.m_dot * 1007.0, outside.m_dot * 1180.0)
+    Q_max = C_min * (inside.T_in - outside.T_in)
+    crossflow_effectiveness = crossflow.q / Q_max
+    counterflow_effectiveness = counterflow.q / Q_max
+
+    assert counterflow.q - crossflow.q > 1e-3 * Q_max
+    assert counterflow_effectiveness > crossflow_effectiveness
+    assert counterflow_effectiveness - crossflow_effectiveness > 1e-3
+
+
 def main() -> None:
     test_closure_popular_variant()
     test_closure_solve_T_out()
@@ -424,6 +464,7 @@ def main() -> None:
 
     test_rating()
     test_rating_uses_auto_arrangement_resolved_from_tube_circuit()
+    test_simulation_uses_auto_arrangement_resolved_from_tube_circuit()
 
     print("\nALL SMOKE CHECKS PASSED")
 

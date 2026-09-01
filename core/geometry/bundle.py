@@ -108,8 +108,8 @@ class TubeBundle:
       model uses the effective average ``n_rows / n_sections_longitudinal``.
     - ``flow_arrangement="auto"`` maps a single longitudinal section to
       crossflow and multiple single-transverse-pass sections to counterflow.
-      Intermediate multi-pass/multi-section circuits use global crossflow as
-      a conservative 0D approximation; section-wise coupling remains future
+      Intermediate multi-pass/multi-section circuits use a global/lumped 0D
+      crossflow approximation; section-wise coupling remains future
       segmented/distributed-model scope.
     """
 
@@ -256,11 +256,11 @@ class TubeBundle:
         Explicit arrangements always win. AUTO maps one longitudinal section
         to crossflow, multiple sections with one transverse pass each to
         counterflow, and intermediate multi-pass/multi-section circuits to a
-        conservative global crossflow approximation.
+        global/lumped 0D crossflow approximation.
         """
         arrangement = self.flow_arrangement.lower()
         if arrangement != "auto":
-            return self.flow_arrangement
+            return arrangement
         if self.n_sections_longitudinal == 1:
             return "crossflow"
         if self.n_passes_transverse_resolved == 1:
@@ -280,8 +280,9 @@ class TubeBundle:
                     message=(
                         "TubeBundle circuit contains multiple transverse passes "
                         "and multiple longitudinal sections; the current 0D "
-                        "model uses global crossflow. Exact section-wise coupling "
-                        "requires a future segmented/distributed model."
+                        "model uses a global/lumped 0D crossflow approximation. "
+                        "Exact section-wise coupling requires a future segmented/"
+                        "distributed model."
                     ),
                     source="tube_bundle_geometry",
                     severity="warning",

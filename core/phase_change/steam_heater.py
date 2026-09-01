@@ -558,7 +558,8 @@ def _evaluate_duty(
         cache=cache,
     )
     zones = allocation.zones
-    trial_warnings: list[ModelWarning] = list(outside.warnings)
+    trial_warnings: list[ModelWarning] = list(hx.bundle.topology_warnings)
+    trial_warnings.extend(outside.warnings)
     for zone in zones:
         trial_warnings.extend(zone.warnings)
 

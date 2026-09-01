@@ -309,7 +309,7 @@ def test_flow_arrangement_defaults_to_auto() -> None:
         ("counterflow", "counterflow"),
         ("cocurrentflow", "cocurrentflow"),
         ("crossflow", "crossflow"),
-        ("CounterFlow", "CounterFlow"),
+        ("CounterFlow", "counterflow"),
     ],
 )
 def test_explicit_flow_arrangement_override_is_preserved(
@@ -346,7 +346,7 @@ def test_intermediate_auto_topology_exposes_model_warning() -> None:
     assert warning.source == "tube_bundle_geometry"
     assert "multiple transverse passes" in warning.message
     assert "multiple longitudinal sections" in warning.message
-    assert "global crossflow" in warning.message
+    assert "global/lumped 0D crossflow" in warning.message
     assert "section-wise coupling" in warning.message
     assert bundle.geometry_warnings == bundle.topology_warnings
     assert bundle.warnings == bundle.topology_warnings
