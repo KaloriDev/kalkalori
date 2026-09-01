@@ -5,6 +5,37 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.7.7] — Tabulated liquid property provider
+
+### Added
+
+- Added `LiquidPropertyPoint` and `TabulatedLiquidProvider` to
+  `core.properties` for manually supplied single-phase liquid properties,
+  without requiring CoolProp. One supplied point gives constant rho/cp/mu/k
+  at every positive temperature; two or more points interpolate rho/cp/k
+  linearly and mu log-linearly versus T. Specific enthalpy is derived by
+  exact piecewise-linear-cp integration, with `h = 0` at the reference
+  temperature (the single point's T, or the lowest supplied T for 2+
+  points). A multi-point query outside the supplied table raises
+  `ValueError` instead of silently extrapolating.
+- `TabulatedLiquidProvider.full_at()` reuses the existing `CoolPropProperties`
+  container (`transport`/`h`/`phase`/`fluid`/`warnings`) as the smallest
+  backward-compatible full-state type; no new generic full-state dataclass
+  was introduced and the CoolProp backend itself is unchanged.
+
+### Notes
+
+- `ConstantPropertyProvider` is unchanged and remains available for fixed,
+  temperature-independent properties. `TabulatedLiquidProvider` is simply
+  the preferred new path for manually entered liquids because it also
+  supports temperature dependency and enthalpy.
+- Pressure is accepted by `TabulatedLiquidProvider` only for interface
+  compatibility; properties are pressure-independent, matching the existing
+  point-property provider contract.
+- No new dependency was added.
+
+---
+
 ## [0.7.6] — Parallel air-side coupling for steam-heater zones
 
 ### Changed

@@ -17,6 +17,34 @@ The goal is to avoid hidden assumptions. KalKalori does not automatically decide
 | CoolProp pure fluid        | `CoolPropFluidProvider`                        | Pure fluids and pseudo-pure fluids                                     | Single-phase Water only; no pure-water phase change |
 | Explicit gas mixture       | `GasMixtureSpec`, `GasMixturePropertyProvider` | Dry gases, flue gas, hot humid gas with H2O as gas-phase component     | Wet-gas H2O condensation; pure-H2O phase change unsupported |
 | Constant properties        | `ConstantPropertyProvider`                     | Debugging, reference calculations, fixed-property cases                | No                                |
+| Tabulated liquid           | `LiquidPropertyPoint`, `TabulatedLiquidProvider` | Manually entered single-phase liquid (e.g. from a datasheet), with or without T-dependency | No                                |
+
+### 1.1 Tabulated Liquid Provider (v0.7.7)
+
+```python
+from core.properties import LiquidPropertyPoint, TabulatedLiquidProvider
+```
+
+For a manually entered single-phase liquid (e.g. from a datasheet):
+
+```text
+1 point   -> constant rho/cp/mu/k at every positive temperature
+2+ points -> T-dependent interpolation, with the queried T restricted to
+             the supplied table (outside it raises ValueError; this
+             provider never extrapolates)
+
+rho, cp, k -> linear interpolation versus T
+mu         -> log-linear interpolation versus T
+h          -> exact integral of the interpolated cp(T), h = 0 at the
+              lowest supplied T (or the single point's T for one point)
+
+pressure -> accepted for interface compatibility only; ignored
+```
+
+This replaces the practical need for a separate manual constant-property
+liquid implementation, while `ConstantPropertyProvider` remains available
+unchanged for fixed-property cases that do not need temperature dependency
+or enthalpy.
 
 ---
 
