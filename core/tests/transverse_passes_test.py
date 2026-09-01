@@ -1,6 +1,6 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
-"""Focused tests for v0.7.3 transverse tube-pass topology."""
+"""Focused tests for transverse tube-pass topology through v0.7.8."""
 
 from __future__ import annotations
 
@@ -46,6 +46,8 @@ def test_motivating_case_topology() -> None:
     assert bundle.n_passes_transverse_resolved == 6
     assert bundle.n_sections_longitudinal == 3
     assert bundle.n_rows_per_section == 5
+    assert bundle.n_rows_per_section_effective == pytest.approx(5.0)
+    assert bundle.rows_partition_is_exact is True
     assert bundle.n_tubes_per_pass_effective == pytest.approx(825 / 18)
     assert bundle.n_tubes_per_pass == pytest.approx(825 / 18)
     assert bundle.pass_partition_is_exact is False
@@ -80,6 +82,8 @@ def test_legacy_exact_partition_defaults_to_none() -> None:
     assert bundle.n_passes_transverse_resolved == 2
     assert bundle.n_sections_longitudinal == 1
     assert bundle.n_rows_per_section == 6
+    assert bundle.n_rows_per_section_effective == pytest.approx(6.0)
+    assert bundle.rows_partition_is_exact is True
 
 
 def test_none_and_explicit_equal_to_n_passes_tube_are_equivalent() -> None:
@@ -100,7 +104,7 @@ def test_none_and_explicit_equal_to_n_passes_tube_are_equivalent() -> None:
 
 
 # ----------------------------------------------------------------------
-# Validation (section 19)
+# Validation and v0.7.8 AUTO topology resolution
 # ----------------------------------------------------------------------
 
 
@@ -140,9 +144,12 @@ def test_t4_non_divisible_transverse_pass_count_rejected() -> None:
         _bundle(n_passes_transverse=5)
 
 
-def test_t5_rows_not_divisible_by_sections_rejected() -> None:
-    with pytest.raises(ValueError):
-        _bundle(n_rows=14, n_passes_transverse=6)
+def test_t5_rows_not_divisible_by_sections_use_effective_average() -> None:
+    bundle = _bundle(n_rows=14, n_passes_transverse=6)
+    assert bundle.n_sections_longitudinal == 3
+    assert bundle.n_rows_per_section_effective == pytest.approx(14 / 3)
+    assert bundle.n_rows_per_section == pytest.approx(14 / 3)
+    assert bundle.rows_partition_is_exact is False
 
 
 def test_t6_non_divisible_tube_count_accepted() -> None:
@@ -207,6 +214,154 @@ def test_t12_internal_length_uses_total_pass_count() -> None:
     assert bundle.internal_length_total != pytest.approx(3 * tube.length_total)
 
 
+@pytest.mark.parametrize(
+    (
+        "n_rows",
+        "n_passes_tube",
+        "n_passes_transverse",
+        "valid",
+        "expected_arrangement",
+    ),
+    [
+        (6, 1, 1, True, "crossflow"),
+        (6, 2, 2, True, "crossflow"),
+        (6, 4, 4, True, "crossflow"),
+        (6, 6, 6, True, "crossflow"),
+        (6, 2, 1, True, "counterflow"),
+        (6, 4, 1, True, "counterflow"),
+        (6, 6, 1, True, "counterflow"),
+        (6, 6, 2, True, "crossflow"),
+        (6, 6, 3, True, "crossflow"),
+        (15, 18, 6, True, "crossflow"),
+        (6, 4, 3, False, None),
+        (6, 4, 5, False, None),
+        (6, 4, 0, False, None),
+    ],
+)
+def test_standard_circuit_configuration_matrix(
+    n_rows: int,
+    n_passes_tube: int,
+    n_passes_transverse: int,
+    valid: bool,
+    expected_arrangement: str | None,
+) -> None:
+    kwargs = dict(
+        n_rows=n_rows,
+        n_passes_tube=n_passes_tube,
+        n_passes_transverse=n_passes_transverse,
+        flow_arrangement="auto",
+    )
+    if not valid:
+        with pytest.raises(ValueError):
+            _bundle(**kwargs)
+        return
+
+    bundle = _bundle(**kwargs)
+    assert bundle.flow_arrangement_resolved == expected_arrangement
+
+
+def test_non_exact_row_partition_and_auto_counterflow() -> None:
+    bundle = _bundle(
+        n_rows=6,
+        n_passes_tube=4,
+        n_passes_transverse=1,
+        flow_arrangement="auto",
+    )
+    assert bundle.n_sections_longitudinal == 4
+    assert bundle.n_rows_per_section_effective == pytest.approx(1.5)
+    assert bundle.n_rows_per_section == pytest.approx(1.5)
+    assert bundle.rows_partition_is_exact is False
+    assert bundle.flow_arrangement_resolved == "counterflow"
+
+
+def test_exact_row_partition_and_auto_crossflow() -> None:
+    bundle = _bundle(
+        n_rows=6,
+        n_passes_tube=6,
+        n_passes_transverse=6,
+        flow_arrangement="auto",
+    )
+    assert bundle.n_sections_longitudinal == 1
+    assert bundle.n_rows_per_section_effective == pytest.approx(6.0)
+    assert bundle.rows_partition_is_exact is True
+    assert bundle.flow_arrangement_resolved == "crossflow"
+
+
+def test_flow_arrangement_defaults_to_auto() -> None:
+    bundle = TubeBundle(
+        tube=_tube(),
+        n_rows=6,
+        n_tubes_per_row=8,
+        pitch_transverse=0.04,
+        pitch_longitudinal=0.04,
+        layout="inline",
+        n_passes_tube=6,
+        n_passes_transverse=1,
+    )
+    assert bundle.flow_arrangement == "auto"
+    assert bundle.flow_arrangement_resolved == "counterflow"
+
+
+@pytest.mark.parametrize(
+    ("flow_arrangement", "expected"),
+    [
+        ("auto", "counterflow"),
+        ("counterflow", "counterflow"),
+        ("cocurrentflow", "cocurrentflow"),
+        ("crossflow", "crossflow"),
+        ("CounterFlow", "CounterFlow"),
+    ],
+)
+def test_explicit_flow_arrangement_override_is_preserved(
+    flow_arrangement: str,
+    expected: str,
+) -> None:
+    bundle = _bundle(
+        n_rows=6,
+        n_passes_tube=6,
+        n_passes_transverse=1,
+        flow_arrangement=flow_arrangement,
+    )
+    assert bundle.flow_arrangement_resolved == expected
+
+
+@pytest.mark.parametrize("flow_arrangement", ["parallelflow", "", None])
+def test_unsupported_flow_arrangement_rejected(flow_arrangement: object) -> None:
+    with pytest.raises(ValueError, match="flow_arrangement"):
+        _bundle(flow_arrangement=flow_arrangement)
+
+
+def test_intermediate_auto_topology_exposes_model_warning() -> None:
+    bundle = _bundle(
+        n_rows=6,
+        n_passes_tube=6,
+        n_passes_transverse=2,
+        flow_arrangement="auto",
+    )
+    assert bundle.flow_arrangement_resolved == "crossflow"
+    assert [warning.code for warning in bundle.topology_warnings] == [
+        "FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION"
+    ]
+    warning = bundle.topology_warnings[0]
+    assert warning.source == "tube_bundle_geometry"
+    assert "multiple transverse passes" in warning.message
+    assert "multiple longitudinal sections" in warning.message
+    assert "global crossflow" in warning.message
+    assert "section-wise coupling" in warning.message
+    assert bundle.geometry_warnings == bundle.topology_warnings
+    assert bundle.warnings == bundle.topology_warnings
+
+
+def test_explicit_intermediate_topology_does_not_emit_auto_warning() -> None:
+    bundle = _bundle(
+        n_rows=6,
+        n_passes_tube=6,
+        n_passes_transverse=2,
+        flow_arrangement="crossflow",
+    )
+    assert bundle.topology_warnings == ()
+
+
 def main() -> None:
     test_motivating_case_topology()
     test_motivating_case_flow_area_and_length()
@@ -216,7 +371,7 @@ def main() -> None:
     test_t2_negative_transverse_passes_rejected()
     test_t3_transverse_passes_exceeding_total_rejected()
     test_t4_non_divisible_transverse_pass_count_rejected()
-    test_t5_rows_not_divisible_by_sections_rejected()
+    test_t5_rows_not_divisible_by_sections_use_effective_average()
     test_t6_non_divisible_tube_count_accepted()
     test_t7_exact_tube_count_accepted_and_flagged()
     test_t8_no_rounding_of_effective_tubes_per_pass()

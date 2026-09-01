@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
+from core.common.warnings import ModelWarning, make_warning
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.tube import BaseTube
 
@@ -71,6 +72,10 @@ class TubeBundle:
         "inline" or "staggered" (used later for refined outside correlations).
     n_passes_tube : int
         Number of tube-side passes (biegów).
+    flow_arrangement : str
+        Global 0D flow arrangement. ``"auto"`` (the default) resolves the
+        arrangement from the tube circuit topology; explicit ``"crossflow"``,
+        ``"counterflow"``, and ``"cocurrentflow"`` values remain authoritative.
     tube_path_type : TubePathType
         How successive passes are connected; see ``TubePathType``. Defaults
         to ``STRAIGHT``, preserving the interpretation used by models that
@@ -98,9 +103,14 @@ class TubeBundle:
       circuit/pass map remains future scope.
     - ``n_passes_transverse`` describes circuit topology only (how the total
       tube-side passes are grouped into longitudinal sections of the outside
-      tube bank). It does not alter total heat-transfer area, outside-flow
-      geometry, or the global 0D flow-arrangement thermal model: v0.7.3 does
-      not introduce row/section-wise thermal segmentation.
+      tube bank). It does not alter total heat-transfer area or outside-flow
+      geometry. Row counts need not divide evenly between sections; the 0D
+      model uses the effective average ``n_rows / n_sections_longitudinal``.
+    - ``flow_arrangement="auto"`` maps a single longitudinal section to
+      crossflow and multiple single-transverse-pass sections to counterflow.
+      Intermediate multi-pass/multi-section circuits use global crossflow as
+      a conservative 0D approximation; section-wise coupling remains future
+      segmented/distributed-model scope.
     """
 
     tube: BaseTube
@@ -110,7 +120,7 @@ class TubeBundle:
     pitch_longitudinal: float
     layout: str
     n_passes_tube: int
-    flow_arrangement: str
+    flow_arrangement: str = "auto"
     tube_path_type: TubePathType = TubePathType.STRAIGHT
     n_passes_transverse: int | None = None
 
@@ -130,8 +140,15 @@ class TubeBundle:
             raise ValueError("n_passes_tube must be a positive integer.")
         if self.layout.lower() not in ("inline", "staggered"):
             raise ValueError("layout must be 'inline' or 'staggered'.")
-        if self.flow_arrangement.lower() not in ("crossflow", "counterflow", "cocurrentflow"):
-            raise ValueError("flow_arrangement must be 'crossflow', 'counterflow', or 'cocurrentflow'.")
+        if (
+            not isinstance(self.flow_arrangement, str)
+            or self.flow_arrangement.lower()
+            not in ("auto", "crossflow", "counterflow", "cocurrentflow")
+        ):
+            raise ValueError(
+                "flow_arrangement must be 'auto', 'crossflow', "
+                "'counterflow', or 'cocurrentflow'."
+            )
 
         if self.tube_path_type == TubePathType.U_TUBE and self.n_passes_tube < 2:
             raise ValueError(
@@ -157,16 +174,6 @@ class TubeBundle:
                     f"{self.n_passes_tube}, n_passes_transverse="
                     f"{self.n_passes_transverse}."
                 )
-
-        if self.n_rows % self.n_sections_longitudinal != 0:
-            raise ValueError(
-                "n_rows must be an exact integer multiple of "
-                "n_sections_longitudinal (n_passes_tube // "
-                "n_passes_transverse_resolved); the current v0.7.3 "
-                "transverse-pass topology requires equal integer row counts "
-                f"in every longitudinal section, got n_rows={self.n_rows}, "
-                f"n_sections_longitudinal={self.n_sections_longitudinal}."
-            )
 
         if isinstance(self.tube, CircularFinnedTube):
             self._validate_circular_fin_clearance()
@@ -224,9 +231,73 @@ class TubeBundle:
         return self.n_passes_tube // self.n_passes_transverse_resolved
 
     @property
-    def n_rows_per_section(self) -> int:
-        """Outside-flow rows contained in each longitudinal section."""
-        return self.n_rows // self.n_sections_longitudinal
+    def n_rows_per_section_effective(self) -> float:
+        """Effective average outside-flow rows per longitudinal section."""
+        return self.n_rows / self.n_sections_longitudinal
+
+    @property
+    def n_rows_per_section(self) -> float:
+        """Compatibility alias for ``n_rows_per_section_effective``."""
+        return self.n_rows_per_section_effective
+
+    @property
+    def rows_partition_is_exact(self) -> bool:
+        """Whether rows divide evenly between longitudinal sections.
+
+        Diagnostic only: a non-integer partition is an accepted effective 0D
+        average and never rejects bundle construction.
+        """
+        return self.n_rows % self.n_sections_longitudinal == 0
+
+    @property
+    def flow_arrangement_resolved(self) -> str:
+        """Resolve the global 0D flow arrangement from circuit topology.
+
+        Explicit arrangements always win. AUTO maps one longitudinal section
+        to crossflow, multiple sections with one transverse pass each to
+        counterflow, and intermediate multi-pass/multi-section circuits to a
+        conservative global crossflow approximation.
+        """
+        arrangement = self.flow_arrangement.lower()
+        if arrangement != "auto":
+            return self.flow_arrangement
+        if self.n_sections_longitudinal == 1:
+            return "crossflow"
+        if self.n_passes_transverse_resolved == 1:
+            return "counterflow"
+        return "crossflow"
+
+    @property
+    def topology_warnings(self) -> tuple[ModelWarning, ...]:
+        """Topology limitations exposed through the standard warning model."""
+        if (
+            self.flow_arrangement.lower() == "auto"
+            and 1 < self.n_passes_transverse_resolved < self.n_passes_tube
+        ):
+            return (
+                make_warning(
+                    code="FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION",
+                    message=(
+                        "TubeBundle circuit contains multiple transverse passes "
+                        "and multiple longitudinal sections; the current 0D "
+                        "model uses global crossflow. Exact section-wise coupling "
+                        "requires a future segmented/distributed model."
+                    ),
+                    source="tube_bundle_geometry",
+                    severity="warning",
+                ),
+            )
+        return ()
+
+    @property
+    def geometry_warnings(self) -> tuple[ModelWarning, ...]:
+        """Geometry-diagnostics alias for ``topology_warnings``."""
+        return self.topology_warnings
+
+    @property
+    def warnings(self) -> tuple[ModelWarning, ...]:
+        """Compatibility alias for bundle-level ``topology_warnings``."""
+        return self.topology_warnings
 
     @property
     def n_turns(self) -> int:
