@@ -1,6 +1,8 @@
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider, PropertyProvider
 
+from core.properties.tabulated_liquid import LiquidPropertyPoint, TabulatedLiquidProvider
+
 from core.properties.water import (
     IAPWS97WaterSteamProvider,
     WaterSteamPhase,
@@ -75,6 +77,8 @@ __all__ = [
     "FluidTransportProperties",
     "PropertyProvider",
     "ConstantPropertyProvider",
+    "LiquidPropertyPoint",
+    "TabulatedLiquidProvider",
     "IAPWS97WaterSteamProvider",
     "WaterSteamPhase",
     "WaterSteamProperties",
