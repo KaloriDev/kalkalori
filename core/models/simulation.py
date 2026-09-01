@@ -763,8 +763,12 @@ def run_simulation(
     ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
     before computing duty/outlet temperatures; see the module docstring.
     """
-    if flow_arrangement is None:
-        flow_arrangement = hx.bundle.flow_arrangement
+    uses_bundle_flow_arrangement = flow_arrangement is None
+    topology_warnings = (
+        hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
+    )
+    if uses_bundle_flow_arrangement:
+        flow_arrangement = hx.bundle.flow_arrangement_resolved
 
     if not (0.0 < relaxation_factor <= 1.0):
         raise ValueError("relaxation_factor must be in (0, 1].")
@@ -984,7 +988,10 @@ def run_simulation(
             relaxation_factor=relaxation_factor,
         )
         warnings_list: list[ModelWarning] = (
-            list(final_result.warnings or []) + thermal_warnings + list(envelope.warnings)
+            list(topology_warnings)
+            + list(final_result.warnings or [])
+            + thermal_warnings
+            + list(envelope.warnings)
         )
         if not converged:
             warnings_list.append(

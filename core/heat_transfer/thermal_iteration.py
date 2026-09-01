@@ -828,8 +828,12 @@ def solve_iterative_thermal_state(
     if relative_alfa_tolerance <= 0.0:
         raise ValueError("relative_alfa_tolerance must be positive.")
 
-    if flow_arrangement is None:
-        flow_arrangement = hx.bundle.flow_arrangement
+    uses_bundle_flow_arrangement = flow_arrangement is None
+    topology_warnings = (
+        hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
+    )
+    if uses_bundle_flow_arrangement:
+        flow_arrangement = hx.bundle.flow_arrangement_resolved
 
     bundle = hx.bundle
     A_o = bundle.total_outer_area
@@ -920,7 +924,7 @@ def solve_iterative_thermal_state(
     converged = False
     iterations = 0
     residual = math.inf
-    all_warnings: list[ModelWarning] = []
+    all_warnings: list[ModelWarning] = list(topology_warnings)
 
     for iteration in range(1, max_iterations + 1):
         iterations = iteration

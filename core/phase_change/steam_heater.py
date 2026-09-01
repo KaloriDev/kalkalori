@@ -541,7 +541,7 @@ def _evaluate_duty(
         finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
-    flow_arrangement = hx.bundle.flow_arrangement
+    flow_arrangement = hx.bundle.flow_arrangement_resolved
     specs = _partition_enthalpy(inlet_state.h, h_out, saturation)
     allocation = _allocate_parallel_air_zones(
         hx,
