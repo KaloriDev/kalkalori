@@ -5,6 +5,21 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.7.8] — Tube circuit topology resolution
+
+### Changed
+
+- Non-exact row partitions across longitudinal sections are now accepted and
+  represented by `n_rows_per_section_effective` as an effective 0D average.
+- Automatic flow-arrangement resolution now derives the global 0D
+  `flow_arrangement` from the tube circuit topology.
+- Explicit `crossflow`, `counterflow` and `cocurrentflow` arrangement
+  overrides remain available and unchanged.
+- Standard tube-circuit configuration tests were expanded to cover topology
+  validation, AUTO resolution and explicit overrides.
+
+---
+
 ## [0.7.7] — Tabulated liquid property provider
 
 ### Added
