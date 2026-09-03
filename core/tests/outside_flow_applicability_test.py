@@ -4,7 +4,7 @@
 
 This Zukauskas-style applicability/diagnostic check previously had no .py
 pytest coverage and was exercised only manually, without assertions, through
-core/tests/warnings_test.ipynb. This module ports the notebook's Re/Pr/
+a notebook (since removed). This module ports the notebook's Re/Pr/
 geometry sweep into a compact, parametrized, assertion-based regression.
 """
 

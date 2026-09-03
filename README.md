@@ -167,8 +167,8 @@ High-level structure:
 - `models`  
   Orchestrates geometry and correlations into usable exchanger models
 
-- `notebooks`  
-  Reference examples and validation studies (documentation by example)
+- `core/tests`  
+  Automated validation and regression tests
 
 The core contains **no UI code, no JSON serialization, and no external I/O**.
 
@@ -213,10 +213,6 @@ Typical usage:
 2. Define energy streams
 3. Solve using a heat exchanger model
 4. Inspect results from `HXResult`
-
-See the [local pressure-drop examples](notebooks/local_pressure_drop_examples.ipynb)
-for straight sections, transitions, elbows, planar obstructions, user-defined
-losses, and explicit path assembly.
 
 ---
 

@@ -994,8 +994,8 @@ tolerance) is accepted; a composition above that capacity is rejected with
 
 See `core/phase_change/` module docstrings for the equilibrium, enthalpy,
 and heat/mass-transfer model details, and
-`core/tests/outside_water_condensation_examples.ipynb` and
-`core/tests/inside_water_condensation_examples.ipynb` for worked examples.
+`core/tests/outside_water_condensation_integration_test.py` and
+`core/tests/inside_water_condensation_integration_test.py` for regression coverage.
 
 ---
 
@@ -1178,8 +1178,8 @@ Cooling-model limits:
 - two-phase pressure drop is not supported and is returned explicitly as
   unavailable rather than as a partial single-phase tube-side pressure drop.
 
-See `core/tests/steam_condensation_examples.ipynb` for public Simulation
-examples covering saturated, wet, superheated, subcooled and low-mass-flux
+See `core/tests/steam_public_integration_test.py` for public Simulation
+regressions covering saturated, wet, superheated, subcooled and low-mass-flux
 cases. See `docs/steam_heater_zone_driving_force.md` for the detailed zone
 driving-force, parallel-air allocation, outlet-mixing and 0D-scope contract.
 
@@ -1289,5 +1289,6 @@ Current limits:
   wall-film, condensate re-evaporation, drainage, carryover and re-entrainment
   are not modelled.
 
-See `core/tests/water_steam_evaporation_examples.ipynb` for executed public
-Simulation, Rating and duty-controlled examples.
+See `core/tests/water_evaporation_simulation_test.py` and
+`core/tests/water_evaporation_rating_test.py` for public Simulation, Rating
+and duty-controlled regressions.
