@@ -1139,8 +1139,13 @@ class BareTubeHeatExchanger:
         wall-temperature iteration, since the wall correction still needs to
         converge).
 
-        ``surface_margin`` (default ``0.0``, "on the nose") derates the
-        full-geometry ``UA`` before computing duty/outlet temperatures; see
+        ``surface_margin`` (default ``0.0``, "on the nose") is the Simulation
+        input derating applied to the full-geometry ``UA`` before duty and
+        outlet temperatures are computed. It remains echoed on the result for
+        diagnostics. ``result.overdesign_factor`` is the distinct canonical
+        output margin, calculated from ``result.UA_actual`` and
+        ``result.UA_process``; for a valid Simulation it is normally equal to
+        ``surface_margin`` within floating-point tolerance. See
         ``core.models.simulation`` for the exact relation.
 
         ``iterate=False`` is an explicit escape hatch: a single, fast,

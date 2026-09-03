@@ -3,10 +3,10 @@
 """Deterministic regressions for core.psychrometrics.
 
 core/psychrometrics previously had no .py pytest coverage and was exercised
-only manually through core/tests/moist_air_test.ipynb. This module ports the
+only manually through a notebook (since removed). This module ports the
 notebook's core assertions (RH/W round trip, saturation, condensation onset,
 above-boiling behavior) into real, synthetic pytest checks so the notebook
-can move out of core/tests without losing coverage.
+could be removed without losing coverage.
 """
 
 from __future__ import annotations

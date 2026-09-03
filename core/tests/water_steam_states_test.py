@@ -97,6 +97,21 @@ def test_exact_saturation_enthalpy_boundaries(boundary_name, phase, quality):
     assert state.quality == quality
 
 
+@pytest.mark.parametrize(
+    ("liquid_kwargs", "vapor_kwargs"),
+    [
+        ({"p": P, "x": 0.0}, {"p": P, "x": 1.0}),
+        ({"T": 423.15, "x": 0.0}, {"T": 423.15, "x": 1.0}),
+    ],
+)
+def test_saturated_liquid_is_denser_and_less_enthalpic_than_vapor(liquid_kwargs, vapor_kwargs):
+    liquid = water_steam_props_iapws97(**liquid_kwargs)
+    vapor = water_steam_props_iapws97(**vapor_kwargs)
+
+    assert liquid.transport.rho > vapor.transport.rho
+    assert liquid.h < vapor.h
+
+
 def test_pressure_quality_enthalpy_round_trip():
     first = water_steam_props_iapws97(p=P, x=0.374)
     second = water_steam_props_iapws97(p=P, h=first.h)

@@ -5,6 +5,21 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.7.9] — Unified surface margin reporting
+
+### Changed
+
+- Rating and Simulation now share the canonical surface-margin definition
+  `overdesign_factor = UA_actual / UA_process - 1` and expose the same
+  result-level `UA_actual`, `UA_process`, and `overdesign_factor` contract for
+  standard reporting.
+- `HXSimulationResult.overdesign_factor` now reports the exchanger's physical
+  UA margin for the simulated process instead of the historical constant
+  `0.0`. The existing Simulation `surface_margin` input remains available and
+  continues to control UA derating independently of the canonical result.
+
+---
+
 ## [0.7.8] — Tube circuit topology resolution
 
 ### Changed

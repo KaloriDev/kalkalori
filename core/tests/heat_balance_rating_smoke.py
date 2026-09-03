@@ -328,6 +328,24 @@ def test_rating() -> tuple:
     assert res_hi.overdesign_factor < 0.0, res_hi.overdesign_factor
     assert res_hi.overdesign_factor < res0.overdesign_factor < res_lo.overdesign_factor
 
+    # Positive margin and shortfall share one canonical UA-based result.
+    # The historical area relation remains a physical invariant only.
+    for result in (res_lo, res_hi):
+        assert result.UA_process == result.UA_required
+        assert result.overdesign_factor == result.ua_margin
+        assert math.isclose(
+            result.overdesign_factor,
+            result.UA_actual / result.UA_process - 1.0,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+        assert math.isclose(
+            result.overdesign_factor,
+            result.A_o / result.A_required - 1.0,
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        )
+
     return res0, res_lo, res_hi
 
 

@@ -30,6 +30,7 @@ from .rating import (
     HXRatingResult,
     run_rating,
 )
+from .surface_margin import calculate_surface_margin_factor
 from core.heat_transfer.outside_dispatch import FinnedTubeDiagnostics
 
 __all__ = [
@@ -47,5 +48,6 @@ __all__ = [
     "close_heat_balance",
     "HXRatingResult",
     "run_rating",
+    "calculate_surface_margin_factor",
     "FinnedTubeDiagnostics",
 ]

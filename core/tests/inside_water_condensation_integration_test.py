@@ -298,7 +298,7 @@ def test_large_inside_condensing_geometry_relaxes_before_enthalpy_inversion() ->
             T_in=270.15,
             p=101_325.0,
         ),
-        surface_margin=0.15,
+        surface_margin=0.10,
         euler_provider="gaddis_gnielinski",
     )
 
@@ -308,6 +308,12 @@ def test_large_inside_condensing_geometry_relaxes_before_enthalpy_inversion() ->
     assert pc.m_dot_condensate > 0.0
     assert pc.W_out < pc.W_in
     assert result.T_out_inside > 273.15
+    assert result.UA_actual == result.UA
+    assert result.UA_process == pytest.approx(abs(result.q) / result.EMTD)
+    assert result.overdesign_factor == pytest.approx(0.10)
+    assert result.overdesign_factor == pytest.approx(
+        result.UA_actual / result.UA_process - 1.0
+    )
 
 
 def test_inside_endpoint_properties_and_composition(partial_result) -> None:

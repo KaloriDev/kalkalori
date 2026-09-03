@@ -144,13 +144,15 @@ def test_rating_consumes_sentinel_thermal_state() -> None:
     assert result.thermal_state.UA == _SENTINEL_UA
     assert result.thermal_state.alfa_i == _SENTINEL_ALFA_I
 
-    # ua_margin/overdesign_factor must be derived FROM the sentinel UA (not
-    # some other, real, value) -- U_mean is used as the working-condition U
-    # for A_required, so overdesign_factor is a function of _SENTINEL_U/_UA.
+    # A_required still uses the propagated working-condition U. The canonical
+    # margin, however, must be derived from the independently sentinelled UA,
+    # proving that the historical area ratio is not a second implementation.
     expected_A_required = result.UA_required / _SENTINEL_U
     assert math.isclose(result.A_required, expected_A_required, rel_tol=1e-9)
-    expected_overdesign = result.A_o / expected_A_required - 1.0
+    assert result.UA_process == result.UA_required
+    expected_overdesign = _SENTINEL_UA / result.UA_process - 1.0
     assert math.isclose(result.overdesign_factor, expected_overdesign, rel_tol=1e-9)
+    assert result.ua_margin == result.overdesign_factor
 
 
 def test_rating_calls_solve_iterative_thermal_state_with_closed_balance_state() -> None:
@@ -187,9 +189,54 @@ def test_rating_calls_solve_iterative_thermal_state_with_closed_balance_state() 
         assert patched.call_count == 1
 
 
+def test_rating_surface_margin_contract_covers_margin_and_shortfall() -> None:
+    """Physical Rating results keep the UA and historical area invariants."""
+    hx = BareTubeHeatExchanger(build_bundle())
+    inside_provider = ConstantPropertyProvider(
+        FluidTransportProperties(rho=1.13, mu=1.9e-5, k=0.027, cp=1007.0)
+    )
+    outside_provider = ConstantPropertyProvider(
+        FluidTransportProperties(rho=0.50, mu=3.1e-5, k=0.052, cp=1180.0)
+    )
+    inside = BalanceSideSpec(
+        provider=inside_provider,
+        p=101_325.0,
+        m_dot=18_220.0 / 3600.0,
+        T_in=c_to_k(30.0),
+    )
+    outside = BalanceSideSpec(
+        provider=outside_provider,
+        p=101_325.0,
+        m_dot=28_380.0 / 3600.0,
+        T_in=c_to_k(400.0),
+    )
+
+    positive_margin = hx.rate(inside, outside, effectiveness=0.25)
+    shortfall = hx.rate(inside, outside, effectiveness=0.95)
+    assert positive_margin.overdesign_factor > 0.0
+    assert shortfall.overdesign_factor < 0.0
+
+    for result in (positive_margin, shortfall):
+        assert result.UA_process == result.UA_required
+        assert result.overdesign_factor == result.ua_margin
+        assert math.isclose(
+            result.overdesign_factor,
+            result.UA_actual / result.UA_process - 1.0,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+        assert math.isclose(
+            result.overdesign_factor,
+            result.A_o / result.A_required - 1.0,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+
+
 def main() -> None:
     test_rating_consumes_sentinel_thermal_state()
     test_rating_calls_solve_iterative_thermal_state_with_closed_balance_state()
+    test_rating_surface_margin_contract_covers_margin_and_shortfall()
 
     print("\nALL SMOKE CHECKS PASSED")
 

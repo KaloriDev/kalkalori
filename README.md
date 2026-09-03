@@ -35,8 +35,13 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.8)
+## Current Capabilities (v0.7.9)
 
+- Rating and Simulation expose a common surface-margin result contract:
+  `UA_actual` is the full actual exchanger UA, `UA_process` is the UA required
+  or consumed by the reported process state, and
+  `overdesign_factor = UA_actual / UA_process - 1`. Simulation keeps
+  `surface_margin` as its backward-compatible input derating.
 - Rating can derive the required tube-side pure-steam mass flow from an
   independently known duty (explicit `Q`, or a fully specified opposing-side
   temperature program) and a requested steam outlet state, defaulting to
@@ -162,8 +167,8 @@ High-level structure:
 - `models`  
   Orchestrates geometry and correlations into usable exchanger models
 
-- `notebooks`  
-  Reference examples and validation studies (documentation by example)
+- `core/tests`  
+  Automated validation and regression tests
 
 The core contains **no UI code, no JSON serialization, and no external I/O**.
 
@@ -208,10 +213,6 @@ Typical usage:
 2. Define energy streams
 3. Solve using a heat exchanger model
 4. Inspect results from `HXResult`
-
-See the [local pressure-drop examples](notebooks/local_pressure_drop_examples.ipynb)
-for straight sections, transitions, elbows, planar obstructions, user-defined
-losses, and explicit path assembly.
 
 ---
 

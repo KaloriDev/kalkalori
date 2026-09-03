@@ -105,6 +105,14 @@ result reports as ``q``/``T_out_*``. ``surface_margin=0.0`` skips this
 recomputation entirely, so results are bit-for-bit identical to not having
 the parameter at all.
 
+Simulation still does not perform Rating. Its result nevertheless exposes the
+same physical margin contract as Rating: ``UA_actual`` is the full geometry's
+UA at the reported working state, ``UA_process`` is the effective UA consumed
+by that state, and ``overdesign_factor = UA_actual / UA_process - 1``. Thus
+``surface_margin`` is an input/derating requirement while
+``overdesign_factor`` is the canonical UA-based result; for a valid Simulation
+the two are numerically equivalent but retain distinct API roles.
+
 Scope (v0.5.3)
 --------------------
 In scope: sensible heat transfer; dry air, gas mixtures, water/steam where
@@ -153,6 +161,7 @@ from core.heat_transfer.thermal_iteration import (
 )
 
 from core.models.bare_tube import BareTubeHeatExchanger, HXResult
+from core.models.surface_margin import calculate_surface_margin_factor
 from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
 from core.pressure_drop.flow_path import (
     build_tube_side_pressure_drop_result,
@@ -312,10 +321,11 @@ class HXSimulationResult:
     (uncorrected) ``final_result`` solve pass, which is retained only for its
     area/hydraulic/regime diagnostics.
 
-    Simulation does not rate the exchanger against a required duty, so its
-    output ``overdesign_factor`` is defined as ``0.0``.  This keeps result
-    reporting consistent with Rating without conflating the output with the
-    input ``surface_margin`` derating.
+    Simulation does not rate the exchanger against a specified duty. It does
+    report the shared physical UA margin for its achieved process state:
+    ``overdesign_factor = UA_actual / UA_process - 1``. The echoed
+    ``surface_margin`` remains the input derating requirement; it is not the
+    canonical result source.
     """
 
     # Convergence diagnostics
@@ -361,7 +371,7 @@ class HXSimulationResult:
 
     # Surface margin (input, echoed) and duty transparency
     surface_margin: float   # [-] 0.0 = "on the nose"; input, not an output
-    overdesign_factor: float  # [-] always 0.0 for Simulation; Rating computes it
+    overdesign_factor: float  # [-] UA_actual/UA_process - 1
     Q_full: float            # [W] duty at the real geometry's full UA
     Q_derated: float         # [W] duty after surface_margin derating (== q)
 
@@ -392,6 +402,20 @@ class HXSimulationResult:
     # wet-gas H2O condensation result, but never both in one call.
     inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
+
+    @property
+    def UA_actual(self) -> float:
+        """Full UA of the real geometry at the reported working state [W/K]."""
+        return self.UA
+
+    @property
+    def UA_process(self) -> float:
+        """Effective UA consumed by the reported Simulation state [W/K]."""
+        if self.q == 0.0 and self.EMTD == 0.0:
+            # Equal inlet temperatures make q/EMTD mathematically 0/0 even
+            # though the solver's derated conductance remains well-defined.
+            return self.UA_actual / (1.0 + self.surface_margin)
+        return abs(self.q) / self.EMTD
 
     @property
     def finned_tube_diagnostics(self) -> FinnedTubeDiagnostics | None:
@@ -1011,6 +1035,12 @@ def run_simulation(
             )
         warnings_list = deduplicate_warnings(warnings_list)
 
+        UA_process = UA / (1.0 + surface_margin)
+        overdesign_factor = calculate_surface_margin_factor(
+            UA_actual=UA,
+            UA_process=UA_process,
+        )
+
         return HXSimulationResult(
             converged=converged,
             iterations=iterations,
@@ -1031,12 +1061,12 @@ def run_simulation(
             outside_alfa_mean=outside_alfa_mean,
             U_mean=U_mean,
             UA=UA,
-            EMTD=q / (UA / (1.0 + surface_margin)),
+            EMTD=abs(q) / UA_process,
             q=q,
             T_out_inside=T_out_inside,
             T_out_outside=T_out_outside,
             surface_margin=surface_margin,
-            overdesign_factor=0.0,
+            overdesign_factor=overdesign_factor,
             Q_full=Q_full,
             Q_derated=q,
             final_result=final_result,

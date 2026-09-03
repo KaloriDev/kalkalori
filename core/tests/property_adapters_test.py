@@ -3,10 +3,10 @@
 """Deterministic regressions for core.properties.adapters.
 
 core/properties/adapters.py previously had no .py pytest coverage and was
-exercised only manually through core/tests/coolprop_test.ipynb. This module
+exercised only manually through a notebook (since removed). This module
 covers the field-passthrough contract synthetically (no backend required)
-and ports the notebook's one CoolProp-vs-IAPWS cross-check as a real,
-skip-guarded assertion.
+and ports the notebook's CoolProp-vs-IAPWS cross-check and CoolProp Air
+smoke ranges as real, skip-guarded assertions.
 """
 
 from __future__ import annotations
@@ -25,7 +25,9 @@ from core.properties.adapters import (
 )
 from core.properties.common import FluidTransportProperties
 from core.properties.coolprop_backend import (
+    CoolPropFluidProvider,
     check_coolprop_backend_availability,
+    coolprop_props,
     coolprop_transport_properties,
 )
 from core.properties.water import water_steam_props_iapws97
@@ -104,3 +106,19 @@ def test_coolprop_and_iapws_liquid_water_density_agree_after_adapting() -> None:
     # Adapting must not perturb the value used for the cross-backend check.
     assert adapted.rho == coolprop_transport.rho
     assert math.isclose(adapted.rho, iapws_transport.rho, rel_tol=0.01)
+
+
+@pytest.mark.skipif(
+    not check_coolprop_backend_availability("HEOS").available,
+    reason="CoolProp HEOS backend is not available in this environment.",
+)
+def test_coolprop_air_properties_are_within_expected_range_at_ambient_state() -> None:
+    air = coolprop_props(T=293.15, p=101_325.0, fluid="Air")
+
+    assert 1.15 < air.transport.rho < 1.25
+    assert 1.7e-5 < air.transport.mu < 1.9e-5
+    assert 0.024 < air.transport.k < 0.027
+    assert 990.0 < air.transport.cp < 1020.0
+
+    provider = CoolPropFluidProvider("Air")
+    assert provider.at(T=293.15, p=101_325.0).rho == air.transport.rho
