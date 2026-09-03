@@ -55,6 +55,7 @@ from core.heat_transfer.outside_dispatch import (
 )
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 from core.properties.averaging import mean_temperature
+from core.models.surface_margin import calculate_surface_margin_factor
 
 from core.phase_change import warning_codes as WC
 from core.phase_change.capability import (
@@ -1033,6 +1034,16 @@ def apply_phase_change(
         inside_result, Q_sensible=solution.Q_total, Q_total=solution.Q_total,
     )
 
+    # Keep the phase solver and its achieved duty unchanged. The result-level
+    # process UA applies the same Simulation derating contract to the final
+    # wet working-state UA, then reconstructs EMTD and the canonical margin.
+    UA_actual = wet_thermal_state.UA
+    UA_process = UA_actual / (1.0 + dry_result.surface_margin)
+    surface_margin_factor = calculate_surface_margin_factor(
+        UA_actual=UA_actual,
+        UA_process=UA_process,
+    )
+
     return replace(
         dry_result,
         converged=solution.converged,
@@ -1050,12 +1061,14 @@ def apply_phase_change(
         inside_alfa_mean=wet_thermal_state.alfa_i,
         outside_alfa_mean=wet_thermal_state.alfa_o,
         U_mean=wet_thermal_state.U,
-        UA=wet_thermal_state.UA,
+        UA=UA_actual,
+        EMTD=abs(solution.Q_total) / UA_process,
         q=solution.Q_total,
         T_out_inside=solution.T_out_inside,
         T_out_outside=solution.T_out_outside,
         Q_full=solution.Q_total,
         Q_derated=solution.Q_total,
+        overdesign_factor=surface_margin_factor,
         final_result=final_result,
         thermal_state=wet_thermal_state,
         wall_temperature_envelope=envelope_wet,
@@ -1474,6 +1487,12 @@ def _apply_inside_condensation(
     outside_result = replace(
         outside_result, Q_sensible=solution.Q_total, Q_total=solution.Q_total,
     )
+    UA_actual = wet_thermal_state.UA
+    UA_process = UA_actual / (1.0 + dry_result.surface_margin)
+    surface_margin_factor = calculate_surface_margin_factor(
+        UA_actual=UA_actual,
+        UA_process=UA_process,
+    )
     return replace(
         dry_result,
         converged=solution.converged,
@@ -1491,12 +1510,14 @@ def _apply_inside_condensation(
         inside_alfa_mean=wet_thermal_state.alfa_i,
         outside_alfa_mean=wet_thermal_state.alfa_o,
         U_mean=wet_thermal_state.U,
-        UA=wet_thermal_state.UA,
+        UA=UA_actual,
+        EMTD=abs(solution.Q_total) / UA_process,
         q=solution.Q_total,
         T_out_inside=solution.T_out_inside,
         T_out_outside=solution.T_out_outside,
         Q_full=solution.Q_total,
         Q_derated=solution.Q_total,
+        overdesign_factor=surface_margin_factor,
         final_result=final_result,
         thermal_state=wet_thermal_state,
         wall_temperature_envelope=envelope_wet,

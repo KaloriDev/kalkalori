@@ -35,6 +35,7 @@ from core.models.bare_tube import (
 from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide
 from core.models.rating import HXRatingResult
 from core.models.simulation import HXSideInput, HXSimulationResult
+from core.models.surface_margin import calculate_surface_margin_factor
 from core.pressure_drop.flow_path import build_tube_side_pressure_drop_result
 from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
 from core.phase_change import warning_codes as WC
@@ -909,13 +910,23 @@ def _simulation_from_solution(
     inside_is_hot,
     two_phase_warning,
 ):
+    UA_process = solution.UA_total
+    UA_actual = (
+        UA_process
+        if surface_margin == 0.0
+        else solution.U_equivalent * hx.bundle.total_outer_area
+    )
+    surface_margin_factor = calculate_surface_margin_factor(
+        UA_actual=UA_actual,
+        UA_process=UA_process,
+    )
     final_result, thermal_state, envelope, warnings = _water_steam_diagnostics(
         hx,
         inside,
         outside,
         solution,
         outside_evaluation=outside_evaluation,
-        UA=solution.UA_total,
+        UA=UA_actual,
         active=active,
         inside_is_hot=inside_is_hot,
         two_phase_warning=two_phase_warning,
@@ -939,13 +950,13 @@ def _simulation_from_solution(
         inside_alfa_mean=solution.inside_alpha_equivalent,
         outside_alfa_mean=solution.outside_alpha,
         U_mean=solution.U_equivalent,
-        UA=solution.UA_total,
-        EMTD=solution.Q_total / solution.UA_total,
+        UA=UA_actual,
+        EMTD=abs(solution.Q_total) / UA_process,
         q=solution.Q_total,
         T_out_inside=solution.state_out.T,
         T_out_outside=solution.T_out_outside,
         surface_margin=surface_margin,
-        overdesign_factor=0.0,
+        overdesign_factor=surface_margin_factor,
         Q_full=Q_full,
         Q_derated=solution.Q_total,
         final_result=final_result,
@@ -966,6 +977,10 @@ def _rating_from_solution(
     A_required = solution.A_total
     scale = A_actual / A_required
     UA_actual = solution.UA_total * scale
+    surface_margin_factor = calculate_surface_margin_factor(
+        UA_actual=UA_actual,
+        UA_process=solution.UA_total,
+    )
     final_result, thermal_state, envelope, warnings = _water_steam_diagnostics(
         hx,
         inside,
@@ -978,8 +993,8 @@ def _rating_from_solution(
         two_phase_warning=two_phase_warning,
     )
     return HXRatingResult(
-        overdesign_factor=A_actual / A_required - 1.0,
-        ua_margin=UA_actual / solution.UA_total - 1.0,
+        overdesign_factor=surface_margin_factor,
+        ua_margin=surface_margin_factor,
         A_o=A_actual,
         A_required=A_required,
         UA_required=solution.UA_total,

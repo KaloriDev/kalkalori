@@ -31,15 +31,18 @@ how much surface margin / overdesign the geometry provides. This is the
 inverse question to Simulation (``core.models.simulation``), which starts
 from known inlets and computes achievable outlets.
 
-Over-surface definition
-------------------------
-``A_o`` is the actual outer heat-transfer area from geometry (``HXResult.A_o``).
-``A_required`` is the area that would be exactly required for the closed
-balance's duty at the working-condition ``U``:
+Surface-margin definition
+--------------------------
+Rating uses the shared physical result definition:
 
-    overdesign_factor = A_o / A_required - 1   (positive = margin, negative = shortfall)
+    overdesign_factor = UA_actual / UA_process - 1
+    UA_process = UA_required
 
-``ua_margin = UA_actual / UA_required - 1`` is reported alongside "for free".
+``ua_margin`` remains as a backward-compatible alias of exactly the same
+value. Because ``UA_actual = U_mean * A_o`` and
+``A_required = UA_required / U_mean``, the historical area relation
+``A_o / A_required - 1`` remains an equivalent invariant, not an independent
+implementation.
 
 ``U``/``UA_actual`` source (v0.5.3)
 -------------------------------------
@@ -75,7 +78,8 @@ Algorithm
 3. ``Q_max = C_min*(T_hot_in - T_cold_in)``, ``eps_req = Q/Q_max``,
    ``NTU_req = ntu_from_effectiveness(eps_req, ...)``, ``UA_req = NTU_req*C_min``,
    ``A_required = UA_req/U_mean``.
-4. ``overdesign_factor = A_o/A_required - 1``.
+4. Evaluate the shared ``UA_actual/UA_process - 1`` margin definition, with
+   ``UA_process = UA_required``.
 """
 
 from __future__ import annotations
@@ -103,6 +107,7 @@ from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_p
 from core.common.warnings import ModelWarning, deduplicate_warnings, make_warning
 
 from core.models.heat_balance import ClosedBalance
+from core.models.surface_margin import calculate_surface_margin_factor
 from core.phase_change.types import PhaseChangeResult, WaterSteamPhaseChangeResult
 
 if TYPE_CHECKING:
@@ -125,8 +130,8 @@ class HXRatingResult:
     side's outlet point uses final ``W_out`` composition and gas mass flow.
     """
 
-    overdesign_factor: float   # [-] A_o/A_required - 1
-    ua_margin: float           # [-] UA_actual/UA_required - 1
+    overdesign_factor: float   # [-] UA_actual/UA_process - 1
+    ua_margin: float           # [-] backward-compatible exact alias
 
     A_o: float                 # [m^2] actual outer area from geometry
     A_required: float          # [m^2] area required for the closed balance's duty
@@ -164,6 +169,11 @@ class HXRatingResult:
     # rather than through ``BareTubeHeatExchanger.rate``.
     inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
+
+    @property
+    def UA_process(self) -> float:
+        """UA required by the closed, reported Rating process [W/K]."""
+        return self.UA_required
 
     @property
     def finned_tube_diagnostics(self) -> FinnedTubeDiagnostics | None:
@@ -676,8 +686,16 @@ def run_rating(
         UA_req = NTU_req * C_min
         A_req = UA_req / U_mean
 
-    overdesign_factor = A_o / A_req - 1.0
-    ua_margin = UA_actual / UA_req - 1.0
+    if sensible_effectiveness_infeasible and allow_infeasible_sensible_effectiveness:
+        # Preserve the established non-physical dry-baseline sentinel. The
+        # strict shared helper intentionally rejects infinite UA values.
+        overdesign_factor = -1.0
+    else:
+        overdesign_factor = calculate_surface_margin_factor(
+            UA_actual=UA_actual,
+            UA_process=UA_req,
+        )
+    ua_margin = overdesign_factor
 
     warnings_list: list[ModelWarning] = (
         list(topology_warnings)

@@ -54,6 +54,7 @@ from core.heat_transfer.outside_dispatch import (
 )
 from core.models.heat_balance import BalanceSideSpec, ClosedBalance, ClosedBalanceSide, close_heat_balance
 from core.models.rating import run_rating
+from core.models.surface_margin import calculate_surface_margin_factor
 from core.pressure_drop.flow_path import build_outside_pressure_drop_result
 from core.properties.averaging import mean_temperature
 
@@ -1763,9 +1764,9 @@ def apply_phase_change_to_rating(
         UA_effective = 1.0 / R_total_effective
         U_effective = UA_effective / A_o
         A_required_effective = wet_rating_result.UA_required / U_effective
-        overdesign_factor_effective = A_o / A_required_effective - 1.0
-        ua_margin_effective = (
-            UA_effective / wet_rating_result.UA_required - 1.0
+        surface_margin_factor = calculate_surface_margin_factor(
+            UA_actual=UA_effective,
+            UA_process=wet_rating_result.UA_process,
         )
 
         thermal_finned = (
@@ -1856,8 +1857,8 @@ def apply_phase_change_to_rating(
         )
         wet_rating_result = replace(
             wet_rating_result,
-            overdesign_factor=overdesign_factor_effective,
-            ua_margin=ua_margin_effective,
+            overdesign_factor=surface_margin_factor,
+            ua_margin=surface_margin_factor,
             A_required=A_required_effective,
             UA_actual=UA_effective,
             U_mean=U_effective,
@@ -2350,8 +2351,10 @@ def _apply_inside_condensation_to_rating(
         UA=UA_effective,
     )
     A_required = wet_rating_result.UA_required / U_effective
-    overdesign_factor = wet_rating_result.A_o / A_required - 1.0
-    ua_margin = UA_effective / wet_rating_result.UA_required - 1.0
+    surface_margin_factor = calculate_surface_margin_factor(
+        UA_actual=UA_effective,
+        UA_process=wet_rating_result.UA_process,
+    )
 
     wet_area = wet_rating_result.final_result.A_i * wet_surface.wet_surface_fraction
     W_sat_surface = saturated_water_ratio(
@@ -2446,8 +2449,8 @@ def _apply_inside_condensation_to_rating(
     )
     return replace(
         wet_rating_result,
-        overdesign_factor=overdesign_factor,
-        ua_margin=ua_margin,
+        overdesign_factor=surface_margin_factor,
+        ua_margin=surface_margin_factor,
         A_required=A_required,
         UA_actual=UA_effective,
         U_mean=U_effective,
