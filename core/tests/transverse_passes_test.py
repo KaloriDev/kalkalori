@@ -221,21 +221,28 @@ def test_t12_internal_length_uses_total_pass_count() -> None:
         "n_passes_transverse",
         "valid",
         "expected_arrangement",
+        "expects_auto_multipass_warning",
     ),
     [
-        (6, 1, 1, True, "crossflow"),
-        (6, 2, 2, True, "crossflow"),
-        (6, 4, 4, True, "crossflow"),
-        (6, 6, 6, True, "crossflow"),
-        (6, 2, 1, True, "counterflow"),
-        (6, 4, 1, True, "counterflow"),
-        (6, 6, 1, True, "counterflow"),
-        (6, 6, 2, True, "crossflow"),
-        (6, 6, 3, True, "crossflow"),
-        (15, 18, 6, True, "crossflow"),
-        (6, 4, 3, False, None),
-        (6, 4, 5, False, None),
-        (6, 4, 0, False, None),
+        (6, 1, 1, True, "crossflow", False),
+        (6, 2, 2, True, "crossflow", False),
+        (6, 4, 4, True, "crossflow", False),
+        (6, 6, 6, True, "crossflow", False),
+        (6, 2, 1, True, "counterflow", False),
+        (6, 4, 1, True, "counterflow", False),
+        (6, 6, 1, True, "counterflow", False),
+        (6, 6, 2, True, "crossflow", True),
+        (6, 6, 3, True, "crossflow", True),
+        (15, 18, 6, True, "crossflow", True),
+        # v0.7.8 diagnostic follow-up: literal n_passes_tube=16 coverage
+        # (previously only smaller/proportional pass counts were exercised).
+        (16, 16, 16, True, "crossflow", False),
+        (16, 16, 1, True, "counterflow", False),
+        (16, 16, 4, True, "crossflow", True),
+        (16, 16, 8, True, "crossflow", True),
+        (6, 4, 3, False, None, False),
+        (6, 4, 5, False, None, False),
+        (6, 4, 0, False, None, False),
     ],
 )
 def test_standard_circuit_configuration_matrix(
@@ -244,6 +251,7 @@ def test_standard_circuit_configuration_matrix(
     n_passes_transverse: int,
     valid: bool,
     expected_arrangement: str | None,
+    expects_auto_multipass_warning: bool,
 ) -> None:
     kwargs = dict(
         n_rows=n_rows,
@@ -258,6 +266,11 @@ def test_standard_circuit_configuration_matrix(
 
     bundle = _bundle(**kwargs)
     assert bundle.flow_arrangement_resolved == expected_arrangement
+    warning_codes = [warning.code for warning in bundle.topology_warnings]
+    if expects_auto_multipass_warning:
+        assert warning_codes == ["FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION"]
+    else:
+        assert warning_codes == []
 
 
 def test_non_exact_row_partition_and_auto_counterflow() -> None:
