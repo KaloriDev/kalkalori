@@ -97,7 +97,21 @@ def _side_inputs(
 @pytest.fixture(scope="module")
 def active_result():
     inside, outside = _side_inputs()
-    return _wet_finned_hx().simulate(inside, outside)
+    return _wet_finned_hx().simulate(inside, outside, surface_margin=0.10)
+
+
+def test_active_wet_finned_simulation_reports_shared_surface_margin(
+    active_result,
+) -> None:
+    result = active_result
+    assert result.outside_phase_change.active is True
+    assert result.surface_margin == 0.10
+    assert result.UA_actual == result.UA
+    assert result.UA_process == pytest.approx(abs(result.q) / result.EMTD)
+    assert result.overdesign_factor == pytest.approx(0.10)
+    assert result.overdesign_factor == pytest.approx(
+        result.UA_actual / result.UA_process - 1.0
+    )
 
 
 def test_auto_simulation_solves_one_shared_partial_wet_finned_state(

@@ -188,14 +188,20 @@ def test_surface_margin_derates_public_steam_simulation():
     hx = _hx()
     baseline = hx.simulate(_inside_sim(quality_in=1.0), _outside_sim())
     derated = hx.simulate(
-        _inside_sim(quality_in=1.0), _outside_sim(), surface_margin=0.25
+        _inside_sim(quality_in=1.0), _outside_sim(), surface_margin=0.10
     )
-    assert derated.surface_margin == 0.25
+    assert derated.surface_margin == 0.10
     assert derated.q < baseline.q
     assert derated.Q_full == pytest.approx(baseline.q)
     assert derated.Q_derated == derated.q
     assert derated.inside_phase_change.A_total == pytest.approx(
-        hx.bundle.total_outer_area / 1.25, rel=2e-8
+        hx.bundle.total_outer_area / 1.10, rel=2e-8
+    )
+    assert derated.UA_actual == derated.UA
+    assert derated.UA_process == pytest.approx(abs(derated.q) / derated.EMTD)
+    assert derated.overdesign_factor == pytest.approx(0.10)
+    assert derated.overdesign_factor == pytest.approx(
+        derated.UA_actual / derated.UA_process - 1.0
     )
 
 

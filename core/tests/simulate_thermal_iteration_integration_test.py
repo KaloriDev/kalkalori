@@ -209,6 +209,31 @@ def test_rate_include_simulation_consistency() -> None:
     assert math.isclose(rating.alfa_o, rating.simulation.outside_alfa_mean, rel_tol=1e-6)
 
 
+def test_customer_overdesign_consumer_needs_no_result_type_branch() -> None:
+    hx = BareTubeHeatExchanger(build_bundle())
+    inside = BalanceSideSpec(
+        provider=_INSIDE_PROVIDER, p=_P, m_dot=_M_DOT_INSIDE,
+        T_in=c_to_k(30.0), T_out=c_to_k(150.0),
+    )
+    outside = BalanceSideSpec(
+        provider=_OUTSIDE_PROVIDER, p=_P, m_dot=_M_DOT_OUTSIDE,
+        T_in=c_to_k(400.0), T_out=c_to_k(300.0),
+    )
+    rating = hx.rate(inside, outside, include_simulation=True)
+    assert rating.simulation is not None
+
+    def customer_overdesign_pct(result) -> float:
+        return 100.0 * result.overdesign_factor
+
+    for result in (rating, rating.simulation):
+        assert math.isclose(
+            customer_overdesign_pct(result),
+            100.0 * (result.UA_actual / result.UA_process - 1.0),
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+
+
 def test_resistance_reconstruction_simulate_and_rate() -> None:
     print("resistance reconstruction: 1/(R_i+R_wall+R_o) matches UA for both simulate() and rate()")
     hx = BareTubeHeatExchanger(build_bundle())
@@ -284,7 +309,7 @@ def test_surface_margin_derates_duty_monotonically_and_zero_margin_is_exact() ->
 
     baseline = hx.simulate(inside, outside)
     margin_zero = hx.simulate(inside, outside, surface_margin=0.0)
-    margin_low = hx.simulate(inside, outside, surface_margin=0.2)
+    margin_low = hx.simulate(inside, outside, surface_margin=0.1)
     margin_high = hx.simulate(inside, outside, surface_margin=0.5)
 
     # surface_margin=0.0 regression: must be bit-for-bit identical to the
@@ -300,10 +325,33 @@ def test_surface_margin_derates_duty_monotonically_and_zero_margin_is_exact() ->
     assert margin_low.Q_full > margin_low.Q_derated
     assert margin_high.Q_full > margin_high.Q_derated
 
-    # Simulation never calculates a Rating overdesign factor; the shared
-    # reporting field is explicitly zero regardless of derating.
-    for result in (baseline, margin_zero, margin_low, margin_high):
-        assert result.overdesign_factor == 0.0
+    assert margin_zero.overdesign_factor == 0.0
+    assert margin_zero.UA_process == margin_zero.UA_actual
+
+    for result, expected_margin in (
+        (baseline, 0.0),
+        (margin_zero, 0.0),
+        (margin_low, 0.1),
+        (margin_high, 0.5),
+    ):
+        assert result.UA_actual == result.UA
+        assert math.isclose(
+            result.UA_process,
+            abs(result.q) / result.EMTD,
+            rel_tol=1e-12,
+        )
+        assert math.isclose(
+            result.overdesign_factor,
+            result.UA_actual / result.UA_process - 1.0,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+        assert math.isclose(
+            result.overdesign_factor,
+            expected_margin,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
 
 
 def main() -> None:
@@ -311,6 +359,7 @@ def main() -> None:
     test_real_dry_air_heated_case_matches_corrected_diagnostics()
     test_disabling_wall_correction_at_lowest_level_changes_final_result()
     test_rate_include_simulation_consistency()
+    test_customer_overdesign_consumer_needs_no_result_type_branch()
     test_resistance_reconstruction_simulate_and_rate()
     test_warnings_propagate_from_thermal_state_to_simulation_result()
     test_iterate_false_forces_a_single_pass_and_drops_thermal_state()

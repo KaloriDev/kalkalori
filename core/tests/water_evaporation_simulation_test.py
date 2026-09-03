@@ -143,15 +143,21 @@ def water_steam_saturated_vapor_h():
 def test_surface_margin_changes_duty_quality_and_zone_allocation():
     hx = _hx(rows=10)
     baseline = hx.simulate(_inside(T_in=350.0), _outside())
-    derated = hx.simulate(_inside(T_in=350.0), _outside(), surface_margin=0.25)
+    derated = hx.simulate(_inside(T_in=350.0), _outside(), surface_margin=0.10)
     base_water = baseline.inside_phase_change
     water = derated.inside_phase_change
     assert derated.q < baseline.q
     assert derated.Q_full == pytest.approx(baseline.q)
     assert derated.Q_derated == derated.q
     assert water.quality_out < base_water.quality_out
-    assert water.A_total == pytest.approx(hx.bundle.total_outer_area / 1.25, rel=2e-8)
+    assert water.A_total == pytest.approx(hx.bundle.total_outer_area / 1.10, rel=2e-8)
     assert water.A_evaporation < base_water.A_evaporation
+    assert derated.UA_actual == derated.UA
+    assert derated.UA_process == pytest.approx(abs(derated.q) / derated.EMTD)
+    assert derated.overdesign_factor == pytest.approx(0.10)
+    assert derated.overdesign_factor == pytest.approx(
+        derated.UA_actual / derated.UA_process - 1.0
+    )
 
 
 def test_capable_possible_active_are_distinct_after_strong_surface_derating():
