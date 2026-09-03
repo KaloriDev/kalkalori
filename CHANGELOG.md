@@ -5,6 +5,35 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.7.10] — Alternating tube counts in staggered rows
+
+### Changed
+
+- `TubeBundle.n_tubes_per_row` remains the sole tube-row-count input but now
+  accepts `float` and is normalized on construction: to the nearest integer
+  for `layout="inline"`, and to the nearest half-integer (`..., 6.0, 6.5,
+  7.0, ...`) for `layout="staggered"`. A half-integer value such as `6.5`
+  represents a real alternating `7 / 6 / 7 / 6 / ...` tube-per-row pattern
+  via two new derived properties, `n_tubes_per_row_odd` and
+  `n_tubes_per_row_even`; `n_tubes_per_row` itself remains their periodic
+  average, `(odd + even) / 2` -- deliberately not `n_tubes_total / n_rows`.
+- `n_tubes_total` is now computed exactly from the alternating odd/even row
+  pattern instead of `n_rows * n_tubes_per_row`, so every total
+  heat-transfer area and tube-side flow-geometry quantity
+  (`n_tubes_per_pass_effective`, `internal_flow_area_per_pass`, etc.) stays
+  exact for an odd `n_rows` staggered bank. `frontal_flow_area` keeps using
+  the normalized periodic-average `n_tubes_per_row`, unchanged from the
+  existing 0D model.
+- A new `TUBES_PER_ROW_NORMALIZED` warning is raised when normalization
+  actually changes the declared input, surfaced through the existing
+  `bundle.warnings`/`geometry_warnings` contract alongside the pre-existing
+  `FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION` warning.
+- Legacy integer `n_tubes_per_row` inputs normalize to themselves for both
+  layouts, so every pre-v0.7.10 numeric result (areas, hydraulics, Rating,
+  Simulation) is unchanged.
+
+---
+
 ## [0.7.9] — Unified surface margin reporting
 
 ### Changed
