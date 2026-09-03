@@ -530,8 +530,12 @@ def run_rating(
     capacity does not by itself mean the *specified* Rating problem is
     infeasible once condensation is considered.
     """
-    if flow_arrangement is None:
-        flow_arrangement = hx.bundle.flow_arrangement
+    uses_bundle_flow_arrangement = flow_arrangement is None
+    topology_warnings = (
+        hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
+    )
+    if uses_bundle_flow_arrangement:
+        flow_arrangement = hx.bundle.flow_arrangement_resolved
 
     inside = closed_balance.inside
     outside = closed_balance.outside
@@ -676,7 +680,8 @@ def run_rating(
     ua_margin = UA_actual / UA_req - 1.0
 
     warnings_list: list[ModelWarning] = (
-        list(closed_balance.warnings or [])
+        list(topology_warnings)
+        + list(closed_balance.warnings or [])
         + list(solve_result.warnings or [])
         + list(thermal_state.warnings)
         + list(wall_temperature_envelope.warnings)

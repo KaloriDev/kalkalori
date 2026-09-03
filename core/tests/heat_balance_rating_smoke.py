@@ -60,6 +60,28 @@ def build_bundle() -> TubeBundle:
     )
 
 
+def build_auto_topology_bundle(*, n_passes_transverse: int) -> TubeBundle:
+    """Fixed 6-pass geometry whose AUTO topology is varied by one field."""
+    tube = BareTube(
+        D_i=25e-3 - 2 * 1.5e-3,
+        D_o=25e-3,
+        length_total=2.8,
+        length_effective=2.8,
+        wall_k=50.0,
+    )
+    return TubeBundle(
+        tube=tube,
+        n_rows=6,
+        n_tubes_per_row=56,
+        pitch_transverse=35e-3,
+        pitch_longitudinal=35e-3,
+        layout="staggered",
+        n_passes_tube=6,
+        n_passes_transverse=n_passes_transverse,
+        flow_arrangement="auto",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Part A - heat-balance closure
 # ---------------------------------------------------------------------------
@@ -309,6 +331,126 @@ def test_rating() -> tuple:
     return res0, res_lo, res_hi
 
 
+def test_rating_uses_auto_arrangement_resolved_from_tube_circuit() -> None:
+    """AUTO 6/6 and 6/1 circuiting must reach Rating's epsilon-NTU inverse."""
+    crossflow_bundle = build_auto_topology_bundle(n_passes_transverse=6)
+    counterflow_bundle = build_auto_topology_bundle(n_passes_transverse=1)
+    multipass_bundle = build_auto_topology_bundle(n_passes_transverse=2)
+    assert crossflow_bundle.flow_arrangement_resolved == "crossflow"
+    assert counterflow_bundle.flow_arrangement_resolved == "counterflow"
+    assert multipass_bundle.flow_arrangement_resolved == "crossflow"
+
+    inside_provider = ConstantPropertyProvider(
+        FluidTransportProperties(rho=1.13, mu=1.9e-5, k=0.027, cp=1007.0)
+    )
+    outside_provider = ConstantPropertyProvider(
+        FluidTransportProperties(rho=0.50, mu=3.1e-5, k=0.052, cp=1180.0)
+    )
+    inside = BalanceSideSpec(
+        provider=inside_provider,
+        p=101_325.0,
+        m_dot=3.0,
+        T_in=c_to_k(400.0),
+    )
+    outside = BalanceSideSpec(
+        provider=outside_provider,
+        p=101_325.0,
+        m_dot=5.0,
+        T_in=c_to_k(30.0),
+    )
+
+    # The same effectiveness target closes the same heat balance for both
+    # geometrically identical bundles.  Constant properties keep their
+    # working-condition U identical, isolating the arrangement passed to the
+    # inverse epsilon-NTU relation used by Rating.
+    effectiveness = 0.60
+    crossflow = BareTubeHeatExchanger(crossflow_bundle).rate(
+        inside, outside, effectiveness=effectiveness
+    )
+    counterflow = BareTubeHeatExchanger(counterflow_bundle).rate(
+        inside, outside, effectiveness=effectiveness
+    )
+    multipass_auto = BareTubeHeatExchanger(multipass_bundle).rate(
+        inside, outside, effectiveness=effectiveness
+    )
+    multipass_counterflow_override = BareTubeHeatExchanger(multipass_bundle).rate(
+        inside,
+        outside,
+        effectiveness=effectiveness,
+        flow_arrangement="counterflow",
+    )
+
+    assert math.isclose(
+        crossflow.closed_balance.Q,
+        counterflow.closed_balance.Q,
+        rel_tol=1e-12,
+    )
+    assert math.isclose(crossflow.A_o, counterflow.A_o, rel_tol=1e-12)
+    assert math.isclose(crossflow.U_mean, counterflow.U_mean, rel_tol=1e-10)
+    assert math.isclose(crossflow.UA_actual, counterflow.UA_actual, rel_tol=1e-10)
+
+    assert counterflow.A_required < crossflow.A_required
+    assert crossflow.A_required / counterflow.A_required > 1.05
+    assert counterflow.overdesign_factor > crossflow.overdesign_factor
+    assert counterflow.overdesign_factor - crossflow.overdesign_factor > 1e-2
+
+    auto_warning_code = "FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION"
+    assert auto_warning_code in {warning.code for warning in multipass_auto.warnings or []}
+    assert auto_warning_code not in {
+        warning.code for warning in multipass_counterflow_override.warnings or []
+    }
+    assert math.isclose(
+        multipass_counterflow_override.A_required,
+        counterflow.A_required,
+        rel_tol=1e-10,
+    )
+    assert math.isclose(
+        multipass_counterflow_override.overdesign_factor,
+        counterflow.overdesign_factor,
+        rel_tol=1e-10,
+    )
+
+
+def test_simulation_uses_auto_arrangement_resolved_from_tube_circuit() -> None:
+    """AUTO 6/6 and 6/1 circuiting must reach Simulation's epsilon-NTU path."""
+    crossflow_hx = BareTubeHeatExchanger(
+        build_auto_topology_bundle(n_passes_transverse=6)
+    )
+    counterflow_hx = BareTubeHeatExchanger(
+        build_auto_topology_bundle(n_passes_transverse=1)
+    )
+    assert crossflow_hx.bundle.flow_arrangement_resolved == "crossflow"
+    assert counterflow_hx.bundle.flow_arrangement_resolved == "counterflow"
+    inside = HXSideInput(
+        provider=ConstantPropertyProvider(
+            FluidTransportProperties(rho=1.13, mu=1.9e-5, k=0.027, cp=1007.0)
+        ),
+        p=101_325.0,
+        m_dot=3.0,
+        T_in=c_to_k(400.0),
+    )
+    outside = HXSideInput(
+        provider=ConstantPropertyProvider(
+            FluidTransportProperties(rho=0.50, mu=3.1e-5, k=0.052, cp=1180.0)
+        ),
+        p=101_325.0,
+        m_dot=5.0,
+        T_in=c_to_k(30.0),
+    )
+
+    crossflow = crossflow_hx.simulate(inside, outside, iterate=False)
+    counterflow = counterflow_hx.simulate(inside, outside, iterate=False)
+
+    C_min = min(inside.m_dot * 1007.0, outside.m_dot * 1180.0)
+    Q_max = C_min * (inside.T_in - outside.T_in)
+    crossflow_effectiveness = crossflow.q / Q_max
+    counterflow_effectiveness = counterflow.q / Q_max
+
+    assert counterflow.q - crossflow.q > 1e-3 * Q_max
+    assert counterflow_effectiveness > crossflow_effectiveness
+    assert counterflow_effectiveness - crossflow_effectiveness > 1e-3
+
+
 def main() -> None:
     test_closure_popular_variant()
     test_closure_solve_T_out()
@@ -321,6 +463,8 @@ def main() -> None:
     test_ntu_from_effectiveness_guard()
 
     test_rating()
+    test_rating_uses_auto_arrangement_resolved_from_tube_circuit()
+    test_simulation_uses_auto_arrangement_resolved_from_tube_circuit()
 
     print("\nALL SMOKE CHECKS PASSED")
 

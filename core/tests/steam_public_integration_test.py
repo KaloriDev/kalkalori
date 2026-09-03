@@ -41,7 +41,15 @@ class TemperatureDependentOutsideProvider:
         )
 
 
-def _hx(n_rows=10, n_tubes_per_row=10, *, orientation=ORIENTATION):
+def _hx(
+    n_rows=10,
+    n_tubes_per_row=10,
+    *,
+    orientation=ORIENTATION,
+    n_passes_tube=1,
+    n_passes_transverse=None,
+    flow_arrangement="crossflow",
+):
     return BareTubeHeatExchanger(
         TubeBundle(
             tube=BareTube(
@@ -51,7 +59,10 @@ def _hx(n_rows=10, n_tubes_per_row=10, *, orientation=ORIENTATION):
             ),
             n_rows=n_rows, n_tubes_per_row=n_tubes_per_row,
             pitch_transverse=0.04, pitch_longitudinal=0.04,
-            layout="inline", n_passes_tube=1, flow_arrangement="crossflow",
+            layout="inline",
+            n_passes_tube=n_passes_tube,
+            n_passes_transverse=n_passes_transverse,
+            flow_arrangement=flow_arrangement,
         )
     )
 
@@ -106,6 +117,34 @@ def test_simulation_public_transitions_use_typed_steam_result(inside, expected_p
     assert steam.two_phase_pressure_drop_status == "not_supported"
     assert WC.STEAM_TWO_PHASE_PRESSURE_DROP_NOT_SUPPORTED in {
         warning.code for warning in steam.warnings
+    }
+
+
+def test_steam_heater_propagates_only_bundle_auto_topology_warning():
+    warning_code = "FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION"
+    results = {
+        arrangement: _hx(
+            n_rows=18,
+            n_tubes_per_row=18,
+            n_passes_tube=18,
+            n_passes_transverse=6,
+            flow_arrangement=arrangement,
+        ).simulate(_inside_sim(quality_in=1.0), _outside_sim())
+        for arrangement in ("auto", "counterflow")
+    }
+
+    auto_codes = [
+        warning.code for warning in results["auto"].inside_phase_change.warnings
+    ]
+    explicit_codes = {
+        warning.code
+        for warning in results["counterflow"].inside_phase_change.warnings
+    }
+
+    assert auto_codes.count(warning_code) == 1
+    assert warning_code not in explicit_codes
+    assert warning_code in {
+        warning.code for warning in results["auto"].warnings or ()
     }
 
 

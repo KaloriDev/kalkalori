@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.6)
+## Current Capabilities (v0.7.8)
 
 - Rating can derive the required tube-side pure-steam mass flow from an
   independently known duty (explicit `Q`, or a fully specified opposing-side
@@ -113,6 +113,25 @@ reported finned-bank value is explicitly a dry pressure-drop reference, not an
 actual wet-bank pressure drop. Duct, plenum,
 casing-transition, screen, louver, damper, fan, and external-piping losses are
 not included.
+
+### Tube circuit topology
+
+`TubeBundle.n_passes_tube` is the total number of tube-side passes, while
+`n_passes_transverse` is the number of passes grouped within each longitudinal
+section of the outside bank. The latter must divide the former, and
+`n_sections_longitudinal` is their quotient. Rows need not divide exactly
+between those sections: `n_rows_per_section_effective` reports the possibly
+non-integer effective 0D average, while `rows_partition_is_exact` indicates
+whether the physical partition is exact.
+
+With the default `flow_arrangement="auto"`, a single longitudinal section
+resolves to global `crossflow`, and one transverse pass per section with more
+than one tube-side pass resolves to global `counterflow`. Intermediate
+circuits containing both multiple transverse passes and multiple longitudinal
+sections also resolve to global `crossflow`; this is a global/lumped 0D
+crossflow approximation, not section-wise thermal coupling or a segmented/
+distributed model. An explicit `crossflow`, `counterflow` or `cocurrentflow`
+value always overrides AUTO resolution.
 
 ---
 

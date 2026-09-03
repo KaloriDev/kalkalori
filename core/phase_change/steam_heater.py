@@ -541,7 +541,7 @@ def _evaluate_duty(
         finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
 
-    flow_arrangement = hx.bundle.flow_arrangement
+    flow_arrangement = hx.bundle.flow_arrangement_resolved
     specs = _partition_enthalpy(inlet_state.h, h_out, saturation)
     allocation = _allocate_parallel_air_zones(
         hx,
@@ -558,7 +558,8 @@ def _evaluate_duty(
         cache=cache,
     )
     zones = allocation.zones
-    trial_warnings: list[ModelWarning] = list(outside.warnings)
+    trial_warnings: list[ModelWarning] = list(hx.bundle.topology_warnings)
+    trial_warnings.extend(outside.warnings)
     for zone in zones:
         trial_warnings.extend(zone.warnings)
 

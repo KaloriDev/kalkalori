@@ -715,9 +715,13 @@ class BareTubeHeatExchanger:
         finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
 
     ) -> HXResult:
-        # Use bundle's flow_arrangement if not provided
-        if flow_arrangement is None:
-            flow_arrangement = self.bundle.flow_arrangement
+        # Use the arrangement resolved from bundle circuiting if not provided.
+        uses_bundle_flow_arrangement = flow_arrangement is None
+        topology_warnings = (
+            self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
+        )
+        if uses_bundle_flow_arrangement:
+            flow_arrangement = self.bundle.flow_arrangement_resolved
 
         if m_dot_tube_side <= 0.0:
             raise ValueError("m_dot_tube_side must be positive.")
@@ -939,6 +943,7 @@ class BareTubeHeatExchanger:
         # Collect warnings
         # --------------------------------------------------------------
         warnings_list: list[ModelWarning] = []
+        warnings_list.extend(topology_warnings)
 
         # Internal heat-transfer applicability warnings (e.g. gas
         # wall-property correction, only non-empty when T_bulk/T_wall are
