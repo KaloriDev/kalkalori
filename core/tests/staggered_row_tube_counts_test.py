@@ -284,6 +284,169 @@ def test_no_normalization_warning_for_exact_legacy_geometry() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Longitudinal-section-local alternating row parity (v0.7.10 follow-up)
+#
+# n_tubes_total previously numbered odd/even rows globally across the whole
+# bundle. That is wrong when the bundle has multiple *exact* longitudinal
+# sections (circuit topology, see n_sections_longitudinal): each section is
+# a repeated physical module of the bank, so row parity resets to "odd" at
+# the start of every section instead of continuing globally.
+# ---------------------------------------------------------------------------
+
+
+def _sectioned_bundle(
+    *, n_rows: int, n_sections: int, n_tubes_per_row: float, layout: str, **overrides
+) -> TubeBundle:
+    """A bundle with exactly ``n_sections`` longitudinal sections.
+
+    One transverse pass per section (``n_passes_transverse=1``) with
+    ``n_passes_tube=n_sections`` is the simplest way to get exactly
+    ``n_sections`` longitudinal sections for these tests.
+    """
+    overrides.setdefault("n_passes_tube", n_sections)
+    overrides.setdefault("n_passes_transverse", 1)
+    return _bundle(
+        n_rows=n_rows, n_tubes_per_row=n_tubes_per_row, layout=layout, **overrides
+    )
+
+
+def test_single_section_alternating_rows_unchanged() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=5, n_sections=1, n_tubes_per_row=12.5, layout="staggered"
+    )
+    assert bundle.n_sections_longitudinal == 1
+    assert bundle.rows_partition_is_exact is True
+    assert bundle.n_tubes_per_row_odd == 13
+    assert bundle.n_tubes_per_row_even == 12
+    assert bundle.n_tubes_total == 63
+
+
+def test_three_exact_sections_of_five_rows_resets_parity_per_section() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=12.5, layout="staggered"
+    )
+    assert bundle.n_sections_longitudinal == 3
+    assert bundle.rows_partition_is_exact is True
+    # 13/12/13/12/13 per section (63 tubes), repeated 3 times -- not a
+    # single 15-row global sequence (which would give 188).
+    assert bundle.n_tubes_total == 189
+    assert bundle.n_tubes_total != 188
+
+
+def test_three_exact_sections_of_four_rows() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=12, n_sections=3, n_tubes_per_row=12.5, layout="staggered"
+    )
+    assert bundle.n_sections_longitudinal == 3
+    assert bundle.rows_partition_is_exact is True
+    # 13/12/13/12 per section (50 tubes), repeated 3 times.
+    assert bundle.n_tubes_total == 150
+
+
+def test_two_exact_sections_of_three_rows() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=6, n_sections=2, n_tubes_per_row=6.5, layout="staggered"
+    )
+    assert bundle.n_sections_longitudinal == 2
+    assert bundle.rows_partition_is_exact is True
+    # 7/6/7 per section (20 tubes), repeated twice -- the naive global
+    # sequence 7/6/7/6/7/6 would give 39, not 40.
+    assert bundle.n_tubes_total == 40
+    assert bundle.n_tubes_total != 39
+
+
+def test_multi_section_integer_staggered_is_unaffected() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=13, layout="staggered"
+    )
+    assert bundle.n_tubes_per_row_odd == bundle.n_tubes_per_row_even == 13
+    assert bundle.n_tubes_total == 15 * 13
+
+
+def test_multi_section_inline_is_unaffected() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=8, layout="inline"
+    )
+    assert bundle.n_tubes_per_row_odd == bundle.n_tubes_per_row_even == 8
+    assert bundle.n_tubes_total == 15 * 8
+
+
+def test_nonexact_section_partition_falls_back_to_global_row_count() -> None:
+    bundle = _bundle(
+        n_rows=14,
+        n_tubes_per_row=6.5,
+        layout="staggered",
+        n_passes_tube=6,
+        n_passes_transverse=2,
+        flow_arrangement="auto",
+    )
+    assert bundle.n_sections_longitudinal == 3
+    assert bundle.rows_partition_is_exact is False
+    # No single physical row-per-section pattern exists (14 does not divide
+    # evenly by 3): fall back to the pre-existing global-row approximation,
+    # not an invented 5/5/4 (or similar) section split.
+    assert bundle.n_tubes_total == 7 * 7 + 7 * 6
+    assert bundle.n_tubes_total == 91
+    codes = {w.code for w in bundle.warnings}
+    assert "ALTERNATING_ROWS_NONEXACT_SECTION_PARTITION" in codes
+    # The pre-existing topology warning must not be lost.
+    assert "FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION" in codes
+
+
+def test_nonexact_partition_warning_absent_when_odd_equals_even() -> None:
+    bundle = _bundle(
+        n_rows=14,
+        n_tubes_per_row=13,
+        layout="staggered",
+        n_passes_tube=6,
+        n_passes_transverse=2,
+    )
+    assert bundle.rows_partition_is_exact is False
+    assert bundle.n_tubes_per_row_odd == bundle.n_tubes_per_row_even
+    assert bundle.alternating_rows_nonexact_section_warnings == ()
+
+
+def test_nonexact_partition_warning_absent_for_single_section() -> None:
+    bundle = _bundle(n_rows=5, n_tubes_per_row=6.5, layout="staggered")
+    assert bundle.n_sections_longitudinal == 1
+    assert bundle.alternating_rows_nonexact_section_warnings == ()
+
+
+def test_total_area_uses_section_local_exact_total() -> None:
+    tube = _tube()
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=12.5, layout="staggered", tube=tube
+    )
+    assert bundle.n_tubes_total == 189
+    assert bundle.total_outer_area == pytest.approx(189 * tube.area_outer)
+    assert bundle.total_outer_area != pytest.approx(188 * tube.area_outer)
+
+
+def test_tube_side_flow_uses_section_local_exact_total() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=12.5, layout="staggered"
+    )
+    assert bundle.n_tubes_total == 189
+    assert bundle.n_tubes_per_pass_effective == pytest.approx(
+        189 / bundle.n_passes_tube
+    )
+    assert bundle.internal_flow_area_per_pass == pytest.approx(
+        (189 / bundle.n_passes_tube) * bundle.tube.flow_area
+    )
+
+
+def test_frontal_geometry_unaffected_by_section_local_total_fix() -> None:
+    tube = _tube()
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=12.5, layout="staggered", tube=tube
+    )
+    # frontal_flow_area keeps using the normalized periodic-average
+    # n_tubes_per_row (12.5), independent of the corrected exact total.
+    expected = 12.5 * bundle.pitch_transverse * tube.length_effective
+    assert bundle.frontal_flow_area == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
 # Rating / Simulation end-to-end regression
 # ---------------------------------------------------------------------------
 
@@ -313,3 +476,16 @@ def test_staggered_half_row_geometry_simulation_runs_end_to_end() -> None:
     assert math.isfinite(result.final_result.Q)
     assert result.final_result.Q > 0.0
     assert bundle.n_tubes_total == 33
+
+
+def test_multi_section_staggered_half_row_simulation_runs_end_to_end() -> None:
+    bundle = _sectioned_bundle(
+        n_rows=15, n_sections=3, n_tubes_per_row=12.5, layout="staggered"
+    )
+    hx = BareTubeHeatExchanger(bundle)
+    inside = HXSideInput(provider=_sensible_props(1000.0), m_dot=0.5, T_in=350.0, p=101325.0)
+    outside = HXSideInput(provider=_outside_props(), m_dot=0.5, T_in=300.0, p=101325.0)
+    result = hx.simulate(inside, outside, iterate=False)
+    assert math.isfinite(result.final_result.Q)
+    assert result.final_result.Q > 0.0
+    assert bundle.n_tubes_total == 189

@@ -39,6 +39,14 @@ def _deterministic_nearest_step(value: float, step: float) -> float:
     return math.floor(value / step + 0.5) * step
 
 
+def _odd_even_row_counts(n_rows: int) -> tuple[int, int]:
+    """Row-parity split for a periodic odd/even row pattern (v0.7.10).
+
+    The first row of the sequence is always "odd".
+    """
+    return math.ceil(n_rows / 2), math.floor(n_rows / 2)
+
+
 class TubePathType(str, Enum):
     """How successive tube passes are physically connected (v0.5.6).
 
@@ -89,7 +97,10 @@ class TubeBundle:
           "odd": ``n_tubes_per_row_odd = ceil(n_tubes_per_row)`` and
           ``n_tubes_per_row_even = floor(n_tubes_per_row)``. Example:
           ``n_tubes_per_row=6.5`` describes a real bank alternating
-          ``7 / 6 / 7 / 6 / ...`` tubes per row.
+          ``7 / 6 / 7 / 6 / ...`` tubes per row. When the bank has multiple
+          *exact* longitudinal sections, this alternation restarts at
+          "odd" for every section (see ``n_tubes_total``, v0.7.10
+          follow-up) rather than continuing globally.
 
         A legacy integer input (e.g. ``n_tubes_per_row=8``) is unaffected by
         this: it normalizes to itself and ``odd == even == 8``, preserving
@@ -147,8 +158,13 @@ class TubeBundle:
       segmented/distributed-model scope.
     - ``n_tubes_total`` (v0.7.10) is the exact integer tube count, computed
       from the alternating odd/even row pattern -- not
-      ``n_rows * n_tubes_per_row``. It is authoritative for every
-      heat-transfer area and for tube-side flow geometry.
+      ``n_rows * n_tubes_per_row``. When rows partition exactly between
+      longitudinal sections, the odd/even pattern resets per section
+      (v0.7.10 follow-up: each exact section is a repeated physical
+      module); otherwise it falls back to a global-row approximation
+      across the whole bundle (see ``alternating_rows_nonexact_section_
+      warnings``). It is authoritative for every heat-transfer area and
+      for tube-side flow geometry.
     """
 
     tube: BaseTube
@@ -270,7 +286,9 @@ class TubeBundle:
 
     @property
     def n_tubes_per_row_odd(self) -> int:
-        """Tubes in an "odd" physical row (rows 1, 3, 5, ... -- the first row).
+        """Tubes in an "odd" physical row -- the first row of the bank, and
+        (v0.7.10 follow-up) the first row of every *exact* longitudinal
+        section (see ``n_tubes_total``).
 
         Equals ``n_tubes_per_row_even`` for ``inline`` layout and for an
         integer-valued ``staggered`` bank; is one more than
@@ -288,13 +306,39 @@ class TubeBundle:
     def n_tubes_total(self) -> int:
         """Exact total tube count from the alternating odd/even row pattern.
 
-        The first physical row is always "odd". This is *not*
-        ``n_rows * n_tubes_per_row``: for an odd ``n_rows`` with a
-        half-integer ``n_tubes_per_row``, the periodic odd/even average does
-        not evenly divide the finite bank (v0.7.10).
+        This is *not* ``n_rows * n_tubes_per_row``: for an odd row count
+        with a half-integer ``n_tubes_per_row``, the periodic odd/even
+        average does not evenly divide a finite run of rows (v0.7.10).
+
+        Longitudinal sections (v0.7.10 follow-up)
+        ------------------------------------------
+        When rows partition exactly between longitudinal sections
+        (``rows_partition_is_exact``), each section is treated as a
+        repeated physical module of the bank: odd/even row parity resets to
+        "odd" at the start of every section, rather than continuing
+        globally across the whole bundle. For ``n_sections_longitudinal ==
+        1`` (the default) this is exactly the single-sequence behavior
+        above. Example: 3 exact sections of 5 rows each with
+        ``n_tubes_per_row=12.5`` (``odd=13``, ``even=12``) gives
+        ``13/12/13/12/13`` *per section* -- 63 tubes each, 189 total -- not
+        a single 15-row sequence (which would give 188).
+
+        When rows do *not* partition exactly between sections, no single
+        physical row-per-section count exists, so no section-local pattern
+        is invented: this falls back to the pre-existing global-row 0D
+        effective approximation across the whole bundle (see
+        ``alternating_rows_nonexact_section_warnings``).
         """
-        n_odd_rows = math.ceil(self.n_rows / 2)
-        n_even_rows = math.floor(self.n_rows / 2)
+        if self.rows_partition_is_exact:
+            rows_per_section = self.n_rows // self.n_sections_longitudinal
+            n_odd_rows, n_even_rows = _odd_even_row_counts(rows_per_section)
+            tubes_per_section = (
+                n_odd_rows * self.n_tubes_per_row_odd
+                + n_even_rows * self.n_tubes_per_row_even
+            )
+            return int(self.n_sections_longitudinal * tubes_per_section)
+
+        n_odd_rows, n_even_rows = _odd_even_row_counts(self.n_rows)
         return int(
             n_odd_rows * self.n_tubes_per_row_odd
             + n_even_rows * self.n_tubes_per_row_even
@@ -417,9 +461,49 @@ class TubeBundle:
         return (self._tube_count_normalization_warning,)
 
     @property
+    def alternating_rows_nonexact_section_warnings(self) -> tuple[ModelWarning, ...]:
+        """``ALTERNATING_ROWS_NONEXACT_SECTION_PARTITION`` diagnostic (v0.7.10 follow-up).
+
+        Fires only when it matters: rows use alternating odd/even per-row
+        tube counts (``n_tubes_per_row_odd != n_tubes_per_row_even``), rows
+        do *not* partition exactly between longitudinal sections
+        (``not rows_partition_is_exact``), and there is more than one
+        section (``n_sections_longitudinal > 1``). In that situation no
+        single physical row-per-section pattern exists, so ``n_tubes_total``
+        falls back to a global-row effective approximation instead of a
+        section-local exact count.
+        """
+        if (
+            not self.rows_partition_is_exact
+            and self.n_tubes_per_row_odd != self.n_tubes_per_row_even
+            and self.n_sections_longitudinal > 1
+        ):
+            return (
+                make_warning(
+                    code="ALTERNATING_ROWS_NONEXACT_SECTION_PARTITION",
+                    message=(
+                        "The tube bank uses alternating odd/even row tube "
+                        "counts while rows do not partition exactly between "
+                        "longitudinal sections. The current 0D model retains "
+                        "a global effective row-count approximation; exact "
+                        "section-local tube allocation requires an explicit "
+                        "physical row/section map."
+                    ),
+                    source="tube_bundle_geometry",
+                    severity="warning",
+                ),
+            )
+        return ()
+
+    @property
     def geometry_warnings(self) -> tuple[ModelWarning, ...]:
-        """Geometry-diagnostics warnings: topology plus tube-count normalization."""
-        return self.topology_warnings + self.tube_count_normalization_warnings
+        """Geometry-diagnostics warnings: topology, tube-count normalization,
+        and non-exact alternating-row/section partitioning."""
+        return (
+            self.topology_warnings
+            + self.tube_count_normalization_warnings
+            + self.alternating_rows_nonexact_section_warnings
+        )
 
     @property
     def warnings(self) -> tuple[ModelWarning, ...]:

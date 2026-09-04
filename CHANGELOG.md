@@ -24,6 +24,18 @@ The project follows **Semantic Versioning (SemVer)**:
   exact for an odd `n_rows` staggered bank. `frontal_flow_area` keeps using
   the normalized periodic-average `n_tubes_per_row`, unchanged from the
   existing 0D model.
+- When rows partition exactly between multiple longitudinal sections
+  (`rows_partition_is_exact`, from circuit topology), odd/even row parity
+  now resets to "odd" at the start of every section instead of continuing
+  globally across the whole bundle -- each exact section is a repeated
+  physical module. For example 3 exact sections of 5 rows each at
+  `n_tubes_per_row=12.5` gives `13/12/13/12/13` per section (189 tubes
+  total), not a single 15-row global sequence (188). Single-section bundles
+  (the default) are unaffected. A non-exact row/section partition falls
+  back to the pre-existing global-row approximation, now flagged by a new
+  `ALTERNATING_ROWS_NONEXACT_SECTION_PARTITION` warning when it actually
+  matters (alternating odd/even counts, non-exact partition, more than one
+  section).
 - A new `TUBES_PER_ROW_NORMALIZED` warning is raised when normalization
   actually changes the declared input, surfaced through the existing
   `bundle.warnings`/`geometry_warnings` contract alongside the pre-existing
