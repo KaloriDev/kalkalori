@@ -40,7 +40,7 @@ def implied_duty(side) -> float:
 
 
 def build_bundle() -> TubeBundle:
-    """Same geometry as core/tests/simulation_smoke.py."""
+    """Same geometry as core/tests/simulate_thermal_iteration_integration_test.py."""
     tube = BareTube(
         D_i=25e-3 - 2 * 1.5e-3,
         D_o=25e-3,
