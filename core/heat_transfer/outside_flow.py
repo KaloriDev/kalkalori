@@ -345,7 +345,7 @@ def calculate_outside_tube_bank_hydraulics(
     tube_pitch_longitudinal: float,
     layout: str,
     n_rows: int,
-    n_tubes_per_row: int,
+    n_tubes_per_row: float,
     provider: Any | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
@@ -696,7 +696,7 @@ def _validate_outside_hydraulic_inputs(
     tube_pitch_longitudinal: float,
     layout: str,
     n_rows: int,
-    n_tubes_per_row: int,
+    n_tubes_per_row: float,
 ) -> None:
     checks = (
         ("mass flow", m_dot, "outside_bank_hydraulics_invalid_mass_flux", True),
@@ -1165,7 +1165,7 @@ def outside_flow_from_mass_flow(
     tube_pitch_longitudinal: float,
     layout: str,
     n_rows: int,
-    n_tubes_per_row: int,
+    n_tubes_per_row: float,
     props: FluidProps,
     *,
     Pr_s: float | None = None,

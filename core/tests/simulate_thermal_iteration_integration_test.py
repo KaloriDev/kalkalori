@@ -282,6 +282,24 @@ def test_warnings_propagate_from_thermal_state_to_simulation_result() -> None:
     ), "warning must propagate exactly once, not be duplicated"
 
 
+def test_non_convergence_pins_iterations_to_max_iter_and_adds_simulation_warning() -> None:
+    print("warnings: non-convergence via the public simulate(max_iter=...) API pins iterations to max_iter and adds a simulation-sourced warning distinct from the thermal_iteration one")
+    hx = BareTubeHeatExchanger(build_bundle())
+    inside = HXSideInput(provider=_INSIDE_PROVIDER, m_dot=_M_DOT_INSIDE, T_in=c_to_k(30.0), p=_P)
+    outside = HXSideInput(provider=_OUTSIDE_PROVIDER, m_dot=_M_DOT_OUTSIDE, T_in=c_to_k(400.0), p=_P)
+
+    result = hx.simulate(inside, outside, max_iter=3, relaxation_factor=0.2)
+    assert not result.converged
+    assert result.iterations == 3
+
+    warning_sources_by_code = {w.code: w.source for w in (result.warnings or [])}
+    assert warning_sources_by_code.get("thermal_iteration_not_converged") == "thermal_iteration"
+    # simulation_not_converged is a distinct, simulation-level warning layered
+    # on top of the thermal_state's own non-convergence warning, not a
+    # renamed duplicate of it.
+    assert warning_sources_by_code.get("simulation_not_converged") == "simulation"
+
+
 def test_iterate_false_forces_a_single_pass_and_drops_thermal_state() -> None:
     print("iterate=False: escape hatch is a guaranteed single inlet-only pass with no thermal_state")
     hx = BareTubeHeatExchanger(build_bundle())
@@ -362,6 +380,7 @@ def main() -> None:
     test_customer_overdesign_consumer_needs_no_result_type_branch()
     test_resistance_reconstruction_simulate_and_rate()
     test_warnings_propagate_from_thermal_state_to_simulation_result()
+    test_non_convergence_pins_iterations_to_max_iter_and_adds_simulation_warning()
     test_iterate_false_forces_a_single_pass_and_drops_thermal_state()
     test_surface_margin_derates_duty_monotonically_and_zero_margin_is_exact()
 

@@ -13,7 +13,8 @@ bit-for-bit on every field named in spec section 38 (Q, T_out_inside,
 T_out_outside, alfa_i, alfa_outside_dry, U, UA, straight-tube friction,
 tube entrance/exit dp, outside dp_drag, outside dp_acceleration).
 
-Uses the same toy geometry/providers as core/tests/simulation_smoke.py and
+Uses the same toy geometry/providers as
+core/tests/simulate_thermal_iteration_integration_test.py and
 core/tests/heat_balance_rating_smoke.py (no CoolProp/IAPWS/PsychroLib
 required), run WITHOUT going through the CoolProp-based gas-mixture
 capability path at all (a ConstantPropertyProvider is never phase-change
