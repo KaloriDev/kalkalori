@@ -401,12 +401,12 @@ class HXResult:
 
     # Warnings and applicability diagnostics
     warnings: list[ModelWarning] | None = None
-    tube_side_enhancement: EnhancementResult | None = None
 
     # Present only for TubeSurfaceType.CIRCULAR_FINNED. It keeps the physical
     # film coefficient separate from eta_fin/area enhancement and carries the
     # dedicated Briggs-Young/Robinson-Briggs basis and provenance.
     finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
+    tube_side_enhancement: EnhancementResult | None = None
 
     @property
     def tube_surface_type(self) -> TubeSurfaceType:

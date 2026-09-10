@@ -29,6 +29,17 @@ Used for:
 
 ## Internal Flow and Pressure Drop
 
+For unreleased tube-side enhancement correlations, see the dedicated
+[source audit](twisted_tape_manglik_bergles.md) and
+[provider guide](tube_side_enhancements.md). The public built-in model uses
+Yang, Liu, Cao, Gao and Ding (2020), "Numerical Analysis of FLiBe Laminar
+Convective Heat Transfer Characteristics in Tubes Fitted With Coaxial Cross
+Twisted Tape Inserts", *Frontiers in Energy Research*,
+[DOI 10.3389/fenrg.2020.00178](https://doi.org/10.3389/fenrg.2020.00178),
+freely available from the publisher under CC BY. Only the conventional
+single-tape specialization of the authors' Eqs.21-22 is implemented; it is
+not a canonical reproduction of Manglik-Bergles (1993) Parts I/II.
+
 - White, F. M.  
   *Fluid Mechanics.*
 
@@ -410,6 +421,16 @@ KalKalori correlations and property helpers should always be used with:
 ---
 
 ## Private Reference Sources
+
+Project source policy: built-in engineering correlations must be independently
+reproducible from legally and freely accessible source material. Models
+requiring paywalled publications, licensed datasets, proprietary software or
+manufacturer-confidential information are integrated through external
+providers. This is a project rule, not an interpretation of copyright law.
+M&B Part I/II are reserved as sources for a future private external provider;
+neither their implementation nor manufacturer physics is included in the
+new enhancement module. Existing bibliographic entries below and elsewhere
+do not authorize new built-in models from inaccessible sources.
 
 This document and the source-file comments it points to store **bibliographic
 references only** -- author, title, publisher/journal, edition/chapter, and a

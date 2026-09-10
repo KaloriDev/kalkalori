@@ -808,7 +808,7 @@ def run_simulation(
     if not math.isfinite(surface_margin) or surface_margin < 0.0:
         raise ValueError("surface_margin must be a non-negative finite value.")
 
-    from core.enhancements.integration import guard_side, hydraulic_evaluator
+    from core.enhancements.integration import guard_side, hydraulic_evaluator, check_model_identity
     guard_side(hx.tube_side_enhancement, inside)
     hot_is_inside = inside.T_in >= outside.T_in
 
@@ -908,6 +908,10 @@ def run_simulation(
             temperature_out=T_out_inside_calc,
             pressure=inside.p,
         )
+        check_model_identity(result.tube_side_enhancement,
+                             bundle_hydraulic.inlet.enhancement,
+                             bundle_hydraulic.midpoint.enhancement,
+                             bundle_hydraulic.outlet.enhancement)
         tube_hydraulic = replace(
             result.tube_side_hydraulic,
             tube_bundle=bundle_hydraulic,
@@ -990,7 +994,6 @@ def run_simulation(
         # single uncorrected thermal snapshot by design. Hydraulic fields on
         # final_result always come from the three-state tube-bundle function.
         if thermal_state is not None:
-            from core.enhancements.integration import check_model_identity
             check_model_identity(thermal_state.tube_side_enhancement, final_result.tube_side_enhancement)
             inside_alfa_mean = thermal_state.alfa_i
             outside_alfa_mean = thermal_state.alfa_o

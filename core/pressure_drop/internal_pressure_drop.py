@@ -556,7 +556,8 @@ def calculate_tube_bundle_hydraulics(
             warnings.extend(result.warnings)
         points = tuple(enhanced_points)
         identities = {(point.enhancement.provider_id, point.enhancement.correlation_id,
-                       point.enhancement.source_references) for point in points}
+                       point.enhancement.source_references,
+                       point.enhancement.source_access_basis) for point in points}
         if len(identities) != 1:
             raise ValueError("Hydraulic points returned inconsistent enhancement models.")
 

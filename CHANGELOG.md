@@ -28,6 +28,14 @@ The project follows **Semantic Versioning (SemVer)**:
   change and unsupported operating states raise controlled errors.
 - Built-in correlation source policy now requires legally and freely
   accessible material; M&B Part I/II remain future private-provider sources.
+- Verified external alpha-only providers through Rating and both Simulation
+  modes, including native Fanning conversion, provider-owned hydraulic
+  references, opaque typed metadata, provenance, applicability and warnings.
+  Inconsistent thermal/hydraulic model identities and unsupported results
+  fail explicitly. No private M&B or manufacturer physics is included.
+- Documented the public/external provider contract and current open-model
+  limits in `docs/tube_side_enhancements.md`. Preserved the positional order
+  of existing `HXResult` fields when appending enhancement diagnostics.
 
 ## [0.7.10] — Alternating tube counts in staggered rows
 

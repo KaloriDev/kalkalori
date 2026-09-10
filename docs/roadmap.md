@@ -162,7 +162,7 @@ selection remain outside the solver's scope.
 
 ### v0.8.x — Tube-Side Enhancement / Turbulators
 
-**Planned scope (not released):**
+**Implemented on the feature branch (not released):**
 
 - a coherent tube-side enhancement provider for distributed heat transfer
   and friction, with provider-owned reference geometry and wall corrections;
@@ -175,6 +175,8 @@ selection remain outside the solver's scope.
 
 The public source freeze selects the laminar single-tape specialization of
 Yang et al. (2020); see [the source audit](twisted_tape_manglik_bergles.md).
+The [provider guide](tube_side_enhancements.md) describes usage, external
+integration and the narrow geometry/operating limits of the public model.
 Transition, turbulent and gas support are outside this selected model.
 Paywalled literature (including M&B Part I / II), manufacturer data,
 proprietary correlations and licensed software belong in external/private
