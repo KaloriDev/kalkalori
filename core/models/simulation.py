@@ -602,6 +602,13 @@ class HXSimulationResult:
         return self.final_result.outside_properties_outlet
 
     @property
+    def tube_side_enhancement(self):
+        """Authoritative thermal result; hydraulic points retain their own states."""
+        if self.thermal_state is not None:
+            return self.thermal_state.tube_side_enhancement
+        return self.final_result.tube_side_enhancement
+
+    @property
     def inside_dp_friction(self) -> float:
         if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
             return math.nan
@@ -801,6 +808,8 @@ def run_simulation(
     if not math.isfinite(surface_margin) or surface_margin < 0.0:
         raise ValueError("surface_margin must be a non-negative finite value.")
 
+    from core.enhancements.integration import guard_side, hydraulic_evaluator
+    guard_side(hx.tube_side_enhancement, inside)
     hot_is_inside = inside.T_in >= outside.T_in
 
     def _evaluate(T_out_inside: float, T_out_outside: float):
@@ -835,6 +844,7 @@ def run_simulation(
             tube_side_temperature_in=inside.T_in,
             tube_side_temperature_out=T_out_inside,
             tube_side_pressure=inside.p,
+            tube_side_heat_flow_direction="cooling" if hot_is_inside else "heating",
             m_dot_outside=outside.m_dot,
             outside_props=to_outside_fluid_props(props_out),
             outside_provider=outside.provider,
@@ -885,6 +895,7 @@ def run_simulation(
         # hydraulic snapshot was first evaluated. Refresh both common
         # three-state hydraulic results so exposed states use those outlets.
         bundle_hydraulic = calculate_tube_bundle_hydraulics(
+            enhancement_evaluator=hydraulic_evaluator(hx.tube_side_enhancement, hx.bundle, inside.provider),
             m_dot=inside.m_dot,
             flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
             hydraulic_diameter=hx.bundle.internal_hydraulic_diameter,
@@ -979,6 +990,8 @@ def run_simulation(
         # single uncorrected thermal snapshot by design. Hydraulic fields on
         # final_result always come from the three-state tube-bundle function.
         if thermal_state is not None:
+            from core.enhancements.integration import check_model_identity
+            check_model_identity(thermal_state.tube_side_enhancement, final_result.tube_side_enhancement)
             inside_alfa_mean = thermal_state.alfa_i
             outside_alfa_mean = thermal_state.alfa_o
             U_mean = thermal_state.U
@@ -1185,6 +1198,7 @@ def run_simulation(
         tube_side_temperature_in=inside.T_in,
         tube_side_temperature_out=T_out_inside_final,
         tube_side_pressure=inside.p,
+        tube_side_heat_flow_direction="cooling" if hot_is_inside else "heating",
         m_dot_outside=outside.m_dot,
         outside_props=to_outside_fluid_props(thermal_state.outside_bulk_props),
         outside_provider=outside.provider,

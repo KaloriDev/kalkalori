@@ -124,7 +124,7 @@ Y's Tables 1-2 validate CFD against other correlations/experiments; they
 are not exact anchors for the new Eqs.21-22 and must not be mislabelled.
 Tests also lock Darcy/Fanning, blockage references, limits and smooth defaults.
 
-## PRIVATE M&B PROVIDER ? FUTURE
+## PRIVATE M&B PROVIDER - FUTURE
 
 Manglik and Bergles (1993), Part I, DOI 10.1115/1.2911383, and Part II,
 DOI 10.1115/1.2911384, are reserved as the basis for a future private external

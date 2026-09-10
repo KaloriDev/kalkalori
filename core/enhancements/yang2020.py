@@ -39,6 +39,8 @@ class Yang2020TwistedTapeProvider:
             raise EnhancementUnsupportedError("yang2020_geometry_unsupported: requires a single continuous tape.")
         if state.fluid_phase != "liquid":
             raise EnhancementUnsupportedError("yang2020_phase_unsupported: single-phase liquid only.")
+        if state.heat_flow_direction == "cooling":
+            raise EnhancementUnsupportedError("yang2020_cooling_unsupported: liquid heating only.")
         D = state.tube_inner_diameter
         delta = geometry.tape_thickness
         # Strict measured dimensions: the paper supplies no broad size range.

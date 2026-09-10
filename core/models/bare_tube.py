@@ -20,6 +20,9 @@
 
 from __future__ import annotations
 
+from core.enhancements.base import TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError
+from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
+
 import math
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -398,6 +401,7 @@ class HXResult:
 
     # Warnings and applicability diagnostics
     warnings: list[ModelWarning] | None = None
+    tube_side_enhancement: EnhancementResult | None = None
 
     # Present only for TubeSurfaceType.CIRCULAR_FINNED. It keeps the physical
     # film coefficient separate from eta_fin/area enhancement and carries the
@@ -631,9 +635,16 @@ class BareTubeHeatExchanger:
     - Darcyâ€“Weisbach & K-loss decomposition: White; Idelchik; Crane TP-410
     """
 
-    def __init__(self, bundle: TubeBundle):
-        # conductivity is stored on the tube geometry itself
+    def __init__(self, bundle: TubeBundle, *, tube_side_enhancement: TubeSideEnhancement | None = None):
+        # One configuration is shared by all thermal and hydraulic paths.
+        if tube_side_enhancement is not None and not isinstance(tube_side_enhancement, TubeSideEnhancement):
+            raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
         self.bundle = bundle
+        self._tube_side_enhancement = tube_side_enhancement
+
+    @property
+    def tube_side_enhancement(self) -> TubeSideEnhancement | None:
+        return self._tube_side_enhancement
 
     def tube_wall_resistance(self) -> float:
         """Public accessor for the cylindrical tube-wall conduction resistance [K/W].
@@ -685,6 +696,7 @@ class BareTubeHeatExchanger:
         tube_side_temperature_in: float | None = None,
         tube_side_temperature_out: float | None = None,
         tube_side_pressure: float | None = None,
+        tube_side_heat_flow_direction: str = "unknown",
 
         # Outside-side (preferred path):
         m_dot_outside: float | None = None,
@@ -739,12 +751,33 @@ class BareTubeHeatExchanger:
         flow_area_pass = self.bundle.internal_flow_area_per_pass
         D_h = self.bundle.internal_hydraulic_diameter
 
-        v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
-            m_dot=m_dot_tube_side,
-            tube_inner_diameter=D_h,
-            flow_area=flow_area_pass,
-            props=tube_side_props,
+        if tube_side_temperature_in is not None and tube_side_temperature_out is not None:
+            if tube_side_temperature_out < tube_side_temperature_in:
+                tube_side_heat_flow_direction = "cooling"
+            elif tube_side_temperature_out > tube_side_temperature_in:
+                tube_side_heat_flow_direction = "heating"
+        enhancement = evaluate_for_bundle(
+            self.tube_side_enhancement, self.bundle, m_dot_tube_side, tube_side_props,
+            temperature=(None if tube_side_temperature_in is None else
+                         .5*(tube_side_temperature_in + (tube_side_temperature_out
+                             if tube_side_temperature_out is not None else tube_side_temperature_in))),
+            pressure=tube_side_pressure, property_provider=tube_side_provider,
+            heat_flow_direction=tube_side_heat_flow_direction,
         )
+        if enhancement is None:
+            v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
+                m_dot=m_dot_tube_side,
+                tube_inner_diameter=D_h,
+                flow_area=flow_area_pass,
+                props=tube_side_props,
+            )
+        else:
+            ref = enhancement.reference
+            v_i, Re_i, Pr_i = ref.velocity, ref.reynolds, ref.prandtl
+            alfa_i, internal_ht_warnings = enhancement.alpha_inside, list(enhancement.warnings)
+
+        enhancement_evaluator = hydraulic_evaluator(
+            self.tube_side_enhancement, self.bundle, tube_side_provider)
         tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, alfa=alfa_i)
 
         # --------------------------------------------------------------
@@ -762,6 +795,7 @@ class BareTubeHeatExchanger:
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
+                enhancement_evaluator=enhancement_evaluator,
                 hydraulic_diameter=D_h,
                 hydraulic_length_total=self.bundle.internal_length_total,
                 n_tube_passes=self.bundle.n_passes_tube,
@@ -779,6 +813,7 @@ class BareTubeHeatExchanger:
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
+                enhancement_evaluator=enhancement_evaluator,
                 hydraulic_diameter=D_h,
                 hydraulic_length_total=self.bundle.internal_length_total,
                 n_tube_passes=self.bundle.n_passes_tube,
@@ -790,6 +825,9 @@ class BareTubeHeatExchanger:
                 pressure=p_hyd,
             )
 
+        check_model_identity(enhancement, tube_bundle_hydraulic.inlet.enhancement,
+                             tube_bundle_hydraulic.midpoint.enhancement,
+                             tube_bundle_hydraulic.outlet.enhancement)
         tube_hyd = HXTubeSideHydraulicResults(
             tube_bundle=tube_bundle_hydraulic,
         )
@@ -966,7 +1004,7 @@ class BareTubeHeatExchanger:
             warnings_list.extend(self.bundle.tube.geometry_warnings)
 
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
-        if Re_i < 2300.0:
+        if enhancement is None and Re_i < 2300.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_laminar_regime",
@@ -975,7 +1013,7 @@ class BareTubeHeatExchanger:
                     severity="warning",
                 )
             )
-        elif 2300.0 <= Re_i <= 4000.0:
+        elif enhancement is None and 2300.0 <= Re_i <= 4000.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_transition_regime",
@@ -1083,6 +1121,7 @@ class BareTubeHeatExchanger:
             T_hot_out=T_hot_out,
             T_cold_out=T_cold_out,
             tube_side_thermal=tube_thermal,
+            tube_side_enhancement=enhancement,
             tube_side_hydraulic=tube_hyd,
             outside_side_thermal=outside_thermal,
             outside_side_hydraulic=outside_hyd,
@@ -1208,6 +1247,7 @@ class BareTubeHeatExchanger:
             reject_unsupported_pure_water_phase_crossing,
         )
 
+        guard_side(self.tube_side_enhancement, inside)
         reject_liquid_water_in_gas_inlet(
             inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
         )
@@ -1234,6 +1274,8 @@ class BareTubeHeatExchanger:
                 relative_alfa_tolerance=relative_alfa_tolerance,
             )
         ):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: evaporation")
             return apply_water_evaporation_simulation(
                 self, inside, outside,
                 surface_margin=surface_margin,
@@ -1253,6 +1295,8 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
         if is_inside_water_steam_case(inside):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: steam")
             return apply_water_steam_simulation(
                 self, inside, outside,
                 surface_margin=surface_margin,
@@ -1441,6 +1485,7 @@ class BareTubeHeatExchanger:
         )
         from core.phase_change.capability import reject_liquid_water_in_gas_inlet
 
+        guard_side(self.tube_side_enhancement, inside)
         reject_liquid_water_in_gas_inlet(
             inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
         )
@@ -1457,6 +1502,8 @@ class BareTubeHeatExchanger:
             Q=Q,
             effectiveness=effectiveness,
         ):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: evaporation")
             return apply_water_evaporation_rating(
                 self, inside, outside,
                 Q=Q, effectiveness=effectiveness,
@@ -1474,6 +1521,8 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
         if is_inside_water_steam_case(inside):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: steam")
             return apply_water_steam_rating(
                 self, inside, outside,
                 Q=Q, effectiveness=effectiveness,

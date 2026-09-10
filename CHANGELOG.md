@@ -17,8 +17,15 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added the generic coherent tube-side enhancement contract, explicit
   half-turn twisted-tape geometry, provenance and provider-owned reference
   states. Private literature/manufacturer providers can implement this
-  interface without disclosing equations. Existing solvers still use the
-  unchanged smooth default until an enhancement is explicitly integrated.
+  interface without disclosing equations. Existing solvers retain the
+  unchanged smooth default when no enhancement is configured.
+- Integrated enhancement selection on `BareTubeHeatExchanger` with Rating,
+  Simulation (including `iterate=False`), wall-state evaluation, hydraulic
+  quadrature and surface margin. Results expose authoritative thermal
+  enhancement diagnostics and separate per-point hydraulic reference states.
+  Provider gradients affect distributed friction only; local losses and
+  signed acceleration keep their existing definitions. Enhanced phase
+  change and unsupported operating states raise controlled errors.
 - Built-in correlation source policy now requires legally and freely
   accessible material; M&B Part I/II remain future private-provider sources.
 

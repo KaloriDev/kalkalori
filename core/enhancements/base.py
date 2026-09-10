@@ -81,11 +81,14 @@ class EnhancementInput:
     fluid_phase: str = "unknown"
     position: str = "thermal"
     roughness_inner: float = 0.0
+    heat_flow_direction: str = "unknown"
 
     def __post_init__(self) -> None:
         _positive(mass_flow_per_tube=self.mass_flow_per_tube,
                   tube_inner_diameter=self.tube_inner_diameter,
                   heated_length=self.heated_length, tube_length=self.tube_length)
+        if self.heat_flow_direction not in ("heating", "cooling", "unknown"):
+            raise ValueError("Unknown tube-side heat-flow direction.")
         if not math.isfinite(self.roughness_inner) or self.roughness_inner < 0:
             raise ValueError("roughness_inner must be nonnegative and finite.")
         if not isinstance(self.bulk, EnhancementState):

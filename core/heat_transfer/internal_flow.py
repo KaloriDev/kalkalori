@@ -80,6 +80,7 @@ import math
 from dataclasses import dataclass
 
 from core.common.warnings import ModelWarning, make_warning
+from core.enhancements.base import EnhancementResult
 
 
 @dataclass(frozen=True)
@@ -470,6 +471,7 @@ class InternalHeatTransferDiagnostics:
     alfa_corrected: float
 
     warnings: list[ModelWarning]
+    enhancement: EnhancementResult | None = None
 
 
 def heat_transfer_coefficient_internal_diagnostics(

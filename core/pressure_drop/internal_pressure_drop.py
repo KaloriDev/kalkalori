@@ -53,8 +53,9 @@ Notes
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, replace
+from typing import Any, Literal, Callable
+from core.enhancements.base import EnhancementResult
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.bundle import TubePathType
@@ -88,7 +89,12 @@ class TubeSideHydraulicPoint:
     the already stored temperature, pressure, and transport-property object;
     no second property evaluation or duplicate state is created.
 
-    ``friction_factor`` is the Darcy friction factor from
+    With enhancement, ``friction_factor`` is the provider's Darcy value;
+    its exact friction reference velocity/diameter live in ``enhancement``.
+    The point's ordinary velocity, Reynolds and dynamic pressure retain the
+    legacy tube basis used by local losses and signed acceleration.
+
+    Without enhancement, ``friction_factor`` is the Darcy friction factor from
     ``core.pressure_drop.straight_sections.darcy_friction_factor``: the
     existing smooth-tube (Petukhov) value when no positive relative
     roughness is specified, or the Colebrook-White rough-tube value
@@ -109,6 +115,7 @@ class TubeSideHydraulicPoint:
     friction_factor_method: str
     dynamic_pressure: float
     prandtl: float
+    enhancement: EnhancementResult | None = None
 
     @property
     def Pr(self) -> float:
@@ -388,6 +395,7 @@ def calculate_tube_bundle_hydraulics(
     entrance_type: TubeSheetEntranceType = TubeSheetEntranceType.SHARP_EDGED,
     exit_type: TubeSheetExitType = TubeSheetExitType.NORMAL,
     roughness_inner: float | None = None,
+    enhancement_evaluator: Callable[[TubeSideHydraulicPoint], EnhancementResult] | None = None,
     provider: Any | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
@@ -536,8 +544,24 @@ def calculate_tube_bundle_hydraulics(
         ),
     )
 
+    if enhancement_evaluator is not None:
+        enhanced_points = []
+        for point in points:
+            result = enhancement_evaluator(point)
+            if not isinstance(result, EnhancementResult):
+                raise TypeError("Hydraulic enhancement evaluator must return EnhancementResult.")
+            enhanced_points.append(replace(point, enhancement=result,
+                                           friction_factor=result.f_darcy,
+                                           friction_factor_method=result.provider_id))
+            warnings.extend(result.warnings)
+        points = tuple(enhanced_points)
+        identities = {(point.enhancement.provider_id, point.enhancement.correlation_id,
+                       point.enhancement.source_references) for point in points}
+        if len(identities) != 1:
+            raise ValueError("Hydraulic points returned inconsistent enhancement models.")
+
     for point in points:
-        if point.reynolds <= 4000.0:
+        if enhancement_evaluator is None and point.reynolds <= 4000.0:
             warnings.append(
                 make_warning(
                     code="tube_bundle_hydraulics_reynolds_outside_range",
@@ -557,24 +581,33 @@ def calculate_tube_bundle_hydraulics(
         + points[2].friction_factor / points[2].props.rho
     ) / 6.0
 
-    # Three-state 0D+ approximation of the distributed pressure-gradient
-    # integral, not a spatially segmented solver.
-    if mass_flux_in == mass_flux_mid == mass_flux_out == mass_flux:
-        # Preserve the sensible-only/reference-flow calculation exactly.
-        dp_straight_tube_friction = (
-            (hydraulic_length_total / hydraulic_diameter)
-            * (mass_flux**2 / 2.0)
-            * mean_f_over_rho
-        )
+    if enhancement_evaluator is None:
+        # Three-state 0D+ approximation of the distributed pressure-gradient
+        # integral, not a spatially segmented solver.
+        if mass_flux_in == mass_flux_mid == mass_flux_out == mass_flux:
+            # Preserve the sensible-only/reference-flow calculation exactly.
+            dp_straight_tube_friction = (
+                (hydraulic_length_total / hydraulic_diameter)
+                * (mass_flux**2 / 2.0)
+                * mean_f_over_rho
+            )
+        else:
+            mean_f_G2_over_rho = (
+                points[0].friction_factor * mass_flux_in**2 / points[0].props.rho
+                + 4.0 * points[1].friction_factor * mass_flux_mid**2 / points[1].props.rho
+                + points[2].friction_factor * mass_flux_out**2 / points[2].props.rho
+            ) / 6.0
+            dp_straight_tube_friction = (
+                hydraulic_length_total / hydraulic_diameter
+            ) * mean_f_G2_over_rho / 2.0
+
     else:
-        mean_f_G2_over_rho = (
-            points[0].friction_factor * mass_flux_in**2 / points[0].props.rho
-            + 4.0 * points[1].friction_factor * mass_flux_mid**2 / points[1].props.rho
-            + points[2].friction_factor * mass_flux_out**2 / points[2].props.rho
-        ) / 6.0
-        dp_straight_tube_friction = (
-            hydraulic_length_total / hydraulic_diameter
-        ) * mean_f_G2_over_rho / 2.0
+        # Integrate the provider's coherent reference gradient. Do NOT reuse
+        # the legacy velocity or hydraulic diameter in this expression.
+        gradients = [point.enhancement.pressure_gradient(point.props.rho) for point in points]
+        dp_straight_tube_friction = hydraulic_length_total*(
+            gradients[0] + 4.0*gradients[1] + gradients[2]
+        )/6.0
 
     # One-dimensional momentum balance.  Pressure loss is positive, so a
     # density decrease gives a positive acceleration term and a density

@@ -129,6 +129,8 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from core.enhancements.base import EnhancementResult
+from core.enhancements.integration import guard_phase, evaluate_for_bundle, internal_diagnostics
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
@@ -257,6 +259,7 @@ class IterativeThermalState:
     # to-core-wall temperature difference. NaN/empty on legacy dry states.
     outside_alpha_wet_effective_gross_core_basis: float = math.nan
     outside_alpha_wet_effective_basis: str = ""
+    tube_side_enhancement: EnhancementResult | None = None
 
 
 @dataclass(frozen=True)
@@ -436,6 +439,9 @@ def _evaluate_local_wall_state(
     tube = bundle.tube
     D_h = bundle.internal_hydraulic_diameter
 
+    guard_phase(hx.tube_side_enhancement, inside_provider, inside_bulk_temperature, p_inside)
+    if inside_wall_temperature is not None:
+        guard_phase(hx.tube_side_enhancement, inside_provider, inside_wall_temperature, p_inside)
     bulk_i = inside_provider.at(T=inside_bulk_temperature, p=p_inside)
     bulk_o = outside_provider.at(T=outside_bulk_temperature, p=p_outside)
     warnings: list[ModelWarning] = []
@@ -456,15 +462,25 @@ def _evaluate_local_wall_state(
     wall_i = wall_props(inside_provider, inside_wall_temperature, p_inside, "inside")
     wall_o = wall_props(outside_provider, outside_wall_temperature, p_outside, "outside")
 
-    internal = heat_transfer_coefficient_internal_diagnostics(
-        m_dot=m_dot_inside,
-        tube_inner_diameter=D_h,
-        flow_area=bundle.internal_flow_area_per_pass,
-        props=to_internal_fluid_props(bulk_i),
-        T_bulk=inside_bulk_temperature,
-        T_wall=inside_wall_temperature if wall_i is not None else None,
-        L_heated=float(getattr(tube, "length_effective")),
+    enhancement = evaluate_for_bundle(
+        hx.tube_side_enhancement, bundle, m_dot_inside, bulk_i,
+        temperature=inside_bulk_temperature, pressure=p_inside,
+        wall_props=wall_i, wall_temperature=inside_wall_temperature,
+        property_provider=inside_provider,
+        heat_flow_direction=("heating" if outside_bulk_temperature >= inside_bulk_temperature else "cooling"),
     )
+    if enhancement is None:
+        internal = heat_transfer_coefficient_internal_diagnostics(
+            m_dot=m_dot_inside,
+            tube_inner_diameter=D_h,
+            flow_area=bundle.internal_flow_area_per_pass,
+            props=to_internal_fluid_props(bulk_i),
+            T_bulk=inside_bulk_temperature,
+            T_wall=inside_wall_temperature if wall_i is not None else None,
+            L_heated=float(getattr(tube, "length_effective")),
+        )
+    else:
+        internal = internal_diagnostics(enhancement, bulk_i.k)
     warnings.extend(internal.warnings)
 
     Pr_s = None
@@ -1067,6 +1083,7 @@ def solve_iterative_thermal_state(
         converged=converged,
         residual=residual,
         diagnostics=diagnostics,
+        tube_side_enhancement=internal_diag.enhancement,
         outside_alpha_physical=final["outside_alpha_physical"],
         outside_alpha_effective_gross=final["outside_alpha_effective_gross"],
         inside_provider_name=type(inside_provider).__name__,
