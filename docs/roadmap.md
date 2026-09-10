@@ -35,11 +35,12 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.6`
+**Current version:** `v0.7.10`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
-0D sensible/phase-change thermal balance and tube-bank hydraulic balance;
-active wet-finned pressure drop, local nozzle/chamber/tube-sheet/return losses
+0D sensible/phase-change thermal balance, tube-bank hydraulic balance,
+local nozzle/chamber/tube-sheet/return losses, unified surface-margin reporting
+and alternating staggered-row tube counts. Active wet-finned pressure drop
 and distributed thermal resolution remain future work.
 
 ---
@@ -159,7 +160,32 @@ selection remain outside the solver's scope.
 
 ---
 
-### v0.8.x — Non-Standard Tube Geometries (Empirical)
+### v0.8.x — Tube-Side Enhancement / Turbulators
+
+**Planned scope (not released):**
+
+- a coherent tube-side enhancement provider for distributed heat transfer
+  and friction, with provider-owned reference geometry and wall corrections;
+- classical continuous, full-length twisted-tape inserts in circular tubes,
+  based on verified Manglik-Bergles Part I / Part II correlations;
+- single-phase Rating, Simulation, thermal iteration, hydraulic diagnostics
+  and applicability reporting;
+- externally supplied enhancement providers without proprietary equations
+  in the GPL core.
+
+Implementation is currently blocked by primary-source verification gaps;
+see [the architecture audit and source checklist](twisted_tape_manglik_bergles.md).
+No enhancement provider or correlation has been implemented yet.
+Insert-specific local losses, phase change inside enhanced tubes, and
+CALGAVIN/hiTRAN physics are excluded from this stage.
+
+This provider scope is specific to tube-side enhancement devices. General
+tube-side/outside performance providers remain planned for v0.10.x.
+The package remains v0.7.10 until an explicitly authorized release commit.
+
+---
+
+### v0.9.x — Non-Standard Tube Geometries (Empirical)
 
 **Goal:**  
 Enable modelling of geometries that cannot be described purely theoretically.
@@ -182,10 +208,11 @@ manufacturer data and experimental correlations.
 
 ---
 
-### v0.9.x — External Tube-Performance Provider Architecture
+### v0.10.x — General External Tube-Performance Provider Architecture
 
 **Goal:**
-Generalize v0.8.x's empirical non-standard-geometry support into a formal
+Generalize v0.8.x's enhancement providers and v0.9.x's empirical
+non-standard-geometry support into a formal
 provider architecture for tube-side and/or outside performance data that
 cannot be derived from KalKalori's built-in correlations.
 
