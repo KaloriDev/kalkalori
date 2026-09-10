@@ -7,6 +7,14 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## Unreleased
 
+- Added explicit radial/diametral twisted-tape clearance geometry and optional
+  public clearance-provider composition. Relative models require documented
+  base-geometry selection and compatible correlation IDs; absolute models
+  supply their own thermal/hydraulic result without evaluating the base.
+  Provenance, applicability, wall conventions and separate local losses are
+  preserved. No built-in clearance correlation or AUTO fallback is enabled;
+  source-definition gaps are documented in `docs/twisted_tape_clearance.md`.
+
 - Added the standalone open-source `Yang2020TwistedTapeProvider`, using
   Yang et al. (2020) Eqs.21-22 for conventional continuous tape: laminar
   liquid heating, Re 100..1100, Pr 7..900, H/D 2..4, and the studied

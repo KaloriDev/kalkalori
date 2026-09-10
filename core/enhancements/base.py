@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from core.common.warnings import ModelWarning
+
+if TYPE_CHECKING:
+    from .clearance import TwistedTapeClearanceProvider
 
 
 def _positive(**values: float) -> None:
@@ -22,6 +25,36 @@ def _positive(**values: float) -> None:
 
 class EnhancementUnsupportedError(ValueError):
     """Explicitly requested enhancement cannot describe the supplied state."""
+
+
+@dataclass(frozen=True)
+class TwistedTapeClearanceGeometry:
+    """Nominal centered edge gaps [m], derived from bore and tape width.
+
+    Radial clearance is half the diametral difference, not a claim about
+    eccentric installation or the minimum gap around finite-thickness corners.
+    No correlation-specific clearance-ratio convention is imposed here.
+    """
+    tube_inner_diameter: float
+    tape_width: float
+
+    def __post_init__(self) -> None:
+        _positive(tube_inner_diameter=self.tube_inner_diameter, tape_width=self.tape_width)
+        if self.tape_width > self.tube_inner_diameter:
+            raise ValueError("Tape width must not exceed tube inside diameter.")
+
+    @property
+    def diametral_clearance(self) -> float:
+        return self.tube_inner_diameter - self.tape_width
+
+    @property
+    def radial_clearance(self) -> float:
+        return self.diametral_clearance / 2
+
+    @property
+    def nominal_full_width(self) -> bool:
+        # Floating-point tolerance only; never a manufacturing-gap allowance.
+        return math.isclose(self.tape_width, self.tube_inner_diameter, rel_tol=1e-12)
 
 
 @dataclass(frozen=True)
@@ -46,6 +79,9 @@ class TwistedTapeGeometry:
     def twist_ratio_for(self, tube_inner_diameter: float) -> float:
         _positive(tube_inner_diameter=tube_inner_diameter)
         return self.half_turn_length / tube_inner_diameter
+
+    def clearance_for(self, tube_inner_diameter: float) -> TwistedTapeClearanceGeometry:
+        return TwistedTapeClearanceGeometry(tube_inner_diameter, self.tape_width)
 
 
 @dataclass(frozen=True)
@@ -222,6 +258,7 @@ class TubeSideEnhancement:
     provider: TubeSideEnhancementProvider
     geometry: object
     fluid_phase: str
+    clearance_provider: TwistedTapeClearanceProvider | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.provider, TubeSideEnhancementProvider):
@@ -230,6 +267,11 @@ class TubeSideEnhancement:
             raise ValueError("A provider identifier and geometry are required.")
         if self.fluid_phase not in ("liquid", "gas"):
             raise EnhancementUnsupportedError("Declare single-phase liquid or gas explicitly.")
+        if self.clearance_provider is not None:
+            from .clearance import validate_clearance_provider
+            if not isinstance(self.geometry, TwistedTapeGeometry):
+                raise TypeError("A clearance provider requires TwistedTapeGeometry.")
+            validate_clearance_provider(self.clearance_provider)
 
 
 def evaluate_enhancement(configuration: TubeSideEnhancement | None,
@@ -239,10 +281,20 @@ def evaluate_enhancement(configuration: TubeSideEnhancement | None,
         return None
     if state.fluid_phase != configuration.fluid_phase:
         raise EnhancementUnsupportedError("Enhancement fluid phase does not match configuration.")
+    if isinstance(configuration.geometry, TwistedTapeGeometry):
+        configuration.geometry.clearance_for(state.tube_inner_diameter)
+    if configuration.clearance_provider is not None:
+        from .clearance import evaluate_with_clearance
+        return evaluate_with_clearance(configuration, state)
     result = configuration.provider.evaluate(configuration.geometry, state)
+    return _validate_result(result, configuration.provider.provider_id, state)
+
+
+def _validate_result(result, expected_provider_id, state):
+    """Check the same physical contract for native, corrected and absolute results."""
     if not isinstance(result, EnhancementResult):
         raise TypeError("Provider must return a coherent EnhancementResult.")
-    if result.provider_id != configuration.provider.provider_id:
+    if result.provider_id != expected_provider_id:
         raise ValueError("Returned provider identity does not match selected provider.")
     r = result.reference
     velocity = state.mass_flow_per_tube/(state.bulk.rho*r.flow_area)

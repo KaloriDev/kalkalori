@@ -1,5 +1,9 @@
 # Tube-side enhancements (unreleased v0.8.x)
 
+Optional source-neutral [clearance model composition](twisted_tape_clearance.md)
+supports explicit correction and absolute modes. No built-in clearance fit or
+AUTO fallback is currently enabled.
+
 The feature branch adds a coherent provider for inside heat transfer and
 distributed straight-tube friction. The package version remains v0.7.10
 until an explicitly authorized release. Omitting `tube_side_enhancement`

@@ -4,10 +4,14 @@
 from .base import (
     EnhancementDiagnostic, EnhancementInput, EnhancementReferenceState,
     EnhancementResult, EnhancementState, EnhancementUnsupportedError,
-    TubeSideEnhancement, TubeSideEnhancementProvider, TwistedTapeGeometry,
+    TubeSideEnhancement, TubeSideEnhancementProvider, TwistedTapeGeometry, TwistedTapeClearanceGeometry,
     evaluate_enhancement,
 )
 from .yang2020 import Yang2020TwistedTapeProvider
+from .clearance import (
+    ClearanceModelMode, ClearanceCorrection, TwistedTapeClearanceResult,
+    TwistedTapeClearanceProvider, require_nominal_twisted_tape,
+)
 
 __all__ = [
     "EnhancementDiagnostic", "EnhancementInput", "EnhancementReferenceState",
@@ -15,4 +19,6 @@ __all__ = [
     "TubeSideEnhancement", "TubeSideEnhancementProvider", "TwistedTapeGeometry",
     "evaluate_enhancement",
     "Yang2020TwistedTapeProvider",
+    "TwistedTapeClearanceGeometry", "ClearanceModelMode", "ClearanceCorrection",
+    "TwistedTapeClearanceResult", "TwistedTapeClearanceProvider", "require_nominal_twisted_tape",
 ]
