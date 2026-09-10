@@ -7,6 +7,13 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## Unreleased
 
+- Added the standalone open-source `Yang2020TwistedTapeProvider`, using
+  Yang et al. (2020) Eqs.21-22 for conventional continuous tape: laminar
+  liquid heating, Re 100..1100, Pr 7..900, H/D 2..4, and the studied
+  D=12 mm, thickness=1 mm, L=300 mm zero-clearance geometry. Native Darcy
+  friction, reference blockage geometry and viscosity correction are
+  explicit. Other regimes/geometries raise unsupported errors.
+
 - Added the generic coherent tube-side enhancement contract, explicit
   half-turn twisted-tape geometry, provenance and provider-owned reference
   states. Private literature/manufacturer providers can implement this
