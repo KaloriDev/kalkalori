@@ -5,6 +5,16 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## Unreleased
+
+- Added the generic coherent tube-side enhancement contract, explicit
+  half-turn twisted-tape geometry, provenance and provider-owned reference
+  states. Private literature/manufacturer providers can implement this
+  interface without disclosing equations. Existing solvers still use the
+  unchanged smooth default until an enhancement is explicitly integrated.
+- Built-in correlation source policy now requires legally and freely
+  accessible material; M&B Part I/II remain future private-provider sources.
+
 ## [0.7.10] — Alternating tube counts in staggered rows
 
 ### Changed
