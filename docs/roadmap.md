@@ -167,15 +167,18 @@ selection remain outside the solver's scope.
 - a coherent tube-side enhancement provider for distributed heat transfer
   and friction, with provider-owned reference geometry and wall corrections;
 - classical continuous, full-length twisted-tape inserts in circular tubes,
-  based on verified Manglik-Bergles Part I / Part II correlations;
+  based only on independently reproducible, freely accessible literature;
 - single-phase Rating, Simulation, thermal iteration, hydraulic diagnostics
   and applicability reporting;
 - externally supplied enhancement providers without proprietary equations
   in the GPL core.
 
-Implementation is currently blocked by primary-source verification gaps;
-see [the architecture audit and source checklist](twisted_tape_manglik_bergles.md).
-No enhancement provider or correlation has been implemented yet.
+The public source freeze selects the laminar single-tape specialization of
+Yang et al. (2020); see [the source audit](twisted_tape_manglik_bergles.md).
+Transition, turbulent and gas support are outside this selected model.
+Paywalled literature (including M&B Part I / II), manufacturer data,
+proprietary correlations and licensed software belong in external/private
+providers, supported by the open generic interface.
 Insert-specific local losses, phase change inside enhanced tubes, and
 CALGAVIN/hiTRAN physics are excluded from this stage.
 

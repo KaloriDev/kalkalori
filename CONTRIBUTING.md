@@ -89,6 +89,13 @@ extensions**.
 
 ## Documentation and References
 
+Built-in engineering correlations in KalKalori core must be independently
+reproducible from legally and freely accessible source material. Models
+requiring paywalled publications, licensed datasets, proprietary software,
+or manufacturer-confidential information are integrated through external
+providers. This is a project source policy, independent of whether the
+underlying mathematical method could otherwise be implemented legally.
+
 - Every non-trivial formula must include a **literature reference** in comments
 - Assumptions and applicability limits must be stated explicitly
 - Avoid undocumented “magic numbers”
