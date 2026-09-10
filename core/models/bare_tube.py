@@ -24,7 +24,9 @@ from core.enhancements.base import TubeSideEnhancement, EnhancementResult, Enhan
 from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
 
 import math
+from copy import copy
 from dataclasses import dataclass, replace
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from core.geometry.bundle import TubeBundle
@@ -602,6 +604,11 @@ class HXResult:
         return self.outside_side_pressure_drop.dp_local
 
 
+class _EnhancementDefault(Enum):
+    """Distinguish an omitted call override from explicit smooth selection."""
+    INHERIT = "inherit"
+
+
 class BareTubeHeatExchanger:
     """
     Heat exchanger model retaining its historical public class name.
@@ -645,6 +652,17 @@ class BareTubeHeatExchanger:
     @property
     def tube_side_enhancement(self) -> TubeSideEnhancement | None:
         return self._tube_side_enhancement
+
+    def _for_enhancement_call(self, selection):
+        if selection is _EnhancementDefault.INHERIT:
+            return self
+        if selection is not None and not isinstance(selection, TubeSideEnhancement):
+            raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration or None.")
+        # Preserve the exchanger/subclass and the exact provider object, but
+        # keep selection local to this solve, including nested solver calls.
+        selected = copy(self)
+        selected._tube_side_enhancement = selection
+        return selected
 
     def tube_wall_resistance(self) -> float:
         """Public accessor for the cylindrical tube-wall conduction resistance [K/W].
@@ -1138,6 +1156,7 @@ class BareTubeHeatExchanger:
         inside: "HXSideInput",
         outside: "HXSideInput",
         *,
+        tube_side_enhancement: TubeSideEnhancement | None | _EnhancementDefault = _EnhancementDefault.INHERIT,
         surface_margin: float = 0.0,
         iterate: bool = True,
         flow_arrangement: str | None = None,
@@ -1177,6 +1196,12 @@ class BareTubeHeatExchanger:
         unlike earlier versions, constant bulk properties no longer skip
         wall-temperature iteration, since the wall correction still needs to
         converge).
+
+        ``tube_side_enhancement`` selects a complete geometry/provider/phase
+        configuration for this call only. Omission inherits the exchanger
+        configuration; explicit ``None`` selects the legacy smooth path.
+        The original exchanger is unchanged; the selected provider instance
+        is reused throughout the solve.
 
         ``surface_margin`` (default ``0.0``, "on the nose") is the Simulation
         input derating applied to the full-geometry ``UA`` before duty and
@@ -1218,6 +1243,7 @@ class BareTubeHeatExchanger:
         """
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
+        self = self._for_enhancement_call(tube_side_enhancement)
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,
@@ -1384,6 +1410,7 @@ class BareTubeHeatExchanger:
         inside: "BalanceSideSpec",
         outside: "BalanceSideSpec",
         *,
+        tube_side_enhancement: TubeSideEnhancement | None | _EnhancementDefault = _EnhancementDefault.INHERIT,
         Q: float | None = None,
         effectiveness: float | None = None,
         flow_arrangement: str | None = None,
@@ -1412,6 +1439,11 @@ class BareTubeHeatExchanger:
         phase_change_relaxation_factor: float = 0.5,
     ) -> "HXRatingResult":
         """Rate this exchanger against a closed heat balance (overdesign).
+
+        ``tube_side_enhancement`` has the same call-local selection semantics
+        as ``simulate``: omit to inherit, supply a configuration to override,
+        or pass ``None`` for the legacy smooth path. This also governs the
+        optional Rating-to-Simulation bridge.
 
         This is the Rating entry point (v0.5.1, thermal state wiring since
         v0.5.3): given geometry and a *closed* heat balance (duty, both
@@ -1461,6 +1493,7 @@ class BareTubeHeatExchanger:
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
+        self = self._for_enhancement_call(tube_side_enhancement)
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,

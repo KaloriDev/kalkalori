@@ -29,6 +29,22 @@ hx = BareTubeHeatExchanger(bundle, tube_side_enhancement=enhancement)
 
 The configuration is shared by thermal iteration, wall probes, Rating,
 Simulation (also `iterate=False`), and inlet/midpoint/outlet hydraulics.
+It may also be supplied directly to either public solver call:
+
+```python
+simulation = hx.simulate(inside, outside, tube_side_enhancement=enhancement)
+rating = hx.rate(inside_balance, outside_balance,
+                 tube_side_enhancement=enhancement, include_simulation=True)
+```
+
+Omitting the keyword inherits the exchanger's constructor configuration.
+Passing a configuration overrides it only for that call; passing `None`
+explicitly selects the legacy smooth path for that call. Selection uses an
+exchanger copy with the same geometry and exact provider instance, leaving
+the original exchanger unchanged even if the solve raises. The complete
+configuration is passed as one object so HTC and friction cannot be selected
+independently. See the private notebook readiness audit below.
+
 It works with the existing bare and circular-finned outside-surface routes.
 Tube wall heat-transfer area and surface-margin definitions are unchanged;
 the tape does not add a conductive fin area.
@@ -120,7 +136,7 @@ All core contract types are exported from `core.enhancements`:
 
 | Contract | Required interpretation |
 | --- | --- |
-| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, roughness, bulk state, optional wall state, declared phase, position and heating/cooling direction |
+| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall state, declared phase, position and heating/cooling direction |
 | `EnhancementState` | Positive finite density, viscosity, conductivity and cp; optional temperature and pressure |
 | `EnhancementReferenceState` | Per-tube flow area and consistent mass-flow velocity, provider-owned Re/Pr, friction diameter, separate hydraulic diameter and Nu reference length |
 | `EnhancementResult` | Positive `alpha_inside` and `f_darcy`, native friction and explicit `darcy`/`fanning` basis, reference state, regime, applicability, provenance and optional Nu |
@@ -165,6 +181,77 @@ Transport-only providers rely on the declaration and cannot independently
 prove phase. Quality inputs, active inside phase-change paths, and wet-gas
 phase-capable inside providers are excluded. Gas support in the generic
 contract does not extend the liquid-only public model.
+
+## PRIVATE M&B PROVIDER READINESS
+
+**Interface readiness: yes.** A future privately supplied
+`ManglikBergles1993Provider` can implement the public
+`TubeSideEnhancementProvider` contract and be used by private notebooks
+without registering its name, editing a dispatcher, monkey-patching, or
+adding an import of private code to core. No further core change is required
+to select the object and consume its coherent result within the documented
+single-phase 0D state contract. This audit verifies integration readiness;
+it does not verify or implement the paywalled model's physics or applicability.
+
+The notebook imports its private class using its own Python import setup
+and constructs it normally. With that `provider` object already created,
+the public side of the notebook code is:
+
+```python
+from core.enhancements import TubeSideEnhancement, TwistedTapeGeometry
+
+tape = TwistedTapeGeometry(
+    half_turn_length=0.036, tape_width=0.012, tape_thickness=0.001,
+)
+selection = TubeSideEnhancement(provider=provider, geometry=tape, fluid_phase="liquid")
+rating = hx.rate(inside_balance, outside_balance, tube_side_enhancement=selection)
+simulation = hx.simulate(inside, outside, tube_side_enhancement=selection)
+```
+
+These geometry values illustrate the public API only; they do not declare
+the private model's validity. A conceptual private location such as
+`.kon/_shared/tube_side_enhancement/manglik_bergles_1993.py` has no special
+meaning to core. No such module or notebook is created, imported, inspected,
+or required by public implementation/tests. Dependency direction is solely
+private notebook/provider -> public contract.
+
+| Requirement | Public data/path available to the private provider |
+| --- | --- |
+| Physical geometry | `evaluate(geometry, state)` receives the public tape geometry, without Sw, friction or private model parameters |
+| Local flow | `state.mass_flow_per_tube`; `base_flow_area_per_tube`; derived `base_mass_flux` in kg/(m2 s). Core already divides bundle mass flow/area by effective parallel tube count, so the provider need not access bundle internals |
+| Tube and lengths | `tube_inner_diameter`, `tube_length` (one physical tube), `heated_length` (one heated tube), `hydraulic_length_total` (complete path through the passes), `roughness_inner` |
+| Bulk state | `state.bulk.rho`, `.mu`, `.k`, `.cp`, `.temperature` [K], `.pressure` [Pa]; phase/direction/position separately on input |
+| Wall state | `state.wall` carries the authoritative wall transport properties, temperature and pressure when thermal iteration evaluates them; it is optional during initialization and absent at hydraulic quadrature nodes |
+| Coherent output | Required positive `alpha_inside`, explicit `f_darcy`, native factor/basis, `reference`, `regime`, provider/correlation/source identifiers; optional `nusselt`, declared applicability, warnings and correction diagnostic |
+| Provider-specific details | Immutable scalar `EnhancementDiagnostic` tuples or defaulted typed fields on a frozen `EnhancementResult` subclass; solver does not interpret Sw, Re variants or private factors |
+| Darcy hydraulic consumption | At each inlet/midpoint/outlet, the same provider supplies `f_darcy` with its own reference velocity and friction diameter; Simpson integration uses its pressure gradient over `hydraulic_length_total` |
+| Thermal correction | The external provider returns its already corrected alpha. Core applies no additional smooth-tube wall or length correction |
+| Selection and failures | Constructor default or direct `rate`/`simulate` configuration; no registry. Unsupported errors propagate and model identity must agree across thermal/hydraulic paths |
+
+The two added geometry fields are optional for independently constructed
+standalone `EnhancementInput` values, preserving existing calls. Exchanger
+adapters always fill them. `base_mass_flux` is `None` when a standalone caller
+omits the base area. Provider-owned blocked area, reference velocities,
+hydraulic diameters and dimensionless groups remain derived by the provider;
+the base inputs do not prescribe its correlation convention.
+
+The 0D availability boundary is explicit: there is no axial wall-temperature
+field and no invented wall state in hydraulics. The future provider must
+handle provisional/missing-wall evaluations according to its verified model
+or reject unsupported states. This is not a promise that an arbitrary model
+requiring a spatially resolved wall solution can be evaluated by a 0D solver.
+Extra private source data and additional property evaluation, if needed,
+belong to the external object and must not depend on private core internals.
+
+`core/tests/external_enhancement_integration_test.py` defines synthetic
+providers entirely in tests and verifies notebook-style selection through
+Rating, both Simulation modes and the Rating-to-Simulation bridge. It checks
+per-tube inputs and two-pass length, authoritative bulk/wall properties,
+an independently specified synthetic wall multiplier applied once, explicit
+Darcy pressure gradients, provenance/typed detail/warning propagation,
+unchanged defaults after overrides/errors, exact explicit-None smooth
+results, and controlled unsupported failure. These fixtures contain no M&B
+equations, paywalled numerical anchors or manufacturer data.
 
 ## Source policy and private-model boundary
 

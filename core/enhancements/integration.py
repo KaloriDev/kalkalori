@@ -80,6 +80,9 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
         fluid_phase=configuration.fluid_phase, position=position,
         heat_flow_direction=heat_flow_direction,
         roughness_inner=getattr(bundle.tube, "roughness_inner", None) or 0.0,
+        base_flow_area_per_tube=(bundle.internal_flow_area_per_pass
+                                / bundle.n_tubes_per_pass_effective),
+        hydraulic_length_total=bundle.internal_length_total,
     )
     result = evaluate_enhancement(configuration, state)
     return replace(result, warnings=result.warnings + (make_warning(

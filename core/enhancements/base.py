@@ -82,11 +82,20 @@ class EnhancementInput:
     position: str = "thermal"
     roughness_inner: float = 0.0
     heat_flow_direction: str = "unknown"
+    # Solver-owned unblocked geometry. Optional for standalone evaluations;
+    # the exchanger adapters always supply both, independently of the
+    # provider-owned blocked/reference geometry in EnhancementResult.
+    base_flow_area_per_tube: float | None = None
+    hydraulic_length_total: float | None = None
 
     def __post_init__(self) -> None:
         _positive(mass_flow_per_tube=self.mass_flow_per_tube,
                   tube_inner_diameter=self.tube_inner_diameter,
                   heated_length=self.heated_length, tube_length=self.tube_length)
+        for name in ("base_flow_area_per_tube", "hydraulic_length_total"):
+            value = getattr(self, name)
+            if value is not None:
+                _positive(**{name: value})
         if self.heat_flow_direction not in ("heating", "cooling", "unknown"):
             raise ValueError("Unknown tube-side heat-flow direction.")
         if not math.isfinite(self.roughness_inner) or self.roughness_inner < 0:
@@ -95,6 +104,13 @@ class EnhancementInput:
             raise TypeError("bulk must be an EnhancementState.")
         if self.wall is not None and not isinstance(self.wall, EnhancementState):
             raise TypeError("wall must be an EnhancementState.")
+
+    @property
+    def base_mass_flux(self) -> float | None:
+        """Unblocked per-tube mass flux [kg/(m2 s)], when area is available."""
+        if self.base_flow_area_per_tube is None:
+            return None
+        return self.mass_flow_per_tube / self.base_flow_area_per_tube
 
 
 @dataclass(frozen=True)

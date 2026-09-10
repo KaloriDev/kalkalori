@@ -36,6 +36,15 @@ The project follows **Semantic Versioning (SemVer)**:
 - Documented the public/external provider contract and current open-model
   limits in `docs/tube_side_enhancements.md`. Preserved the positional order
   of existing `HXResult` fields when appending enhancement diagnostics.
+- Added call-local `tube_side_enhancement` selection to Rating and Simulation
+  for notebook-created external provider objects. Omission inherits the
+  exchanger configuration; explicit `None` selects the exact smooth default.
+  Selection leaves the original exchanger unchanged and governs all nested
+  thermal/hydraulic evaluations, including the Rating-to-Simulation bridge.
+- Exposed solver-owned per-tube base flow area, derived base mass flux and
+  total hydraulic length in the generic enhancement input. Added the private
+  notebook provider readiness audit and tests of authoritative bulk/wall
+  inputs and provider-owned correction without a second smooth correction.
 
 ## [0.7.10] — Alternating tube counts in staggered rows
 

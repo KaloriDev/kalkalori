@@ -131,3 +131,16 @@ def test_configuration_rejects_nonprovider_and_unsupported_phase():
         TubeSideEnhancement(object(), "geometry", "liquid")
     with pytest.raises(EnhancementUnsupportedError):
         TubeSideEnhancement(FakeExternalProvider(), "test_geometry", "two_phase")
+
+
+@pytest.mark.parametrize("field", ["base_flow_area_per_tube", "hydraulic_length_total"])
+@pytest.mark.parametrize("value", [0, -1, math.nan, math.inf])
+def test_solver_reference_inputs_reject_invalid_values(field, value):
+    with pytest.raises(ValueError):
+        replace(sample_input(), **{field: value})
+
+
+def test_standalone_reference_inputs_are_optional_and_mass_flux_is_derived():
+    assert sample_input().base_mass_flux is None
+    state = replace(sample_input(), base_flow_area_per_tube=.002, hydraulic_length_total=1.2)
+    assert state.base_mass_flux == 5

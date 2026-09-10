@@ -182,3 +182,127 @@ def test_external_provider_can_support_dry_gas(iterate):
     assert result.q > 0
     assert result.tube_side_enhancement.provider_id == provider.provider_id
     assert all(state.fluid_phase == "gas" for state in provider.requests)
+
+
+class NotebookFixtureProvider(ExternalTapeFixture):
+    """A notebook-style object using only public contract inputs/outputs.
+
+    The temperature multiplier is synthetic test arithmetic, not an
+    engineering correlation or any part of Manglik-Bergles.
+    """
+    def evaluate(self, geometry, state):
+        result = super().evaluate(geometry, state)
+        factor = 1 if state.wall is None else 1 + .001*(
+            state.wall.temperature - state.bulk.temperature)
+        return replace(result, alpha_inside=result.alpha_inside*factor,
+                       wall_correction=factor)
+
+
+def notebook_configuration(provider):
+    return TubeSideEnhancement(provider, TwistedTapeGeometry(.05, .01, .0005), "liquid")
+
+
+def notebook_solve(hx, mode, inside, outside, **kwargs):
+    if mode == "rating":
+        return hx.rate(
+            BalanceSideSpec(provider=inside.provider, p=inside.p, m_dot=inside.m_dot,
+                            T_in=inside.T_in, T_out=301),
+            BalanceSideSpec(provider=outside.provider, p=outside.p, m_dot=outside.m_dot,
+                            T_in=outside.T_in), include_simulation=True, **kwargs)
+    return hx.simulate(inside, outside, iterate=mode != "snapshot", **kwargs)
+
+
+@pytest.mark.parametrize("mode", ["rating", "simulation", "snapshot"])
+def test_notebook_object_selected_per_call_owns_thermal_and_hydraulic_results(mode):
+    b = bundle(passes=2)
+    provider = NotebookFixtureProvider()
+    config = notebook_configuration(provider)
+    hx = BareTubeHeatExchanger(b)
+    inside, outside = inputs(b, provider=VariableLiquid())
+    result = notebook_solve(hx, mode, inside, outside, tube_side_enhancement=config)
+    assert hx.tube_side_enhancement is None
+    assert config.provider is provider
+    enhanced = result.tube_side_enhancement
+    assert enhanced.source_access_basis == "private"
+    assert enhanced.source_references == ("private:test_dataset",)
+    assert enhanced.private_details.dataset == "synthetic_private_fixture"
+    assert "test_external_notice" in {w.code for w in result.warnings}
+
+    area = math.pi*.012**2/4
+    flow = inside.m_dot/b.n_tubes_per_pass_effective
+    for state in provider.requests:
+        assert state.mass_flow_per_tube == pytest.approx(flow)
+        assert state.base_flow_area_per_tube == pytest.approx(area)
+        assert state.base_mass_flux == pytest.approx(flow/area)
+        assert state.heated_length == state.tube_length == .3
+        assert state.hydraulic_length_total == .6
+        assert state.tube_inner_diameter == .012
+        assert state.bulk.temperature is not None
+        assert state.bulk.pressure == inside.p
+
+    points = (result.inside_properties_inlet, result.inside_properties_midpoint,
+              result.inside_properties_outlet)
+    gradients = []
+    for point in points:
+        assert point.enhancement.f_darcy == .08
+        assert any(s.position == point.position and s.bulk.temperature == point.temperature
+                   and s.bulk.rho == point.rho and s.bulk.mu == point.mu
+                   for s in provider.requests)
+        # Independent Darcy pressure gradient on the synthetic half-area,
+        # half-diameter reference, integrated over both tube passes.
+        gradients.append(.08*point.rho*(flow/(point.rho*area/2))**2/(2*.006))
+    assert result.inside_dp_friction == pytest.approx(.6*(gradients[0]+4*gradients[1]+gradients[2])/6)
+    if mode == "rating":
+        assert result.simulation is not None
+        assert result.simulation.tube_side_enhancement.provider_id == provider.provider_id
+        assert result.simulation.inside_properties_outlet.enhancement.source_access_basis == "private"
+
+    if mode != "snapshot":
+        thermal = result.thermal_state
+        assert thermal.converged
+        matches = [s for s in provider.requests if s.wall is not None
+                   and s.bulk.mu == thermal.inside_bulk_props.mu
+                   and s.wall.mu == thermal.inside_wall_props.mu]
+        assert matches
+        state = matches[-1]
+        factor = 1 + .001*(state.wall.temperature-state.bulk.temperature)
+        assert factor != 1
+        assert enhanced.wall_correction == pytest.approx(factor)
+        assert enhanced.alpha_inside == pytest.approx(20*state.bulk.k/.012*factor)
+        assert thermal.diagnostics.inside_combined_correction == pytest.approx(factor)
+    else:
+        assert result.thermal_state is None
+    # Omission after an override still follows the original smooth default.
+    assert notebook_solve(hx, mode, inside, outside).tube_side_enhancement is None
+
+
+@pytest.mark.parametrize("mode", ["rating", "simulation", "snapshot"])
+def test_notebook_override_inherit_and_explicit_none_are_isolated(mode):
+    b = bundle()
+    inside, outside = inputs(b)
+    default = notebook_configuration(ExternalTapeFixture())
+    hx = BareTubeHeatExchanger(b, tube_side_enhancement=default)
+    inherited = notebook_solve(hx, mode, inside, outside)
+    assert inherited.tube_side_enhancement is not None
+    before = len(default.provider.requests)
+    smooth = notebook_solve(hx, mode, inside, outside, tube_side_enhancement=None)
+    legacy = notebook_solve(BareTubeHeatExchanger(b), mode, inside, outside)
+    assert smooth.tube_side_enhancement is None
+    assert smooth.warnings == legacy.warnings
+    assert smooth.final_result.tube_side_thermal == legacy.final_result.tube_side_thermal
+    for name in ("inside_dp_friction", "inside_dp_acceleration", "overdesign_factor"):
+        assert getattr(smooth, name) == getattr(legacy, name)
+    assert len(default.provider.requests) == before
+    assert hx.tube_side_enhancement is default
+
+    class RejectingNotebookProvider(ExternalTapeFixture):
+        def evaluate(self, geometry, state):
+            raise EnhancementUnsupportedError("notebook_fixture_unsupported")
+
+    with pytest.raises(EnhancementUnsupportedError, match="notebook_fixture_unsupported"):
+        notebook_solve(hx, mode, inside, outside,
+                       tube_side_enhancement=notebook_configuration(RejectingNotebookProvider()))
+    with pytest.raises(TypeError, match="configuration"):
+        notebook_solve(hx, mode, inside, outside, tube_side_enhancement=object())
+    assert hx.tube_side_enhancement is default
+    assert len(default.provider.requests) == before
