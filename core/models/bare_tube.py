@@ -788,6 +788,11 @@ class BareTubeHeatExchanger:
                 tube_inner_diameter=D_h,
                 flow_area=flow_area_pass,
                 props=tube_side_props,
+                # Thermal-entry laminar model also applies without wall
+                # iteration. Preserve the existing noniterative turbulent path.
+                L_heated=(self.bundle.tube.length_effective
+                          if m_dot_tube_side*D_h/(flow_area_pass*tube_side_props.mu) < 2300
+                          else None),
             )
         else:
             ref = enhancement.reference
@@ -1026,9 +1031,9 @@ class BareTubeHeatExchanger:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_laminar_regime",
-                    message="tube_ht: tube-side Reynolds number indicates laminar flow while turbulent behavior is expected by the selected model.",
+                    message="tube_ht: laminar circular-tube model selected; thermal development uses the supplied heated length and constant-wall-temperature approximation.",
                     source="tube_ht",
-                    severity="warning",
+                    severity="info",
                 )
             )
         elif enhancement is None and 2300.0 <= Re_i <= 4000.0:

@@ -715,7 +715,9 @@ def test_finned_subcooled_water_preheat_uses_surface_dispatch_not_bare_probe(
     hx = BareTubeHeatExchanger(_bundle(finned=True))
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(),
-        m_dot=0.1,
+        # Keep this branch subcooled with thermal-entry laminar HTC enabled.
+        # The lower-flow branch below still tests actual saturation crossing.
+        m_dot=0.5,
         T_in=300.0,
         p=1.0e6,
     )

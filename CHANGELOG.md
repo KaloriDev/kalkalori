@@ -7,6 +7,12 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## Unreleased
 
+- Smooth laminar internal flow now uses Hausen mean thermal development when
+  a positive heated length is supplied. The constant-wall-temperature and
+  bulk-property assumptions are visible in warnings. Calls without length
+  retain Nu=3.66; hydraulic path lengths and enhanced-provider physics remain
+  separate. See `docs/internal_laminar_thermal_development.md`.
+
 - Added explicit radial/diametral twisted-tape clearance geometry and optional
   public clearance-provider composition. Relative models require documented
   base-geometry selection and compatible correlation IDs; absolute models
