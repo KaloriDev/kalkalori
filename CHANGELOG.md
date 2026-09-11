@@ -7,6 +7,11 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## Unreleased
 
+- The open twisted-tape provider ignores supplied inner roughness with an
+  informational diagnostic because its equation has no roughness term;
+  provider-owned distributed friction is not corrected a second time.
+  Physical tube length is independent of the correlation's heated length.
+
 - Smooth laminar internal flow now uses Hausen mean thermal development when
   a positive heated length is supplied. The constant-wall-temperature and
   bulk-property assumptions are visible in warnings. Calls without length

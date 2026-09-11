@@ -47,6 +47,22 @@ def inputs(b, re=500, provider=None):
     return inside, outside
 
 
+def test_unused_roughness_provider_warning_reaches_real_solvers():
+    b = bundle()
+    rough = replace(b, tube=replace(b.tube, roughness_inner=2e-5))
+    inside, outside = inputs(b)
+    clean_result = BareTubeHeatExchanger(b).simulate(inside, outside, tube_side_enhancement=configuration())
+    hx = BareTubeHeatExchanger(rough)
+    simulation = hx.simulate(inside, outside, tube_side_enhancement=configuration())
+    assert simulation.inside_dp_friction == clean_result.inside_dp_friction
+    rating = hx.rate(
+        BalanceSideSpec(provider=inside.provider,p=inside.p,m_dot=inside.m_dot,T_in=300,T_out=simulation.T_out_inside),
+        BalanceSideSpec(provider=outside.provider,p=outside.p,m_dot=outside.m_dot,T_in=340),
+        include_simulation=True,tube_side_enhancement=configuration())
+    for result in (simulation, rating, rating.simulation):
+        assert 'yang2020_roughness_ignored' in {w.code for w in result.warnings}
+
+
 @pytest.mark.parametrize("finned", [False, True])
 @pytest.mark.parametrize("iterate", [False, True])
 def test_real_simulation_routes_and_warning_propagation(finned, iterate):

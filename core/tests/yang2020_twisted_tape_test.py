@@ -91,9 +91,9 @@ def test_twist_bounds(y):
 
 
 @pytest.mark.parametrize("change", [
-    {"tube_inner_diameter": .02}, {"heated_length": 1}, {"tube_length": 1},
+    {"tube_inner_diameter": .02}, {"heated_length": 1},
     {"fluid_phase": "gas"}, {"fluid_phase": "two_phase"},
-    {"fluid_phase": "supercritical"}, {"roughness_inner": 1e-6},
+    {"fluid_phase": "supercritical"},
 ])
 def test_unsupported_scope(change):
     with pytest.raises(EnhancementUnsupportedError):
@@ -122,6 +122,22 @@ def test_provider_owns_wall_correction_and_missing_wall_is_visible():
     assert base.source_access_basis == "open"
     assert "yang2020_eq21_eq22" in base.correlation_id
     assert base.regime == "laminar"
+
+
+def test_unused_roughness_warns_without_changing_correlated_friction():
+    base = evaluate()
+    rough = evaluate(replace(state_for(), roughness_inner=2e-5))
+    assert rough.f_darcy == base.f_darcy
+    assert rough.nusselt == base.nusselt
+    assert 'yang2020_roughness_ignored' in {w.code for w in rough.warnings}
+
+
+def test_physical_length_is_independent_of_correlation_thermal_length():
+    base = evaluate()
+    longer = evaluate(replace(state_for(), tube_length=.305))
+    assert longer.nusselt == base.nusselt
+    assert longer.f_darcy == base.f_darcy
+    assert 'yang2020_physical_length_ignored' in {w.code for w in longer.warnings}
 
 
 def test_laminar_sanity_and_continuity_inside_supported_interval():

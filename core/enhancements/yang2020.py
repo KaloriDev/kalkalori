@@ -48,11 +48,8 @@ class Yang2020TwistedTapeProvider:
             ("diameter", D, .012), ("thickness", delta, .001),
             ("width", geometry.tape_width, D),
             ("heated_length", state.heated_length, .3),
-            ("tube_length", state.tube_length, .3),
         ):
             _within(value, required, required, name)
-        if state.roughness_inner != 0:
-            raise EnhancementUnsupportedError("yang2020_roughness_unsupported: smooth circular core required.")
         y = geometry.twist_ratio_for(D)
         _within(y, 2, 4, "twist_ratio")
         bulk = state.bulk
@@ -82,6 +79,20 @@ class Yang2020TwistedTapeProvider:
                      "insert-specific local losses excluded. Source fit deviations: Nu 20%, f 12%."),
             source=self.provider_id, severity="info",
         )]
+        if not math.isclose(state.tube_length, state.heated_length, rel_tol=1e-12):
+            warnings.append(make_warning(
+                code="yang2020_physical_length_ignored", source=self.provider_id, severity="info",
+                message=(f"action=ignored; parameter=tube_length; actual_value={state.tube_length:.9g} m. "
+                         f"The correlation uses heated_length={state.heated_length:.9g} m for thermal "
+                         "development. Physical length is not an equation input; the hydraulic path remains solver-owned."),
+            ))
+        if state.roughness_inner > 0:
+            warnings.append(make_warning(
+                code="yang2020_roughness_ignored", source=self.provider_id, severity="info",
+                message=(f"action=ignored; parameter=roughness_inner; actual_value={state.roughness_inner:.9g} m. "
+                         "The selected correlation contains no roughness term. Enhanced distributed "
+                         "friction uses the provider model; no additional roughness correction is applied."),
+            ))
         correction = 1.0
         if state.wall is None:
             warnings.append(make_warning(
