@@ -1,13 +1,14 @@
-# Tube-side enhancements (unreleased v0.8.x)
+# Tube-side enhancements (v0.8.0)
 
 Optional source-neutral [clearance model composition](twisted_tape_clearance.md)
 supports explicit correction and absolute modes. No built-in clearance fit or
 AUTO fallback is currently enabled.
 
-The feature branch adds a coherent provider for inside heat transfer and
-distributed straight-tube friction. The package version remains v0.7.10
-until an explicitly authorized release. Omitting `tube_side_enhancement`
-(or setting it to `None`) retains the exact legacy smooth-tube route.
+Version v0.8.0 adds a coherent provider for inside heat transfer and
+distributed straight-tube friction. Omitting `tube_side_enhancement`
+(or setting it to `None`) selects the smooth-tube route, including the
+[laminar thermal-development correction](internal_laminar_thermal_development.md)
+when a positive heated length is supplied.
 
 ## Selecting the public model
 

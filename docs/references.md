@@ -29,7 +29,7 @@ Used for:
 
 ## Internal Flow and Pressure Drop
 
-For unreleased tube-side enhancement correlations, see the dedicated
+For tube-side enhancement correlations introduced in v0.8.0, see the dedicated
 [source audit](twisted_tape_manglik_bergles.md) and
 [provider guide](tube_side_enhancements.md). The public built-in model uses
 Yang, Liu, Cao, Gao and Ding (2020), "Numerical Analysis of FLiBe Laminar

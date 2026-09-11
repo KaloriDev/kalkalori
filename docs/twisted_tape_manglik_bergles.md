@@ -3,7 +3,7 @@
 The original source-gap checkpoint `29c7183` is retained in history. The
 public implementation policy below supersedes its requirement to obtain
 Manglik-Bergles Part I/II before implementing any public model.
-Version remains v0.7.10; this is unreleased v0.8 work.
+The public provider and external-provider interface are included in v0.8.0.
 
 ## PUBLIC BUILT-IN MODEL
 

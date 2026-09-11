@@ -5,7 +5,9 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## Unreleased
+## [0.8.0] — Tube-side enhancements and laminar thermal development
+
+### Added and changed
 
 - The open twisted-tape provider ignores supplied inner roughness with an
   informational diagnostic because its equation has no roughness term;
@@ -36,8 +38,9 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added the generic coherent tube-side enhancement contract, explicit
   half-turn twisted-tape geometry, provenance and provider-owned reference
   states. Private literature/manufacturer providers can implement this
-  interface without disclosing equations. Existing solvers retain the
-  unchanged smooth default when no enhancement is configured.
+  interface without disclosing equations. Existing solvers select the
+  smooth-tube model when no enhancement is configured, including the
+  laminar thermal-development correction described above.
 - Integrated enhancement selection on `BareTubeHeatExchanger` with Rating,
   Simulation (including `iterate=False`), wall-state evaluation, hydraulic
   quadrature and surface margin. Results expose authoritative thermal
@@ -64,6 +67,8 @@ The project follows **Semantic Versioning (SemVer)**:
   total hydraulic length in the generic enhancement input. Added the private
   notebook provider readiness audit and tests of authoritative bulk/wall
   inputs and provider-owned correction without a second smooth correction.
+
+---
 
 ## [0.7.10] — Alternating tube counts in staggered rows
 

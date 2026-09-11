@@ -35,12 +35,13 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.7.10`
+**Current version:** `v0.8.0`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change thermal balance, tube-bank hydraulic balance,
-local nozzle/chamber/tube-sheet/return losses, unified surface-margin reporting
-and alternating staggered-row tube counts. Active wet-finned pressure drop
+local nozzle/chamber/tube-sheet/return losses, unified surface-margin reporting,
+alternating staggered-row tube counts, tube-side enhancement providers and
+smooth laminar thermal development. Active wet-finned pressure drop
 and distributed thermal resolution remain future work.
 
 ---
@@ -162,7 +163,7 @@ selection remain outside the solver's scope.
 
 ### v0.8.x — Tube-Side Enhancement / Turbulators
 
-**Implemented on the feature branch (not released):**
+**Included in v0.8.0:**
 
 - a coherent tube-side enhancement provider for distributed heat transfer
   and friction, with provider-owned reference geometry and wall corrections;
@@ -186,7 +187,8 @@ CALGAVIN/hiTRAN physics are excluded from this stage.
 
 This provider scope is specific to tube-side enhancement devices. General
 tube-side/outside performance providers remain planned for v0.10.x.
-The package remains v0.7.10 until an explicitly authorized release commit.
+The generic clearance-composition API is included; a verified built-in
+finite-width clearance correlation remains future work.
 
 ---
 

@@ -99,5 +99,5 @@ boundary-condition envelope, geometry and accuracy evidence together.
 geometry, both modes, compatibility, warnings/errors, public-base composition,
 real Rating/Simulation, wall iteration, separate losses and independent friction
 integration. Existing smooth and external-provider regressions remain required.
-This change is unreleased; a fresh full audit and user authorization are required
-before release. Version and release gates are unchanged.
+The composition API is included in v0.8.0. No built-in clearance correlation
+is included; the source gaps and model limits described above still apply.

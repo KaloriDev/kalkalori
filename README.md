@@ -214,10 +214,11 @@ Typical usage:
 3. Solve using a heat exchanger model
 4. Inspect results from `HXResult`
 
-For the unreleased v0.8.x tube-side enhancement API, including the public
+For the v0.8.0 tube-side enhancement API, including the public
 twisted-tape model and external providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version remains v0.7.10 pending release review.
+The current package version is v0.8.0. Smooth laminar flow with a supplied
+heated length now includes [thermal development](docs/internal_laminar_thermal_development.md).
 
 ---
 
