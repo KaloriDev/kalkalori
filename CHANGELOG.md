@@ -5,6 +5,71 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.0] — Tube-side enhancements and laminar thermal development
+
+### Added and changed
+
+- The open twisted-tape provider ignores supplied inner roughness with an
+  informational diagnostic because its equation has no roughness term;
+  provider-owned distributed friction is not corrected a second time.
+  Physical tube length is independent of the correlation's heated length.
+
+- Smooth laminar internal flow now uses Hausen mean thermal development when
+  a positive heated length is supplied. The constant-wall-temperature and
+  bulk-property assumptions are visible in warnings. Calls without length
+  retain Nu=3.66; hydraulic path lengths and enhanced-provider physics remain
+  separate. See `docs/internal_laminar_thermal_development.md`.
+
+- Added explicit radial/diametral twisted-tape clearance geometry and optional
+  public clearance-provider composition. Relative models require documented
+  base-geometry selection and compatible correlation IDs; absolute models
+  supply their own thermal/hydraulic result without evaluating the base.
+  Provenance, applicability, wall conventions and separate local losses are
+  preserved. No built-in clearance correlation or AUTO fallback is enabled;
+  source-definition gaps are documented in `docs/twisted_tape_clearance.md`.
+
+- Added the standalone open-source `Yang2020TwistedTapeProvider`, using
+  Yang et al. (2020) Eqs.21-22 for conventional continuous tape: laminar
+  liquid heating, Re 100..1100, Pr 7..900, H/D 2..4, and the studied
+  D=12 mm, thickness=1 mm, L=300 mm zero-clearance geometry. Native Darcy
+  friction, reference blockage geometry and viscosity correction are
+  explicit. Other regimes/geometries raise unsupported errors.
+
+- Added the generic coherent tube-side enhancement contract, explicit
+  half-turn twisted-tape geometry, provenance and provider-owned reference
+  states. Private literature/manufacturer providers can implement this
+  interface without disclosing equations. Existing solvers select the
+  smooth-tube model when no enhancement is configured, including the
+  laminar thermal-development correction described above.
+- Integrated enhancement selection on `BareTubeHeatExchanger` with Rating,
+  Simulation (including `iterate=False`), wall-state evaluation, hydraulic
+  quadrature and surface margin. Results expose authoritative thermal
+  enhancement diagnostics and separate per-point hydraulic reference states.
+  Provider gradients affect distributed friction only; local losses and
+  signed acceleration keep their existing definitions. Enhanced phase
+  change and unsupported operating states raise controlled errors.
+- Built-in correlation source policy now requires legally and freely
+  accessible material; M&B Part I/II remain future private-provider sources.
+- Verified external alpha-only providers through Rating and both Simulation
+  modes, including native Fanning conversion, provider-owned hydraulic
+  references, opaque typed metadata, provenance, applicability and warnings.
+  Inconsistent thermal/hydraulic model identities and unsupported results
+  fail explicitly. No private M&B or manufacturer physics is included.
+- Documented the public/external provider contract and current open-model
+  limits in `docs/tube_side_enhancements.md`. Preserved the positional order
+  of existing `HXResult` fields when appending enhancement diagnostics.
+- Added call-local `tube_side_enhancement` selection to Rating and Simulation
+  for notebook-created external provider objects. Omission inherits the
+  exchanger configuration; explicit `None` selects the exact smooth default.
+  Selection leaves the original exchanger unchanged and governs all nested
+  thermal/hydraulic evaluations, including the Rating-to-Simulation bridge.
+- Exposed solver-owned per-tube base flow area, derived base mass flux and
+  total hydraulic length in the generic enhancement input. Added the private
+  notebook provider readiness audit and tests of authoritative bulk/wall
+  inputs and provider-owned correction without a second smooth correction.
+
+---
+
 ## [0.7.10] — Alternating tube counts in staggered rows
 
 ### Changed

@@ -355,6 +355,13 @@ class HXRatingResult:
         return self.final_result.outside_properties_outlet
 
     @property
+    def tube_side_enhancement(self):
+        """Authoritative thermal result; hydraulic points retain their own states."""
+        if self.thermal_state is not None:
+            return self.thermal_state.tube_side_enhancement
+        return self.final_result.tube_side_enhancement
+
+    @property
     def inside_dp_friction(self) -> float:
         if isinstance(self.inside_phase_change, WaterSteamPhaseChangeResult) and self.inside_phase_change.active:
             return math.nan
@@ -548,6 +555,8 @@ def run_rating(
         flow_arrangement = hx.bundle.flow_arrangement_resolved
 
     inside = closed_balance.inside
+    from core.enhancements.integration import guard_side
+    guard_side(hx.tube_side_enhancement, inside)
     outside = closed_balance.outside
     hot_is_inside = closed_balance.hot_is_inside
 
@@ -577,6 +586,7 @@ def run_rating(
         tube_side_temperature_in=inside.T_in,
         tube_side_temperature_out=inside.T_out,
         tube_side_pressure=inside.p,
+        tube_side_heat_flow_direction="cooling" if hot_is_inside else "heating",
         m_dot_outside=outside.m_dot,
         outside_props=to_outside_fluid_props(props_out),
         outside_provider=outside.provider,
@@ -615,6 +625,8 @@ def run_rating(
         relative_alfa_tolerance=relative_alfa_tolerance,
         relaxation_factor=relaxation_factor,
     )
+    from core.enhancements.integration import check_model_identity
+    check_model_identity(thermal_state.tube_side_enhancement, solve_result.tube_side_enhancement)
     wall_temperature_envelope = estimate_wall_temperature_envelope(
         hx,
         m_dot_inside=inside.m_dot,

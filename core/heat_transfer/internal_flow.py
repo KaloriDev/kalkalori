@@ -51,8 +51,8 @@ Theory references
 
 Notes
 -----
-- Laminar Nusselt: Nu = 3.66 corresponds to fully developed laminar flow
-  in a circular tube with constant wall temperature.
+- Laminar Nusselt: Nu = 3.66 without heated length; with a positive length,
+  Hausen mean thermal development for a constant-wall-temperature tube.
 - Turbulent Nusselt: Gnielinski correlation is used with a smooth-tube
   friction factor.
 - Transitional regime is handled by linear blending in Re between 2300 and 4000.
@@ -80,6 +80,7 @@ import math
 from dataclasses import dataclass
 
 from core.common.warnings import ModelWarning, make_warning
+from core.enhancements.base import EnhancementResult
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,23 @@ def nusselt_laminar_fully_developed_const_wall_temp() -> float:
     Fully developed laminar flow in a circular tube, constant wall temperature.
     """
     return 3.66
+
+
+def nusselt_laminar_thermal_entry(Re: float, Pr: float, D: float, L: float) -> float:
+    """Hausen mean Nu: circular tube, constant wall temperature, bulk properties.
+
+    Gz = Re*Pr*D/L; L is the heated length of one pass. Assumes a developed
+    velocity profile (also useful for developing velocity at high Pr). No
+    viscosity or buoyancy multiplier is included. Open reproduction:
+    https://ht.readthedocs.io/en/release/ht.conv_internal.html#ht.conv_internal.laminar_entry_thermal_Hausen
+    See docs/internal_laminar_thermal_development.md for scope and provenance.
+    """
+    if any(not math.isfinite(x) or x <= 0 for x in (Re, Pr, D, L)):
+        raise ValueError("Re, Pr, D and heated L must be finite and positive.")
+    gz = Re * Pr * D / L
+    if not math.isfinite(gz):
+        raise ValueError("Thermal-entry Graetz number must be finite.")
+    return 3.66 + 0.0668 * gz / (1.0 + 0.04 * gz ** (2.0 / 3.0))
 
 
 # Note:
@@ -470,6 +488,7 @@ class InternalHeatTransferDiagnostics:
     alfa_corrected: float
 
     warnings: list[ModelWarning]
+    enhancement: EnhancementResult | None = None
 
 
 def heat_transfer_coefficient_internal_diagnostics(
@@ -498,8 +517,8 @@ def heat_transfer_coefficient_internal_diagnostics(
     L_heated : float, optional
         Thermally active straight length of one tube pass [m] (e.g.
         ``BareTube.length_effective``). When supplied and the regime is
-        turbulent (Re > 4000), the finite-length entrance-region correction
-        (``internal_length_correction``) is applied to Nu.
+        laminar (Re < 2300), Hausen mean thermal development is applied.
+        For turbulent flow (Re > 4000), ``internal_length_correction`` applies.
     """
     if tube_inner_diameter <= 0.0:
         raise ValueError("tube_inner_diameter must be positive.")
@@ -516,7 +535,23 @@ def heat_transfer_coefficient_internal_diagnostics(
 
     length_correction = 1.0
     if L_heated is not None:
-        if not is_turbulent:
+        if Re < 2300.0 and math.isfinite(L_heated) and L_heated > 0:
+            length_correction = nusselt_laminar_thermal_entry(
+                Re, Pr, tube_inner_diameter, L_heated
+            ) / Nu_base
+            warnings_list.append(make_warning(
+                code="tube_ht_laminar_thermal_entry_assumptions", source="tube_ht",
+                severity="info", message=(
+                    "action=assumed; Hausen mean thermal-entry Nu uses constant wall "
+                    "temperature, bulk properties and a developed velocity profile "
+                    "(high-Pr approximation when velocity develops). No liquid "
+                    "wall-viscosity or mixed-convection correction is applied."
+                ),
+            ))
+        elif Re < 2300.0:
+            _, length_warnings = internal_length_correction(tube_inner_diameter, L_heated)
+            warnings_list.extend(length_warnings)
+        elif not is_turbulent:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_length_correction_not_applicable_regime",
@@ -622,9 +657,8 @@ def heat_transfer_coefficient_internal(
         compatibility for callers that do not supply wall state.
     L_heated : float, optional
         Thermally active straight length of one tube pass [m]. When
-        supplied and the regime is turbulent, the finite-length
-        entrance-region correction (``internal_length_correction``) is
-        applied to Nu. Omitted by default -- preserves backward
+        supplied, laminar flow uses Hausen thermal development and turbulent
+        flow uses ``internal_length_correction``. Omitted by default -- preserves backward
         compatibility for callers that do not supply a heated length.
 
     Returns

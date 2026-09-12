@@ -20,8 +20,13 @@
 
 from __future__ import annotations
 
+from core.enhancements.base import TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError
+from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
+
 import math
+from copy import copy
 from dataclasses import dataclass, replace
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from core.geometry.bundle import TubeBundle
@@ -403,6 +408,7 @@ class HXResult:
     # film coefficient separate from eta_fin/area enhancement and carries the
     # dedicated Briggs-Young/Robinson-Briggs basis and provenance.
     finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
+    tube_side_enhancement: EnhancementResult | None = None
 
     @property
     def tube_surface_type(self) -> TubeSurfaceType:
@@ -598,6 +604,11 @@ class HXResult:
         return self.outside_side_pressure_drop.dp_local
 
 
+class _EnhancementDefault(Enum):
+    """Distinguish an omitted call override from explicit smooth selection."""
+    INHERIT = "inherit"
+
+
 class BareTubeHeatExchanger:
     """
     Heat exchanger model retaining its historical public class name.
@@ -631,9 +642,27 @@ class BareTubeHeatExchanger:
     - Darcyâ€“Weisbach & K-loss decomposition: White; Idelchik; Crane TP-410
     """
 
-    def __init__(self, bundle: TubeBundle):
-        # conductivity is stored on the tube geometry itself
+    def __init__(self, bundle: TubeBundle, *, tube_side_enhancement: TubeSideEnhancement | None = None):
+        # One configuration is shared by all thermal and hydraulic paths.
+        if tube_side_enhancement is not None and not isinstance(tube_side_enhancement, TubeSideEnhancement):
+            raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
         self.bundle = bundle
+        self._tube_side_enhancement = tube_side_enhancement
+
+    @property
+    def tube_side_enhancement(self) -> TubeSideEnhancement | None:
+        return self._tube_side_enhancement
+
+    def _for_enhancement_call(self, selection):
+        if selection is _EnhancementDefault.INHERIT:
+            return self
+        if selection is not None and not isinstance(selection, TubeSideEnhancement):
+            raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration or None.")
+        # Preserve the exchanger/subclass and the exact provider object, but
+        # keep selection local to this solve, including nested solver calls.
+        selected = copy(self)
+        selected._tube_side_enhancement = selection
+        return selected
 
     def tube_wall_resistance(self) -> float:
         """Public accessor for the cylindrical tube-wall conduction resistance [K/W].
@@ -685,6 +714,7 @@ class BareTubeHeatExchanger:
         tube_side_temperature_in: float | None = None,
         tube_side_temperature_out: float | None = None,
         tube_side_pressure: float | None = None,
+        tube_side_heat_flow_direction: str = "unknown",
 
         # Outside-side (preferred path):
         m_dot_outside: float | None = None,
@@ -739,12 +769,38 @@ class BareTubeHeatExchanger:
         flow_area_pass = self.bundle.internal_flow_area_per_pass
         D_h = self.bundle.internal_hydraulic_diameter
 
-        v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
-            m_dot=m_dot_tube_side,
-            tube_inner_diameter=D_h,
-            flow_area=flow_area_pass,
-            props=tube_side_props,
+        if tube_side_temperature_in is not None and tube_side_temperature_out is not None:
+            if tube_side_temperature_out < tube_side_temperature_in:
+                tube_side_heat_flow_direction = "cooling"
+            elif tube_side_temperature_out > tube_side_temperature_in:
+                tube_side_heat_flow_direction = "heating"
+        enhancement = evaluate_for_bundle(
+            self.tube_side_enhancement, self.bundle, m_dot_tube_side, tube_side_props,
+            temperature=(None if tube_side_temperature_in is None else
+                         .5*(tube_side_temperature_in + (tube_side_temperature_out
+                             if tube_side_temperature_out is not None else tube_side_temperature_in))),
+            pressure=tube_side_pressure, property_provider=tube_side_provider,
+            heat_flow_direction=tube_side_heat_flow_direction,
         )
+        if enhancement is None:
+            v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
+                m_dot=m_dot_tube_side,
+                tube_inner_diameter=D_h,
+                flow_area=flow_area_pass,
+                props=tube_side_props,
+                # Thermal-entry laminar model also applies without wall
+                # iteration. Preserve the existing noniterative turbulent path.
+                L_heated=(self.bundle.tube.length_effective
+                          if m_dot_tube_side*D_h/(flow_area_pass*tube_side_props.mu) < 2300
+                          else None),
+            )
+        else:
+            ref = enhancement.reference
+            v_i, Re_i, Pr_i = ref.velocity, ref.reynolds, ref.prandtl
+            alfa_i, internal_ht_warnings = enhancement.alpha_inside, list(enhancement.warnings)
+
+        enhancement_evaluator = hydraulic_evaluator(
+            self.tube_side_enhancement, self.bundle, tube_side_provider)
         tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, alfa=alfa_i)
 
         # --------------------------------------------------------------
@@ -762,6 +818,7 @@ class BareTubeHeatExchanger:
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
+                enhancement_evaluator=enhancement_evaluator,
                 hydraulic_diameter=D_h,
                 hydraulic_length_total=self.bundle.internal_length_total,
                 n_tube_passes=self.bundle.n_passes_tube,
@@ -779,6 +836,7 @@ class BareTubeHeatExchanger:
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
+                enhancement_evaluator=enhancement_evaluator,
                 hydraulic_diameter=D_h,
                 hydraulic_length_total=self.bundle.internal_length_total,
                 n_tube_passes=self.bundle.n_passes_tube,
@@ -790,6 +848,9 @@ class BareTubeHeatExchanger:
                 pressure=p_hyd,
             )
 
+        check_model_identity(enhancement, tube_bundle_hydraulic.inlet.enhancement,
+                             tube_bundle_hydraulic.midpoint.enhancement,
+                             tube_bundle_hydraulic.outlet.enhancement)
         tube_hyd = HXTubeSideHydraulicResults(
             tube_bundle=tube_bundle_hydraulic,
         )
@@ -966,16 +1027,16 @@ class BareTubeHeatExchanger:
             warnings_list.extend(self.bundle.tube.geometry_warnings)
 
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
-        if Re_i < 2300.0:
+        if enhancement is None and Re_i < 2300.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_laminar_regime",
-                    message="tube_ht: tube-side Reynolds number indicates laminar flow while turbulent behavior is expected by the selected model.",
+                    message="tube_ht: laminar circular-tube model selected; thermal development uses the supplied heated length and constant-wall-temperature approximation.",
                     source="tube_ht",
-                    severity="warning",
+                    severity="info",
                 )
             )
-        elif 2300.0 <= Re_i <= 4000.0:
+        elif enhancement is None and 2300.0 <= Re_i <= 4000.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_transition_regime",
@@ -1083,6 +1144,7 @@ class BareTubeHeatExchanger:
             T_hot_out=T_hot_out,
             T_cold_out=T_cold_out,
             tube_side_thermal=tube_thermal,
+            tube_side_enhancement=enhancement,
             tube_side_hydraulic=tube_hyd,
             outside_side_thermal=outside_thermal,
             outside_side_hydraulic=outside_hyd,
@@ -1099,6 +1161,7 @@ class BareTubeHeatExchanger:
         inside: "HXSideInput",
         outside: "HXSideInput",
         *,
+        tube_side_enhancement: TubeSideEnhancement | None | _EnhancementDefault = _EnhancementDefault.INHERIT,
         surface_margin: float = 0.0,
         iterate: bool = True,
         flow_arrangement: str | None = None,
@@ -1138,6 +1201,12 @@ class BareTubeHeatExchanger:
         unlike earlier versions, constant bulk properties no longer skip
         wall-temperature iteration, since the wall correction still needs to
         converge).
+
+        ``tube_side_enhancement`` selects a complete geometry/provider/phase
+        configuration for this call only. Omission inherits the exchanger
+        configuration; explicit ``None`` selects the legacy smooth path.
+        The original exchanger is unchanged; the selected provider instance
+        is reused throughout the solve.
 
         ``surface_margin`` (default ``0.0``, "on the nose") is the Simulation
         input derating applied to the full-geometry ``UA`` before duty and
@@ -1179,6 +1248,7 @@ class BareTubeHeatExchanger:
         """
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
+        self = self._for_enhancement_call(tube_side_enhancement)
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,
@@ -1208,6 +1278,7 @@ class BareTubeHeatExchanger:
             reject_unsupported_pure_water_phase_crossing,
         )
 
+        guard_side(self.tube_side_enhancement, inside)
         reject_liquid_water_in_gas_inlet(
             inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
         )
@@ -1234,6 +1305,8 @@ class BareTubeHeatExchanger:
                 relative_alfa_tolerance=relative_alfa_tolerance,
             )
         ):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: evaporation")
             return apply_water_evaporation_simulation(
                 self, inside, outside,
                 surface_margin=surface_margin,
@@ -1253,6 +1326,8 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
         if is_inside_water_steam_case(inside):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: steam")
             return apply_water_steam_simulation(
                 self, inside, outside,
                 surface_margin=surface_margin,
@@ -1340,6 +1415,7 @@ class BareTubeHeatExchanger:
         inside: "BalanceSideSpec",
         outside: "BalanceSideSpec",
         *,
+        tube_side_enhancement: TubeSideEnhancement | None | _EnhancementDefault = _EnhancementDefault.INHERIT,
         Q: float | None = None,
         effectiveness: float | None = None,
         flow_arrangement: str | None = None,
@@ -1368,6 +1444,11 @@ class BareTubeHeatExchanger:
         phase_change_relaxation_factor: float = 0.5,
     ) -> "HXRatingResult":
         """Rate this exchanger against a closed heat balance (overdesign).
+
+        ``tube_side_enhancement`` has the same call-local selection semantics
+        as ``simulate``: omit to inherit, supply a configuration to override,
+        or pass ``None`` for the legacy smooth path. This also governs the
+        optional Rating-to-Simulation bridge.
 
         This is the Rating entry point (v0.5.1, thermal state wiring since
         v0.5.3): given geometry and a *closed* heat balance (duty, both
@@ -1417,6 +1498,7 @@ class BareTubeHeatExchanger:
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
+        self = self._for_enhancement_call(tube_side_enhancement)
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,
@@ -1441,6 +1523,7 @@ class BareTubeHeatExchanger:
         )
         from core.phase_change.capability import reject_liquid_water_in_gas_inlet
 
+        guard_side(self.tube_side_enhancement, inside)
         reject_liquid_water_in_gas_inlet(
             inside.provider, T_in=inside.T_in, p=inside.p, side="inside"
         )
@@ -1457,6 +1540,8 @@ class BareTubeHeatExchanger:
             Q=Q,
             effectiveness=effectiveness,
         ):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: evaporation")
             return apply_water_evaporation_rating(
                 self, inside, outside,
                 Q=Q, effectiveness=effectiveness,
@@ -1474,6 +1559,8 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
         if is_inside_water_steam_case(inside):
+            if self.tube_side_enhancement is not None:
+                raise EnhancementUnsupportedError("enhancement_phase_change_unsupported: steam")
             return apply_water_steam_rating(
                 self, inside, outside,
                 Q=Q, effectiveness=effectiveness,
