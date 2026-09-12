@@ -185,46 +185,48 @@ providers, supported by the open generic interface.
 Insert-specific local losses, phase change inside enhanced tubes, and
 CALGAVIN/hiTRAN physics are excluded from this stage.
 
-This provider scope is specific to tube-side enhancement devices. General
-tube-side/outside performance providers remain planned for v0.10.x.
+This provider scope is specific to tube-side enhancement devices.
 The generic clearance-composition API is included; a verified built-in
 finite-width clearance correlation remains future work.
 
----
+**Planned v0.8.x follow-ups:**
 
-### v0.9.x — Non-Standard Tube Geometries (Empirical)
-
-**Goal:**  
-Enable modelling of geometries that cannot be described purely theoretically.
-
-**Examples:**
-- elliptical tubes
-- flattened tubes
-- proprietary manufacturer profiles
-
-**Approach:**
-- empirical correction factors
-- tabulated or curve-fitted data
-- separation between:
-  - open-source core (interfaces, mechanisms)
-  - optional commercial modules (licensed datasets)
-
-**Notes:**  
-This stage explicitly anticipates **commercial extensions** based on
-manufacturer data and experimental correlations.
+- **v0.8.1 — optional external/open-source backend foundation.** Reuse the
+  generic enhancement contract, keep the runtime optional, and—subject to an
+  implementation/source review—add a pychemqt adapter with an allow-listed
+  Agarwal & Raja Rao (1996) comparator. Selection is explicit: installing an
+  external backend must not change results or add it to `AUTO`. Applicability,
+  execution provenance and unavailable-backend failures must remain visible.
+  The XSC comparison is a viscous-oil comparator, not a real-clearance model.
+- **v0.8.2 — further open enhancement coverage and capability maturation.**
+  Candidate work includes a Bas–Özceyhan clearance model within its actual
+  turbulent range and possibly García wire-coil support or another model with
+  adequate provenance. Exact models remain conditional on source and licence
+  review; provider requirements should drive any capability/provenance changes.
+- **v0.8.3 — source/legal/design decision point.** Do not define this patch in
+  detail until sources and supported APIs are known. Possible private work
+  includes an Al-Fahed/Chamra/Chakroun real-width model if a sufficient legal
+  source is obtained, and CALGAVIN.SP/hiTRAN integration only through an
+  official supported API, DLL or CLI. No reverse engineering.
 
 ---
 
-### v0.10.x — General External Tube-Performance Provider Architecture
+### v0.9.x — Smooth Elliptical Tubes
+
+Add smooth elliptical tubes as a dedicated regular geometry family. This is
+not the empirical/provider-based non-standard geometry stage and is not part
+of the v0.8.x turbulator work.
+
+---
+
+### v0.10.x — Non-Standard Tube Geometries (Empirical / Provider-Based)
 
 **Goal:**
-Generalize v0.8.x's enhancement providers and v0.9.x's empirical
-non-standard-geometry support into a formal
-provider architecture for tube-side and/or outside performance data that
-cannot be derived from KalKalori's built-in correlations.
+Enable geometries whose performance cannot be described by the regular smooth
+tube families and must be supplied through empirical or provider-based data.
 
 **Intended for:**
-* elliptical / flattened tubes
+* flattened and other non-standard tubes
 * proprietary tube profiles
 * externally supplied empirical correlations or performance data
 

@@ -180,6 +180,24 @@ instead of guessing. External property tables/software own their interpolation,
 extrapolation policy, unavailable-data errors and any external I/O; core adds
 no dependency or proprietary equation.
 
+This canonical result does not require every upstream backend to natively
+return `Nu` and Darcy friction. An adapter may pass through a native
+`alpha_inside`, convert a documented Fanning factor to Darcy, or normalize a
+distributed pressure drop to Darcy using the backend's own reference velocity,
+diameter and length. It must do that conversion at the adapter boundary and
+return the complete coherent `EnhancementResult`; core will not guess missing
+physics or combine unrelated heat-transfer and friction models. A backend that
+supplies only one side of the coupled model is therefore not by itself a usable
+enhancement provider.
+
+Optional software adapters remain ordinary explicitly selected providers.
+They should import/probe their runtime locally and raise a controlled provider
+error when unavailable, so importing KalKalori never depends on that software.
+Installation alone must not place an external model in `AUTO`. Backend name,
+revision and execution mode may be carried in opaque diagnostics or defaulted
+fields on a result subtype alongside the required provider/model/source
+identity; the v0.8.0 solver needs no second provider hierarchy for this.
+
 Single-phase `liquid` or `gas` must be declared. Where a property backend
 exposes authoritative phase data, core checks it, including wall states.
 Transport-only providers rely on the declaration and cannot independently
