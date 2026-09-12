@@ -8,6 +8,7 @@ from .base import (
     evaluate_enhancement,
 )
 from .yang2020 import Yang2020TwistedTapeProvider
+from .rossi2017 import Rossi2017TwistedTapeProvider
 from .clearance import (
     ClearanceModelMode, ClearanceCorrection, TwistedTapeClearanceResult,
     TwistedTapeClearanceProvider, require_nominal_twisted_tape,
@@ -19,6 +20,7 @@ __all__ = [
     "TubeSideEnhancement", "TubeSideEnhancementProvider", "TwistedTapeGeometry",
     "evaluate_enhancement",
     "Yang2020TwistedTapeProvider",
+    "Rossi2017TwistedTapeProvider",
     "TwistedTapeClearanceGeometry", "ClearanceModelMode", "ClearanceCorrection",
     "TwistedTapeClearanceResult", "TwistedTapeClearanceProvider", "require_nominal_twisted_tape",
 ]

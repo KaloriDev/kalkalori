@@ -196,9 +196,9 @@ finite-width clearance correlation remains future work.
   through the existing generic enhancement contract. Rossi is the implementation
   authority; Agarwal & Raja Rao (1996) is historical attribution. This plan
   replaces the pychemqt backend proposal following its implementation review.
-  Reference-property semantics must be resolved before implementation: Rossi
-  specifies film-temperature properties, whereas current solver inputs expose
-  bulk and optional wall states. The model remains pending that resolution.
+  Thermal properties use the existing fluid backend at the mean of bulk and
+  iterated wall temperatures; hydraulic states retain local bulk properties.
+  See [provider semantics](twisted_tape_rossi2017.md).
   Selection will be explicit, with source and extrapolation diagnostics and
   no AUTO activation. The intended XSC use is a nominal-tape sensitivity;
   real width and clearance are not represented by these correlations.

@@ -168,7 +168,7 @@ def evaluate_with_clearance(configuration, state):
             correlation_id=f"{base.correlation_id}+{correction.correlation_id}",
             source_references=tuple(dict.fromkeys(base.source_references+correction.source_references)),
             source_access_basis=basis,
-            alpha_inside=base.alpha_inside*cn,
+            alpha_inside=None if base.alpha_inside is None else base.alpha_inside*cn,
             nusselt=None if base.nusselt is None else base.nusselt*cn,
             f_darcy=base.f_darcy*cf, friction_factor_native=base.friction_factor_native*cf,
             applicability="extrapolated" if "extrapolated" in (base.applicability, correction.applicability) else "within_range",
@@ -179,14 +179,16 @@ def evaluate_with_clearance(configuration, state):
             ("base_enhancement_model", base.correlation_id, "-"),
             ("active_model", result.correlation_id, "-"),
             ("base_tape_width", base_geometry.tape_width, "m"),
-            ("alpha_before_clearance", base.alpha_inside, "W/(m2 K)"),
             ("f_darcy_before_clearance", base.f_darcy, "-"),
             ("heat_transfer_factor", cn, "-"), ("friction_factor_factor", cf, "-"),
         ))
+        if base.alpha_inside is not None:
+            fields.append(("alpha_before_clearance", base.alpha_inside, "W/(m2 K)"))
         if base.nusselt is not None:
             fields.append(("Nu_before_clearance", base.nusselt, "-"))
-    fields.extend((("alpha_after_clearance", result.alpha_inside, "W/(m2 K)"),
-                   ("f_darcy_after_clearance", result.f_darcy, "-")))
+    fields.append(("f_darcy_after_clearance", result.f_darcy, "-"))
+    if result.alpha_inside is not None:
+        fields.append(("alpha_after_clearance", result.alpha_inside, "W/(m2 K)"))
     if result.nusselt is not None:
         fields.append(("Nu_after_clearance", result.nusselt, "-"))
     names = {name for name, _, _ in fields}

@@ -175,7 +175,9 @@ class ThermalIterationDiagnostics:
     ``core.heat_transfer.internal_flow.InternalHeatTransferDiagnostics`` for
     the exact combination formula and references); ``inside_Nu_corrected ==
     inside_Nu_base * inside_combined_correction``; ``inside_alfa_corrected ==
-    inside_Nu_corrected * inside_bulk_props.k / D_i``.
+    inside_Nu_corrected * inside_bulk_props.k / D_i`` for bulk-reference
+    models. Enhancement providers may instead declare a wall/film reference
+    conductivity; their canonical Nu and alpha retain that reference.
 
     Outside (bundle) side
     ----------------------
@@ -438,6 +440,11 @@ def _evaluate_local_wall_state(
     bundle = hx.bundle
     tube = bundle.tube
     D_h = bundle.internal_hydraulic_diameter
+    from core.enhancements.integration import thermal_property_reference
+    if inside_wall_temperature is None and thermal_property_reference(hx.tube_side_enhancement) != "bulk":
+        # Initial iterate only, bounded by the two bulk states. The existing
+        # resistance-network iteration replaces this guess with its wall state.
+        inside_wall_temperature = (inside_bulk_temperature + outside_bulk_temperature)/2
 
     guard_phase(hx.tube_side_enhancement, inside_provider, inside_bulk_temperature, p_inside)
     if inside_wall_temperature is not None:
