@@ -191,13 +191,17 @@ finite-width clearance correlation remains future work.
 
 **Planned v0.8.x follow-ups:**
 
-- **v0.8.1 — optional external/open-source backend foundation.** Reuse the
-  generic enhancement contract, keep the runtime optional, and—subject to an
-  implementation/source review—add a pychemqt adapter with an allow-listed
-  Agarwal & Raja Rao (1996) comparator. Selection is explicit: installing an
-  external backend must not change results or add it to `AUTO`. Applicability,
-  execution provenance and unavailable-backend failures must remain visible.
-  The XSC comparison is a viscous-oil comparator, not a real-clearance model.
+- **v0.8.1 — public open-secondary twisted-tape comparator.** Implement the
+  paired correlations reproduced by [Rossi et al. (2017)](https://doi.org/10.1088/1742-6596/923/1/012033)
+  through the existing generic enhancement contract. Rossi is the implementation
+  authority; Agarwal & Raja Rao (1996) is historical attribution. This plan
+  replaces the pychemqt backend proposal following its implementation review.
+  Reference-property semantics must be resolved before implementation: Rossi
+  specifies film-temperature properties, whereas current solver inputs expose
+  bulk and optional wall states. The model remains pending that resolution.
+  Selection will be explicit, with source and extrapolation diagnostics and
+  no AUTO activation. The intended XSC use is a nominal-tape sensitivity;
+  real width and clearance are not represented by these correlations.
 - **v0.8.2 — further open enhancement coverage and capability maturation.**
   Candidate work includes a Bas–Özceyhan clearance model within its actual
   turbulent range and possibly García wire-coil support or another model with
