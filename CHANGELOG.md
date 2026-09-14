@@ -5,7 +5,9 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [0.8.1] — Rossi2017 comparator and thermal property references
+
+### Added and changed
 
 - Enforced provider-declared thermal references through relative and absolute
   clearance composition as well as direct dispatch. A mismatched bulk/film
@@ -26,6 +28,8 @@ The project follows **Semantic Versioning (SemVer)**:
   and iterated wall temperatures, never averaged transport values. Hydraulic
   nodes can omit thermal outputs while retaining the same friction model.
   Smooth and existing bulk-reference providers retain their defaults.
+
+---
 
 ## [0.8.0] — Tube-side enhancements and laminar thermal development
 

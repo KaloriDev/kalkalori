@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.0`
+**Current version:** `v0.8.1`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change thermal balance, tube-bank hydraulic balance,
@@ -189,19 +189,22 @@ This provider scope is specific to tube-side enhancement devices.
 The generic clearance-composition API is included; a verified built-in
 finite-width clearance correlation remains future work.
 
-**Planned v0.8.x follow-ups:**
+**Included in v0.8.1:**
 
-- **v0.8.1 — public open-secondary twisted-tape comparator.** Implement the
+- **Public open-secondary twisted-tape comparator.** Implemented the
   paired correlations reproduced by [Rossi et al. (2017)](https://doi.org/10.1088/1742-6596/923/1/012033)
   through the existing generic enhancement contract. Rossi is the implementation
-  authority; Agarwal & Raja Rao (1996) is historical attribution. This plan
+  authority; Agarwal & Raja Rao (1996) is historical attribution. This release
   replaces the pychemqt backend proposal following its implementation review.
   Thermal properties use the existing fluid backend at the mean of bulk and
   iterated wall temperatures; hydraulic states retain local bulk properties.
   See [provider semantics](twisted_tape_rossi2017.md).
-  Selection will be explicit, with source and extrapolation diagnostics and
-  no AUTO activation. The intended XSC use is a nominal-tape sensitivity;
+  Selection is explicit, with source and extrapolation diagnostics and
+  no AUTO activation. The XSC use is a nominal-tape sensitivity;
   real width and clearance are not represented by these correlations.
+
+**Planned v0.8.x follow-ups:**
+
 - **v0.8.2 — further open enhancement coverage and capability maturation.**
   Candidate work includes a Bas–Özceyhan clearance model within its actual
   turbulent range and possibly García wire-coil support or another model with
