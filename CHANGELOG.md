@@ -7,6 +7,13 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [Unreleased]
 
+- Enforced provider-declared thermal references through relative and absolute
+  clearance composition as well as direct dispatch. A mismatched bulk/film
+  result is rejected instead of bypassing the conductivity-reference contract.
+- Corrected the Yang2020 guide to describe supplied roughness and differing
+  physical length as diagnostically ignored correlation inputs, consistent
+  with existing behavior; the hydraulic path retains its physical length.
+
 - Added `Rossi2017TwistedTapeProvider`: public open-secondary reconstruction
   of Rossi (2017) Eqs.9/10 for paired thermal and Darcy distributed friction,
   with explicit extrapolation and unrepresented width/clearance diagnostics.

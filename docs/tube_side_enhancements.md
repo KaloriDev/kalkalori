@@ -85,16 +85,19 @@ definitions, open-access verification and unresolved regimes.
 | Twist ratio | `half_turn_length / tube_inner_diameter`, 2 through 4 |
 | Circular tube inside diameter | 0.012 m |
 | Tape width/thickness | 0.012 m / 0.001 m, zero clearance |
-| Physical and heated tube lengths | Both 0.300 m; full-length continuous tape |
-| Inner roughness | Zero; no added roughness correction |
+| Heated tube length | 0.300 m; full-length continuous tape; physical length stays solver-owned |
+| Inner roughness | Not an equation input; supplied roughness is ignored with a diagnostic |
 | Thermal assumptions | Adiabatic tape, negligible buoyancy and radiation |
 | Friction convention | Native Darcy, `f_Fanning = f_Darcy / 4` |
 
 These are deliberately the verified study dimensions, not an inferred
 geometrically similar family. Every thermal and hydraulic evaluation must
 remain in range. Transition, turbulence, gas, cooling, phase change,
-supercritical states, loose/partial tape, other dimensions and positive
-roughness are unsupported. There is no extrapolation or smooth-tube blend.
+supercritical states, loose/partial tape and other correlation dimensions
+are unsupported. A different physical tube length is reported as ignored
+by the correlation; the hydraulic path still uses its actual length.
+Positive roughness is also reported as ignored, not applied as a correction.
+There is no extrapolation or smooth-tube blend.
 An unsupported state raises `EnhancementUnsupportedError`; the selected
 enhancement never silently falls back to a smooth correlation.
 

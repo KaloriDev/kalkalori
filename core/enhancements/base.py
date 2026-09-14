@@ -305,18 +305,19 @@ def evaluate_enhancement(configuration: TubeSideEnhancement | None,
         from .clearance import evaluate_with_clearance
         return evaluate_with_clearance(configuration, state)
     result = configuration.provider.evaluate(configuration.geometry, state)
-    if (state.position == "thermal" and isinstance(result, EnhancementResult)
-            and result.thermal_property_reference != getattr(configuration.provider, "thermal_property_reference", "bulk")):
-        raise ValueError("Returned thermal reference does not match provider declaration.")
-    return _validate_result(result, configuration.provider.provider_id, state)
+    return _validate_result(result, configuration.provider.provider_id, state,
+                            getattr(configuration.provider, "thermal_property_reference", "bulk"))
 
 
-def _validate_result(result, expected_provider_id, state):
+def _validate_result(result, expected_provider_id, state, expected_thermal_reference="bulk"):
     """Check the same physical contract for native, corrected and absolute results."""
     if not isinstance(result, EnhancementResult):
         raise TypeError("Provider must return a coherent EnhancementResult.")
     if result.provider_id != expected_provider_id:
         raise ValueError("Returned provider identity does not match selected provider.")
+    if (state.position == "thermal"
+            and result.thermal_property_reference != expected_thermal_reference):
+        raise ValueError("Returned thermal reference does not match provider declaration.")
     r = result.reference
     if state.position == "thermal" and result.alpha_inside is None:
         raise ValueError("Thermal evaluation requires alpha_inside.")

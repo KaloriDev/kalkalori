@@ -69,6 +69,53 @@ def diagnostics(result):
     return {d.name:d.value for d in result.diagnostics}
 
 
+@pytest.mark.parametrize("mode", ["correction", "absolute"])
+def test_composed_model_cannot_return_a_different_thermal_reference(mode):
+    # Synthetic fixtures deliberately declare film but return the legacy
+    # bulk-based Nu/alpha pair. Composition must enforce the same contract
+    # as direct provider dispatch, before accepting the wrong conductivity.
+    class MisdeclaredBase(NominalFixture):
+        thermal_property_reference = "film"
+
+    class MisdeclaredAbsolute(AbsoluteFixture):
+        thermal_property_reference = "film"
+
+    config = (replace(configured(CorrectionFixture()), provider=MisdeclaredBase())
+              if mode == "correction" else configured(MisdeclaredAbsolute()))
+    state = sample_input()
+    state = replace(state, thermal=replace(state.bulk, k=.3))
+    with pytest.raises(ValueError, match="provider declaration"):
+        evaluate_enhancement(config, state)
+
+
+@pytest.mark.parametrize("mode", ["correction", "absolute"])
+def test_composed_model_preserves_a_valid_film_reference(mode):
+    def with_film(result, state):
+        return replace(result, thermal_property_reference="film",
+                       alpha_inside=result.nusselt*state.thermal.k/result.reference.nusselt_length)
+
+    class FilmBase(NominalFixture):
+        thermal_property_reference = "film"
+
+        def evaluate(self, geometry, state):
+            return with_film(super().evaluate(geometry, state), state)
+
+    class FilmAbsolute(AbsoluteFixture):
+        thermal_property_reference = "film"
+
+        def evaluate(self, geometry, state, base_result):
+            model = super().evaluate(geometry, state, base_result)
+            return replace(model, absolute=with_film(model.absolute, state))
+
+    config = (replace(configured(CorrectionFixture()), provider=FilmBase())
+              if mode == "correction" else configured(FilmAbsolute()))
+    state = sample_input()
+    state = replace(state, thermal=replace(state.bulk, k=.3))
+    result = evaluate_enhancement(config, state)
+    assert result.thermal_property_reference == "film"
+    assert result.alpha_inside == pytest.approx(result.nusselt*.3/result.reference.nusselt_length)
+
+
 @pytest.mark.parametrize("width,diametral", [(.012,0),(.011,.001),(.010,.002)])
 def test_unambiguous_centered_gap_geometry(width, diametral):
     gap=TwistedTapeGeometry(.036,width,.001).clearance_for(.012)

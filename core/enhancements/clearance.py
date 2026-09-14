@@ -135,7 +135,8 @@ def evaluate_with_clearance(configuration, state):
             raise TypeError("Clearance base geometry must be TwistedTapeGeometry.")
         base_geometry.clearance_for(state.tube_inner_diameter)
         base = _validate_result(configuration.provider.evaluate(base_geometry, state),
-                                configuration.provider.provider_id, state)
+                                configuration.provider.provider_id, state,
+                                getattr(configuration.provider, "thermal_property_reference", "bulk"))
     model = provider.evaluate(geometry, state, base)
     if not isinstance(model, TwistedTapeClearanceResult) or model.mode is not provider.mode:
         raise TypeError("Clearance result must match the selected provider mode.")
@@ -152,11 +153,15 @@ def evaluate_with_clearance(configuration, state):
         ("clearance_ratio_definition", model.clearance_ratio_definition, "-"),
     ]
     if model.mode is ClearanceModelMode.ABSOLUTE:
-        result = _validate_result(model.absolute, provider.provider_id, state)
+        expected_thermal_reference = getattr(provider, "thermal_property_reference", "bulk")
+        result = _validate_result(model.absolute, provider.provider_id, state, expected_thermal_reference)
         fields.extend((("active_model", result.correlation_id, "-"),
                        ("replaced_base_provider", configuration.provider.provider_id, "-")))
     else:
         correction = model.correction
+        # A relative correction retains its validated base property reference;
+        # an absolute model above owns its own declaration instead.
+        expected_thermal_reference = base.thermal_property_reference
         if base.correlation_id not in correction.compatible_base_correlation_ids:
             raise EnhancementUnsupportedError("clearance_correction_base_incompatible")
         if correction.regime != base.regime:
@@ -194,4 +199,4 @@ def evaluate_with_clearance(configuration, state):
     names = {name for name, _, _ in fields}
     result = replace(result, diagnostics=tuple(d for d in result.diagnostics if d.name not in names)
                      + tuple(EnhancementDiagnostic(*f) for f in fields))
-    return _validate_result(result, provider.provider_id, state)
+    return _validate_result(result, provider.provider_id, state, expected_thermal_reference)
