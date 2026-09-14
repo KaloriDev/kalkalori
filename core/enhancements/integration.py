@@ -9,6 +9,19 @@ from .base import (
 )
 
 
+def thermal_property_reference(configuration):
+    """Optional source-neutral capability; legacy providers use bulk."""
+    provider = configuration.provider if configuration else None
+    if configuration and configuration.clearance_provider is not None:
+        from .clearance import ClearanceModelMode
+        if configuration.clearance_provider.mode is ClearanceModelMode.ABSOLUTE:
+            provider = configuration.clearance_provider
+    reference = getattr(provider, "thermal_property_reference", "bulk")
+    if reference not in ("bulk", "wall", "film"):
+        raise ValueError("Unknown enhancement thermal property reference.")
+    return reference
+
+
 def guard_phase(configuration, provider, temperature, pressure):
     """Use authoritative phase data where available; never infer from rho/cp.
 
@@ -69,6 +82,15 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
     guard_phase(configuration, property_provider, temperature, pressure)
     if wall_temperature is not None:
         guard_phase(configuration, property_provider, wall_temperature, pressure)
+    thermal = None
+    reference = thermal_property_reference(configuration)
+    if position == "thermal" and reference != "bulk":
+        if wall_temperature is None or temperature is None or property_provider is None or pressure is None:
+            raise EnhancementUnsupportedError("enhancement_thermal_reference_state_required: wall/bulk temperatures and property backend required.")
+        thermal_temperature = (temperature + wall_temperature)/2 if reference == "film" else wall_temperature
+        guard_phase(configuration, property_provider, thermal_temperature, pressure)
+        thermal = EnhancementState.from_properties(
+            property_provider.at(T=thermal_temperature, p=pressure), thermal_temperature, pressure)
     state = EnhancementInput(
         mass_flow_per_tube=mass_flow/bundle.n_tubes_per_pass_effective,
         tube_inner_diameter=bundle.internal_hydraulic_diameter,
@@ -83,6 +105,7 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
         base_flow_area_per_tube=(bundle.internal_flow_area_per_pass
                                 / bundle.n_tubes_per_pass_effective),
         hydraulic_length_total=bundle.internal_length_total,
+        thermal=thermal,
     )
     result = evaluate_enhancement(configuration, state)
     return replace(result, warnings=result.warnings + (make_warning(

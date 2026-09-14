@@ -1,4 +1,8 @@
-# Tube-side enhancements (v0.8.0)
+# Tube-side enhancements
+
+The additional [Rossi2017 open-secondary comparator](twisted_tape_rossi2017.md)
+uses film thermal properties and bulk hydraulic states, with explicit
+extrapolation policy. The Yang2020 example and limits below remain separate.
 
 Optional source-neutral [clearance model composition](twisted_tape_clearance.md)
 supports explicit correction and absolute modes. No built-in clearance fit or
@@ -81,16 +85,19 @@ definitions, open-access verification and unresolved regimes.
 | Twist ratio | `half_turn_length / tube_inner_diameter`, 2 through 4 |
 | Circular tube inside diameter | 0.012 m |
 | Tape width/thickness | 0.012 m / 0.001 m, zero clearance |
-| Physical and heated tube lengths | Both 0.300 m; full-length continuous tape |
-| Inner roughness | Zero; no added roughness correction |
+| Heated tube length | 0.300 m; full-length continuous tape; physical length stays solver-owned |
+| Inner roughness | Not an equation input; supplied roughness is ignored with a diagnostic |
 | Thermal assumptions | Adiabatic tape, negligible buoyancy and radiation |
 | Friction convention | Native Darcy, `f_Fanning = f_Darcy / 4` |
 
 These are deliberately the verified study dimensions, not an inferred
 geometrically similar family. Every thermal and hydraulic evaluation must
 remain in range. Transition, turbulence, gas, cooling, phase change,
-supercritical states, loose/partial tape, other dimensions and positive
-roughness are unsupported. There is no extrapolation or smooth-tube blend.
+supercritical states, loose/partial tape and other correlation dimensions
+are unsupported. A different physical tube length is reported as ignored
+by the correlation; the hydraulic path still uses its actual length.
+Positive roughness is also reported as ignored, not applied as a correction.
+There is no extrapolation or smooth-tube blend.
 An unsupported state raises `EnhancementUnsupportedError`; the selected
 enhancement never silently falls back to a smooth correlation.
 
@@ -141,15 +148,20 @@ All core contract types are exported from `core.enhancements`:
 
 | Contract | Required interpretation |
 | --- | --- |
-| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall state, declared phase, position and heating/cooling direction |
+| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall and backend-evaluated thermal reference states, declared phase, position and heating/cooling direction |
 | `EnhancementState` | Positive finite density, viscosity, conductivity and cp; optional temperature and pressure |
 | `EnhancementReferenceState` | Per-tube flow area and consistent mass-flow velocity, provider-owned Re/Pr, friction diameter, separate hydraulic diameter and Nu reference length |
-| `EnhancementResult` | Positive `alpha_inside` and `f_darcy`, native friction and explicit `darcy`/`fanning` basis, reference state, regime, applicability, provenance and optional Nu |
+| `EnhancementResult` | Positive thermal `alpha_inside` and `f_darcy`, native friction and explicit `darcy`/`fanning` basis, reference state, regime, applicability, provenance, thermal property reference and optional Nu; hydraulic-only nodes may omit alpha and Nu |
 | `EnhancementDiagnostic` | Named scalar/string diagnostic and units, opaque to the solver |
 
-An alpha-only model may leave `nusselt=None`; core derives Nu solely for
-legacy thermal diagnostic presentation. If Nu is supplied, it must satisfy
-`alpha_inside = Nu * bulk.k / reference.nusselt_length`. Core validates
+An alpha-only model may leave `nusselt=None`; core derives a bulk-equivalent
+Nu solely for legacy thermal diagnostic presentation, not a canonical
+provider Nu. If Nu is supplied, it must satisfy
+`alpha_inside = Nu * k_reference / reference.nusselt_length`. The default
+reference is bulk; providers may declare `thermal_property_reference` as
+`"wall"` or `"film"`. Integration evaluates the backend at the requested
+temperature and supplies `state.thermal`; it never averages properties.
+The result must declare the same reference. Core validates
 `velocity = mass_flow_per_tube / (rho * flow_area)` and the native-to-Darcy
 conversion. It integrates each provider gradient
 `f_darcy * rho * velocity**2 / (2 * friction_diameter)` with Simpson weights
@@ -164,7 +176,8 @@ and expose the local branch in `regime`/diagnostics. Different identities or
 missing enhanced results in a coupled path are rejected.
 
 `applicability` is `within_range` or `extrapolated`; the latter requires a
-warning and is a provider decision (the built-in model never extrapolates).
+warning and is a provider decision (Yang2020 never extrapolates; Rossi2017
+supports explicitly requested warning-mode extrapolation).
 Return immutable tuples of `ModelWarning` and `EnhancementDiagnostic`.
 For richer typed data, subclass the frozen `EnhancementResult` dataclass
 with defaulted additional fields; result adaptation preserves that subtype
@@ -172,11 +185,14 @@ and data without interpreting proprietary semantics. Private reference
 identifiers need not expose confidential data, but values placed in results
 are visible to callers and should be chosen accordingly.
 
-The provider must return a paired thermal/hydraulic result at each requested
-state, including initialization and hydraulic nodes with `wall=None`.
-There is no resolved axial wall-temperature field. A model that requires
-unavailable wall information must raise `EnhancementUnsupportedError`
-instead of guessing. External property tables/software own their interpolation,
+The same provider owns thermal and hydraulic performance. Hydraulic nodes
+with `wall=None` may return friction only (`alpha_inside=None`, `nusselt=None`)
+when the thermal reference is unavailable; thermal requests require alpha.
+There is no resolved axial wall-temperature field. A model whose friction
+requires unavailable wall information must raise `EnhancementUnsupportedError`.
+Thermal wall/film requirements reuse the existing iterative wall solver; a
+standalone context without the required temperatures/backend fails clearly.
+External property tables/software own their interpolation,
 extrapolation policy, unavailable-data errors and any external I/O; core adds
 no dependency or proprietary equation.
 

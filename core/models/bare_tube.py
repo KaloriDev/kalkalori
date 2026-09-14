@@ -774,12 +774,36 @@ class BareTubeHeatExchanger:
                 tube_side_heat_flow_direction = "cooling"
             elif tube_side_temperature_out > tube_side_temperature_in:
                 tube_side_heat_flow_direction = "heating"
+        from core.enhancements.integration import thermal_property_reference
+        wall_temperature = None
+        wall_props = None
+        if thermal_property_reference(self.tube_side_enhancement) != "bulk":
+            # Even a fixed-bulk snapshot needs a resolved wall for a film/wall
+            # reference. Reuse the existing local resistance-network iteration.
+            from core.heat_transfer.thermal_iteration import _solve_wall_temperature_probe
+            from core.enhancements import EnhancementUnsupportedError
+            if (tube_side_provider is None or outside_provider is None
+                    or tube_side_temperature_in is None or outside_temperature_in is None
+                    or tube_side_pressure is None or outside_pressure is None):
+                raise EnhancementUnsupportedError("enhancement_thermal_reference_state_required")
+            probe = _solve_wall_temperature_probe(
+                self, m_dot_inside=m_dot_tube_side, m_dot_outside=m_dot_outside,
+                inside_provider=tube_side_provider, outside_provider=outside_provider,
+                inside_bulk_temperature=.5*(tube_side_temperature_in + (tube_side_temperature_out if tube_side_temperature_out is not None else tube_side_temperature_in)),
+                outside_bulk_temperature=.5*(outside_temperature_in + (outside_temperature_out if outside_temperature_out is not None else outside_temperature_in)),
+                p_inside=tube_side_pressure, p_outside=outside_pressure,
+                euler_provider=euler_provider, finned_heat_transfer_provider=finned_heat_transfer_provider)
+            if not probe.converged:
+                raise EnhancementUnsupportedError("enhancement_wall_iteration_not_converged")
+            wall_temperature = probe.inside_wall_temperature
+            wall_props = tube_side_provider.at(T=wall_temperature, p=tube_side_pressure)
         enhancement = evaluate_for_bundle(
             self.tube_side_enhancement, self.bundle, m_dot_tube_side, tube_side_props,
             temperature=(None if tube_side_temperature_in is None else
                          .5*(tube_side_temperature_in + (tube_side_temperature_out
                              if tube_side_temperature_out is not None else tube_side_temperature_in))),
             pressure=tube_side_pressure, property_provider=tube_side_provider,
+            wall_temperature=wall_temperature, wall_props=wall_props,
             heat_flow_direction=tube_side_heat_flow_direction,
         )
         if enhancement is None:

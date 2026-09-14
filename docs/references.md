@@ -410,6 +410,18 @@ Used for:
 
 ## Notes on Applicability
 
+### Open-secondary twisted-tape implementation
+
+Rossi, R., Cattani, L., Mocerino, A., Bozzoli, F., Rainieri, S., Caminati, R.,
+and Pagliarini, G. (2017). *Numerical analysis of flow resistance and heat
+transfer in the transitional regime of pipe flow with twisted-tape turbulators*.
+Journal of Physics: Conference Series 923, 012033.
+[doi:10.1088/1742-6596/923/1/012033](https://doi.org/10.1088/1742-6596/923/1/012033).
+Open article, CC BY 3.0. Eqs.9/10 are the implementation authority for
+`Rossi2017TwistedTapeProvider`; Agarwal & Raja Rao (1996) is historical
+attribution, not independently verified primary authority.
+See [equations, property references and limitations](twisted_tape_rossi2017.md).
+
 The references listed here are not a substitute for validation.
 
 KalKalori correlations and property helpers should always be used with:

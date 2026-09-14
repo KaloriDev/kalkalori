@@ -123,6 +123,9 @@ class EnhancementInput:
     # provider-owned blocked/reference geometry in EnhancementResult.
     base_flow_area_per_tube: float | None = None
     hydraulic_length_total: float | None = None
+    # Integration-owned state evaluated by the fluid backend, never averaged
+    # from transport values. Optional for legacy bulk-reference providers.
+    thermal: EnhancementState | None = None
 
     def __post_init__(self) -> None:
         _positive(mass_flow_per_tube=self.mass_flow_per_tube,
@@ -140,6 +143,8 @@ class EnhancementInput:
             raise TypeError("bulk must be an EnhancementState.")
         if self.wall is not None and not isinstance(self.wall, EnhancementState):
             raise TypeError("wall must be an EnhancementState.")
+        if self.thermal is not None and not isinstance(self.thermal, EnhancementState):
+            raise TypeError("thermal must be an EnhancementState.")
 
     @property
     def base_mass_flux(self) -> float | None:
@@ -187,12 +192,18 @@ class EnhancementReferenceState:
 
 @dataclass(frozen=True)
 class EnhancementResult:
+    """Paired model result; hydraulic-only nodes may omit alpha and Nu.
+
+    A thermal request always requires alpha. ``thermal_property_reference``
+    identifies the input state used for Nu-to-alpha conversion; hydraulic
+    velocity and density remain bulk-based regardless of that reference.
+    """
     provider_id: str
     correlation_id: str
     source_references: tuple[str, ...]
     source_access_basis: str
     reference: EnhancementReferenceState
-    alpha_inside: float
+    alpha_inside: float | None
     f_darcy: float
     friction_factor_native: float
     friction_basis: str
@@ -202,11 +213,18 @@ class EnhancementResult:
     wall_correction: float = 1.0
     warnings: tuple[ModelWarning, ...] = ()
     diagnostics: tuple[EnhancementDiagnostic, ...] = ()
+    thermal_property_reference: str = "bulk"
 
     def __post_init__(self) -> None:
-        _positive(alpha_inside=self.alpha_inside, f_darcy=self.f_darcy,
+        _positive(f_darcy=self.f_darcy,
                   friction_factor_native=self.friction_factor_native,
                   wall_correction=self.wall_correction)
+        if self.alpha_inside is not None:
+            _positive(alpha_inside=self.alpha_inside)
+        elif self.nusselt is not None:
+            raise ValueError("Nu requires a thermal coefficient.")
+        if self.thermal_property_reference not in ("bulk", "wall", "film"):
+            raise ValueError("Unknown thermal property reference.")
         if self.nusselt is not None:
             _positive(nusselt=self.nusselt)
         if not self.provider_id or not self.correlation_id or not self.regime:
@@ -287,20 +305,29 @@ def evaluate_enhancement(configuration: TubeSideEnhancement | None,
         from .clearance import evaluate_with_clearance
         return evaluate_with_clearance(configuration, state)
     result = configuration.provider.evaluate(configuration.geometry, state)
-    return _validate_result(result, configuration.provider.provider_id, state)
+    return _validate_result(result, configuration.provider.provider_id, state,
+                            getattr(configuration.provider, "thermal_property_reference", "bulk"))
 
 
-def _validate_result(result, expected_provider_id, state):
+def _validate_result(result, expected_provider_id, state, expected_thermal_reference="bulk"):
     """Check the same physical contract for native, corrected and absolute results."""
     if not isinstance(result, EnhancementResult):
         raise TypeError("Provider must return a coherent EnhancementResult.")
     if result.provider_id != expected_provider_id:
         raise ValueError("Returned provider identity does not match selected provider.")
+    if (state.position == "thermal"
+            and result.thermal_property_reference != expected_thermal_reference):
+        raise ValueError("Returned thermal reference does not match provider declaration.")
     r = result.reference
+    if state.position == "thermal" and result.alpha_inside is None:
+        raise ValueError("Thermal evaluation requires alpha_inside.")
     velocity = state.mass_flow_per_tube/(state.bulk.rho*r.flow_area)
     if not math.isclose(velocity, r.velocity, rel_tol=1e-10):
         raise ValueError("Provider reference area and mass-flow velocity are inconsistent.")
+    thermal = state.bulk if result.thermal_property_reference == "bulk" else state.thermal
+    if result.nusselt is not None and thermal is None:
+        raise ValueError("Provider thermal reference state is missing.")
     if result.nusselt is not None and not math.isclose(
-            result.alpha_inside, result.nusselt*state.bulk.k/r.nusselt_length, rel_tol=1e-10):
+            result.alpha_inside, result.nusselt*thermal.k/r.nusselt_length, rel_tol=1e-10):
         raise ValueError("Provider Nu and alpha reference bases are inconsistent.")
     return result

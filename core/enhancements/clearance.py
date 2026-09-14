@@ -135,7 +135,8 @@ def evaluate_with_clearance(configuration, state):
             raise TypeError("Clearance base geometry must be TwistedTapeGeometry.")
         base_geometry.clearance_for(state.tube_inner_diameter)
         base = _validate_result(configuration.provider.evaluate(base_geometry, state),
-                                configuration.provider.provider_id, state)
+                                configuration.provider.provider_id, state,
+                                getattr(configuration.provider, "thermal_property_reference", "bulk"))
     model = provider.evaluate(geometry, state, base)
     if not isinstance(model, TwistedTapeClearanceResult) or model.mode is not provider.mode:
         raise TypeError("Clearance result must match the selected provider mode.")
@@ -152,11 +153,15 @@ def evaluate_with_clearance(configuration, state):
         ("clearance_ratio_definition", model.clearance_ratio_definition, "-"),
     ]
     if model.mode is ClearanceModelMode.ABSOLUTE:
-        result = _validate_result(model.absolute, provider.provider_id, state)
+        expected_thermal_reference = getattr(provider, "thermal_property_reference", "bulk")
+        result = _validate_result(model.absolute, provider.provider_id, state, expected_thermal_reference)
         fields.extend((("active_model", result.correlation_id, "-"),
                        ("replaced_base_provider", configuration.provider.provider_id, "-")))
     else:
         correction = model.correction
+        # A relative correction retains its validated base property reference;
+        # an absolute model above owns its own declaration instead.
+        expected_thermal_reference = base.thermal_property_reference
         if base.correlation_id not in correction.compatible_base_correlation_ids:
             raise EnhancementUnsupportedError("clearance_correction_base_incompatible")
         if correction.regime != base.regime:
@@ -168,7 +173,7 @@ def evaluate_with_clearance(configuration, state):
             correlation_id=f"{base.correlation_id}+{correction.correlation_id}",
             source_references=tuple(dict.fromkeys(base.source_references+correction.source_references)),
             source_access_basis=basis,
-            alpha_inside=base.alpha_inside*cn,
+            alpha_inside=None if base.alpha_inside is None else base.alpha_inside*cn,
             nusselt=None if base.nusselt is None else base.nusselt*cn,
             f_darcy=base.f_darcy*cf, friction_factor_native=base.friction_factor_native*cf,
             applicability="extrapolated" if "extrapolated" in (base.applicability, correction.applicability) else "within_range",
@@ -179,17 +184,19 @@ def evaluate_with_clearance(configuration, state):
             ("base_enhancement_model", base.correlation_id, "-"),
             ("active_model", result.correlation_id, "-"),
             ("base_tape_width", base_geometry.tape_width, "m"),
-            ("alpha_before_clearance", base.alpha_inside, "W/(m2 K)"),
             ("f_darcy_before_clearance", base.f_darcy, "-"),
             ("heat_transfer_factor", cn, "-"), ("friction_factor_factor", cf, "-"),
         ))
+        if base.alpha_inside is not None:
+            fields.append(("alpha_before_clearance", base.alpha_inside, "W/(m2 K)"))
         if base.nusselt is not None:
             fields.append(("Nu_before_clearance", base.nusselt, "-"))
-    fields.extend((("alpha_after_clearance", result.alpha_inside, "W/(m2 K)"),
-                   ("f_darcy_after_clearance", result.f_darcy, "-")))
+    fields.append(("f_darcy_after_clearance", result.f_darcy, "-"))
+    if result.alpha_inside is not None:
+        fields.append(("alpha_after_clearance", result.alpha_inside, "W/(m2 K)"))
     if result.nusselt is not None:
         fields.append(("Nu_after_clearance", result.nusselt, "-"))
     names = {name for name, _, _ in fields}
     result = replace(result, diagnostics=tuple(d for d in result.diagnostics if d.name not in names)
                      + tuple(EnhancementDiagnostic(*f) for f in fields))
-    return _validate_result(result, provider.provider_id, state)
+    return _validate_result(result, provider.provider_id, state, expected_thermal_reference)

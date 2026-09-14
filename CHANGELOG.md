@@ -5,6 +5,32 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.1] — Rossi2017 comparator and thermal property references
+
+### Added and changed
+
+- Enforced provider-declared thermal references through relative and absolute
+  clearance composition as well as direct dispatch. A mismatched bulk/film
+  result is rejected instead of bypassing the conductivity-reference contract.
+- Corrected the Yang2020 guide to describe supplied roughness and differing
+  physical length as diagnostically ignored correlation inputs, consistent
+  with existing behavior; the hydraulic path retains its physical length.
+
+- Added `Rossi2017TwistedTapeProvider`: public open-secondary reconstruction
+  of Rossi (2017) Eqs.9/10 for paired thermal and Darcy distributed friction,
+  with explicit extrapolation and unrepresented width/clearance diagnostics.
+  Historical Agarwal attribution is not primary-source verification;
+  pychemqt is not a backend. See `docs/twisted_tape_rossi2017.md`.
+  The private XSC workflow compares this nominal sensitivity with smooth,
+  public Yang2020 and private M&B paths; real-clearance physics remains unsupported.
+- Added optional provider-declared bulk/wall/film thermal property references.
+  Film properties come from the existing fluid backend at the mean of bulk
+  and iterated wall temperatures, never averaged transport values. Hydraulic
+  nodes can omit thermal outputs while retaining the same friction model.
+  Smooth and existing bulk-reference providers retain their defaults.
+
+---
+
 ## [0.8.0] — Tube-side enhancements and laminar thermal development
 
 ### Added and changed
