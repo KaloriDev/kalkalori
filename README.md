@@ -215,10 +215,10 @@ Typical usage:
 4. Inspect results from `HXResult`
 
 For the tube-side enhancement API, including public Yang2020 and Rossi2017
-twisted-tape models, the in-development Inaba1994 wire-coil model, and
-external providers, see
+twisted-tape models, the released Inaba1994 wire-coil model, and external
+providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version is v0.8.1. Smooth laminar flow with a supplied
+The current package version is v0.8.2. Smooth laminar flow with a supplied
 heated length now includes [thermal development](docs/internal_laminar_thermal_development.md).
 
 ---

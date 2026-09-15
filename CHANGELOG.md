@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [Unreleased] — v0.8.2 development
+## [0.8.2] — Inaba1994 wire-coil release
 
 ### Added and changed
 
@@ -23,6 +23,8 @@ The project follows **Semantic Versioning (SemVer)**:
 - Corrected the exact `P/e > 10` branch boundary and retained independently
   declared wall/film hydraulic reference context through both iterative and
   non-iterative Simulation hydraulic refreshes.
+- Clarified the public Yang2020 documentation: the provider supports liquid
+  heating only and rejects liquid cooling as unsupported.
 
 ---
 

@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.1`
+**Current version:** `v0.8.2`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change thermal balance, tube-bank hydraulic balance,
@@ -205,15 +205,18 @@ finite-width clearance correlation remains future work.
   no AUTO activation. The XSC use is a nominal-tape sensitivity;
   real width and clearance are not represented by these correlations.
 
+**Included in v0.8.2:**
+
+- **Inaba1994 wire-coil insert.** The public release includes the coherent
+  primary-source `P/e > 10` subset: Eq. (7) distributed friction and Eqs.
+  (10)/(11) heat transfer, with film properties, source hydraulic diameter,
+  Fanning-to-Darcy conversion and source-area normalization. No second model
+  is included. García 2005/2007 remains pending source completion; Bas &
+  Özceyhan remains pending source-definition closure; Zimparov remains pending
+  methodological closure.
+
 **Planned v0.8.x follow-ups:**
 
-- **v0.8.2 — Inaba1994 wire-coil insert (implementation in progress).** The
-  selected public direction is the coherent primary-source `P/e > 10` subset:
-  Eq. (7) distributed friction and Eqs. (10)/(11) heat transfer, with film
-  properties, source hydraulic diameter, Fanning-to-Darcy conversion and
-  source-area normalization. No second model is included. García 2005/2007
-  remains pending source completion; Bas & Özceyhan remains pending source-
-  definition closure; Zimparov remains pending methodological closure.
 - **v0.8.3 — source/legal/design decision point.** Do not define this patch in
   detail until sources and supported APIs are known. Possible private work
   includes an Al-Fahed/Chamra/Chakroun real-width model if a sufficient legal

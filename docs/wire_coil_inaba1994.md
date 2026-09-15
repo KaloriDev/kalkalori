@@ -1,11 +1,11 @@
 # Inaba1994 wire-coil provider
 
 `core.enhancements.Inaba1994WireCoilProvider` is the public wire-coil model
-selected for v0.8.2 development. It uses one coherent primary-source family
-from Inaba, Ozaki and Kanaoka (1994): distributed friction Eq. (7), high-Re
-heat transfer Eq. (10), and low-Re heat transfer Eq. (11). Only `P/e > 10`
-is implemented. The different source equations for `P/e <= 10` are an
-unsupported branch, not ordinary extrapolation.
+included in KalKalori v0.8.2. It uses one coherent primary-source family from
+Inaba, Ozaki and Kanaoka (1994): distributed friction Eq. (7), high-Re heat
+transfer Eq. (10), and low-Re heat transfer Eq. (11). Only `P/e > 10` is
+implemented. The different source equations for `P/e <= 10` are an unsupported
+branch, not ordinary extrapolation.
 
 The legal implementation authority is the official free-access
 [J-STAGE article](https://www.jstage.jst.go.jp/article/kikaib1979/60/569/60_569_240/_article/-char/en),
