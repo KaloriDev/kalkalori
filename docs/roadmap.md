@@ -175,10 +175,12 @@ selection remain outside the solver's scope.
   in the GPL core.
 
 The public source freeze selects the laminar single-tape specialization of
-Yang et al. (2020); see [the source audit](twisted_tape_manglik_bergles.md).
+Yang et al. (2020) for liquid heating only; see
+[the source audit](twisted_tape_manglik_bergles.md).
 The [provider guide](tube_side_enhancements.md) describes usage, external
 integration and the narrow geometry/operating limits of the public model.
-Transition, turbulent and gas support are outside this selected model.
+Transition, turbulent, gas and liquid-cooling support are outside this
+selected model.
 Paywalled literature (including M&B Part I / II), manufacturer data,
 proprietary correlations and licensed software belong in external/private
 providers, supported by the open generic interface.

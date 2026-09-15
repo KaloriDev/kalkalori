@@ -106,6 +106,13 @@ There is no extrapolation or smooth-tube blend.
 An unsupported state raises `EnhancementUnsupportedError`; the selected
 enhancement never silently falls back to a smooth correlation.
 
+For liquid cooling, `Yang2020TwistedTapeProvider` raises
+`EnhancementUnsupportedError` with
+`yang2020_cooling_unsupported: liquid heating only.` Cooling is outside the
+supported source scope, not warning-mode extrapolation: the heating correlation
+is not reused for cooling. This restriction belongs to the Yang2020 provider;
+it is not a general limitation of KalKalori's Rating or Simulation solvers.
+
 Nu and friction use empty-tube velocity and inside diameter. The blockage
 area, wetted perimeter, hydraulic diameter and swirl corrections are already
 inside the published correlation. The solver does not multiply by another
