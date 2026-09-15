@@ -440,8 +440,12 @@ def _evaluate_local_wall_state(
     bundle = hx.bundle
     tube = bundle.tube
     D_h = bundle.internal_hydraulic_diameter
-    from core.enhancements.integration import thermal_property_reference
-    if inside_wall_temperature is None and thermal_property_reference(hx.tube_side_enhancement) != "bulk":
+    from core.enhancements.integration import (
+        hydraulic_property_reference, thermal_property_reference,
+    )
+    if (inside_wall_temperature is None
+            and (thermal_property_reference(hx.tube_side_enhancement) != "bulk"
+                 or hydraulic_property_reference(hx.tube_side_enhancement) != "bulk")):
         # Initial iterate only, bounded by the two bulk states. The existing
         # resistance-network iteration replaces this guess with its wall state.
         inside_wall_temperature = (inside_bulk_temperature + outside_bulk_temperature)/2

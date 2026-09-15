@@ -20,7 +20,7 @@ from core.enhancements import (
 )
 from core.pressure_drop.internal_pressure_drop import calculate_tube_bundle_hydraulics
 from core.enhancements.integration import hydraulic_evaluator
-from core.tests.enhancement_provider_contract_test import fake_configuration
+from core.tests.enhancement_provider_contract_test import FakeExternalProvider, fake_configuration
 
 
 def bundle(finned=False, passes=1):
@@ -118,6 +118,37 @@ def test_rating_simulation_bridge_and_surface_margin():
 class VariableLiquid:
     def at(self, T, p):
         return FluidTransportProperties(1000-.3*(T-300), .001*math.exp(-.01*(T-300)), .5, 5000)
+
+
+@pytest.mark.parametrize("iterate", [False, True])
+def test_independent_hydraulic_film_reference_bootstraps_wall_state(iterate):
+    class HydraulicFilmProvider(FakeExternalProvider):
+        hydraulic_property_reference = "film"
+
+        def __init__(self):
+            self.states = []
+
+        def evaluate(self, geometry, state):
+            assert state.hydraulic is not None
+            self.states.append((state.position, state.bulk.temperature,
+                                state.hydraulic.temperature))
+            return super().evaluate(geometry, state)
+
+    b = bundle()
+    inside, outside = inputs(b, provider=VariableLiquid())
+    provider = HydraulicFilmProvider()
+    enhancement = TubeSideEnhancement(provider, "test_geometry", "liquid")
+    result = BareTubeHeatExchanger(
+        b, tube_side_enhancement=enhancement,
+    ).simulate(inside, outside, iterate=iterate)
+
+    assert result.converged
+    assert provider.states
+    assert {position for position, _, _ in provider.states} >= {
+        "thermal", "inlet", "midpoint", "outlet",
+    }
+    assert all(reference_temperature != bulk_temperature
+               for _, bulk_temperature, reference_temperature in provider.states)
 
 
 def test_wall_iteration_uses_authoritative_viscosity_once():

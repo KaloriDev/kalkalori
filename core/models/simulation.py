@@ -808,7 +808,10 @@ def run_simulation(
     if not math.isfinite(surface_margin) or surface_margin < 0.0:
         raise ValueError("surface_margin must be a non-negative finite value.")
 
-    from core.enhancements.integration import guard_side, hydraulic_evaluator, check_model_identity
+    from core.enhancements.integration import (
+        check_model_identity, guard_side, hydraulic_evaluator,
+        hydraulic_property_reference,
+    )
     guard_side(hx.tube_side_enhancement, inside)
     hot_is_inside = inside.T_in >= outside.T_in
 
@@ -894,8 +897,34 @@ def run_simulation(
         # The thermal pass determines the actual outlet temperatures after the
         # hydraulic snapshot was first evaluated. Refresh both common
         # three-state hydraulic results so exposed states use those outlets.
+        hydraulic_wall_temperature = None
+        if hydraulic_property_reference(hx.tube_side_enhancement) != "bulk":
+            from core.enhancements import EnhancementUnsupportedError
+            from core.heat_transfer.thermal_iteration import _solve_wall_temperature_probe
+
+            probe = _solve_wall_temperature_probe(
+                hx,
+                m_dot_inside=inside.m_dot,
+                m_dot_outside=outside.m_dot,
+                inside_provider=inside.provider,
+                outside_provider=outside.provider,
+                inside_bulk_temperature=.5*(inside.T_in + T_out_inside_calc),
+                outside_bulk_temperature=.5*(outside.T_in + T_out_outside_calc),
+                p_inside=inside.p,
+                p_outside=outside.p,
+                euler_provider=euler_provider,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+            )
+            if not probe.converged:
+                raise EnhancementUnsupportedError("enhancement_wall_iteration_not_converged")
+            hydraulic_wall_temperature = probe.inside_wall_temperature
+
         bundle_hydraulic = calculate_tube_bundle_hydraulics(
-            enhancement_evaluator=hydraulic_evaluator(hx.tube_side_enhancement, hx.bundle, inside.provider),
+            enhancement_evaluator=hydraulic_evaluator(
+                hx.tube_side_enhancement, hx.bundle, inside.provider,
+                wall_temperature=hydraulic_wall_temperature,
+                heat_flow_direction="cooling" if hot_is_inside else "heating",
+            ),
             m_dot=inside.m_dot,
             flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
             hydraulic_diameter=hx.bundle.internal_hydraulic_diameter,

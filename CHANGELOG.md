@@ -20,6 +20,9 @@ The project follows **Semantic Versioning (SemVer)**:
 - Extended the generic enhancement contract with optional hydraulic property
   references and an explicit native-friction reference normalization. Existing
   providers retain bulk hydraulics and a unity normalization.
+- Corrected the exact `P/e > 10` branch boundary and retained independently
+  declared wall/film hydraulic reference context through both iterative and
+  non-iterative Simulation hydraulic refreshes.
 
 ---
 

@@ -40,7 +40,7 @@ class Inaba1994WireCoilProvider:
         D = state.tube_inner_diameter
         geometry.validate_for(D)
         q = geometry.pitch_ratio
-        if q <= 10.0 or math.isclose(q, 10.0, rel_tol=1e-12):
+        if q <= 10.0:
             raise EnhancementUnsupportedError(
                 "inaba1994_pitch_ratio_unsupported_branch: v0.8.2 implements P/e > 10 only")
 

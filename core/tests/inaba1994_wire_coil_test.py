@@ -138,7 +138,7 @@ def test_source_reynolds_and_prandtl_boundaries(re, pr):
     assert evaluate_enhancement(configured(), state(re, pr)).applicability == "within_range"
 
 
-@pytest.mark.parametrize("q", [10.0000001, 50.3])
+@pytest.mark.parametrize("q", [math.nextafter(10.0, math.inf), 10.0000001, 50.3])
 def test_supported_pitch_boundaries(q):
     coil = geometry(q=q)
     assert evaluate_enhancement(configured(coil=coil), state(coil=coil)).applicability == "within_range"
@@ -265,6 +265,27 @@ def test_rating_simulation_and_three_point_hydraulics_use_same_model():
         simulation.inside_properties_inlet, simulation.inside_properties_midpoint,
         simulation.inside_properties_outlet)]
     assert simulation.inside_dp_friction == pytest.approx(.3*(gradients[0]+4*gradients[1]+gradients[2])/6)
+
+
+def test_noniterative_simulation_retains_hydraulic_film_and_heating_context():
+    b = source_bundle()
+    backend = NonlinearWaterLike()
+    inside = HXSideInput(provider=backend, m_dot=.04, T_in=300, p=2e5)
+    outside = HXSideInput(provider=ConstantPropertyProvider(
+        FluidTransportProperties(1.1, 2e-5, .03, 1000)), m_dot=.25, T_in=340, p=1e5)
+
+    result = BareTubeHeatExchanger(
+        b, tube_side_enhancement=configured("warn"),
+    ).simulate(inside, outside, iterate=False)
+
+    assert result.converged
+    for point in (result.inside_properties_inlet,
+                  result.inside_properties_midpoint,
+                  result.inside_properties_outlet):
+        assert point.enhancement.provider_id == "inaba_1994_wire_coil"
+        assert diagnostics(point.enhancement)["hydraulic_reference_temperature"] != point.temperature
+        assert "inaba1994_heating_context_unmatched" not in {
+            warning.code for warning in point.enhancement.warnings}
 
 
 def test_source_context_and_unmodelled_local_loss_diagnostics_are_explicit():
