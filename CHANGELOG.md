@@ -5,6 +5,29 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.2] — Inaba1994 wire-coil release
+
+### Added and changed
+
+- Added the public `Inaba1994WireCoilProvider` and `WireCoilGeometry` for the
+  primary-source `P/e > 10` subset: distributed Fanning friction Eq. (7) and
+  heat-transfer Eqs. (10)/(11), coupled through Rating, Simulation and the
+  three-point distributed-friction path.
+- Added source-faithful nominal-area velocity, film-property Reynolds/Prandtl
+  evaluation, source hydraulic diameter and heat-transfer-area normalization.
+  Diagnostics retain source and canonical quantities, exact branch selection,
+  applicability, limitations and primary J-STAGE provenance.
+- Extended the generic enhancement contract with optional hydraulic property
+  references and an explicit native-friction reference normalization. Existing
+  providers retain bulk hydraulics and a unity normalization.
+- Corrected the exact `P/e > 10` branch boundary and retained independently
+  declared wall/film hydraulic reference context through both iterative and
+  non-iterative Simulation hydraulic refreshes.
+- Clarified the public Yang2020 documentation: the provider supports liquid
+  heating only and rejects liquid cooling as unsupported.
+
+---
+
 ## [0.8.1] — Rossi2017 comparator and thermal property references
 
 ### Added and changed

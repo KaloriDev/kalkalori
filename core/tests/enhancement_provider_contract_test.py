@@ -64,6 +64,21 @@ def test_external_contract_conventions_provenance_and_reference_geometry():
     assert result.pressure_gradient(1000) == pytest.approx(208.4798017332055)
 
 
+def test_native_friction_reference_normalization_is_explicit_and_validated():
+    result = FakeExternalProvider().evaluate("test_geometry", sample_input())
+    normalized = replace(result, f_darcy=.12, friction_normalization=1.5)
+    assert normalized.f_darcy == 4*normalized.friction_factor_native*1.5
+    with pytest.raises(ValueError, match="friction convention"):
+        replace(normalized, friction_normalization=1.4)
+
+
+def test_optional_hydraulic_reference_state_is_typed():
+    hydraulic = EnhancementState(998, .0011, .51, 4100, 310, 1e5)
+    assert replace(sample_input(), hydraulic=hydraulic).hydraulic is hydraulic
+    with pytest.raises(TypeError, match="hydraulic"):
+        replace(sample_input(), hydraulic="averaged properties")
+
+
 @pytest.mark.parametrize("field", ["half_turn_length", "tape_width", "tape_thickness"])
 @pytest.mark.parametrize("value", [0, -1, math.nan, math.inf])
 def test_geometry_rejects_invalid(field, value):

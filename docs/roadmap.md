@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.1`
+**Current version:** `v0.8.2`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change thermal balance, tube-bank hydraulic balance,
@@ -175,10 +175,12 @@ selection remain outside the solver's scope.
   in the GPL core.
 
 The public source freeze selects the laminar single-tape specialization of
-Yang et al. (2020); see [the source audit](twisted_tape_manglik_bergles.md).
+Yang et al. (2020) for liquid heating only; see
+[the source audit](twisted_tape_manglik_bergles.md).
 The [provider guide](tube_side_enhancements.md) describes usage, external
 integration and the narrow geometry/operating limits of the public model.
-Transition, turbulent and gas support are outside this selected model.
+Transition, turbulent, gas and liquid-cooling support are outside this
+selected model.
 Paywalled literature (including M&B Part I / II), manufacturer data,
 proprietary correlations and licensed software belong in external/private
 providers, supported by the open generic interface.
@@ -203,13 +205,18 @@ finite-width clearance correlation remains future work.
   no AUTO activation. The XSC use is a nominal-tape sensitivity;
   real width and clearance are not represented by these correlations.
 
+**Included in v0.8.2:**
+
+- **Inaba1994 wire-coil insert.** The public release includes the coherent
+  primary-source `P/e > 10` subset: Eq. (7) distributed friction and Eqs.
+  (10)/(11) heat transfer, with film properties, source hydraulic diameter,
+  Fanning-to-Darcy conversion and source-area normalization. No second model
+  is included. García 2005/2007 remains pending source completion; Bas &
+  Özceyhan remains pending source-definition closure; Zimparov remains pending
+  methodological closure.
+
 **Planned v0.8.x follow-ups:**
 
-- **v0.8.2 — further open enhancement coverage and capability maturation.**
-  Candidate work includes a Bas–Özceyhan clearance model within its actual
-  turbulent range and possibly García wire-coil support or another model with
-  adequate provenance. Exact models remain conditional on source and licence
-  review; provider requirements should drive any capability/provenance changes.
 - **v0.8.3 — source/legal/design decision point.** Do not define this patch in
   detail until sources and supported APIs are known. Possible private work
   includes an Al-Fahed/Chamra/Chakroun real-width model if a sufficient legal

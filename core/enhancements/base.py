@@ -85,6 +85,29 @@ class TwistedTapeGeometry:
 
 
 @dataclass(frozen=True)
+class WireCoilGeometry:
+    """Ideal circular wire coil contacting the tube wall, SI metres.
+
+    Only primitive insert dimensions are public. Correlation providers derive
+    pitch ratio, helix length, surface area and any source hydraulic diameter.
+    """
+    wire_diameter: float
+    pitch: float
+
+    def __post_init__(self) -> None:
+        _positive(wire_diameter=self.wire_diameter, pitch=self.pitch)
+
+    def validate_for(self, tube_inner_diameter: float) -> None:
+        _positive(tube_inner_diameter=tube_inner_diameter)
+        if self.wire_diameter >= tube_inner_diameter:
+            raise ValueError("Wire diameter must be smaller than tube inside diameter.")
+
+    @property
+    def pitch_ratio(self) -> float:
+        return self.pitch / self.wire_diameter
+
+
+@dataclass(frozen=True)
 class EnhancementState:
     """Authoritative transport state; T [K] and p [Pa] may be unavailable."""
     rho: float
@@ -126,6 +149,9 @@ class EnhancementInput:
     # Integration-owned state evaluated by the fluid backend, never averaged
     # from transport values. Optional for legacy bulk-reference providers.
     thermal: EnhancementState | None = None
+    # Optional source-neutral hydraulic property state. Providers declare its
+    # reference temperature independently from the thermal Nu state.
+    hydraulic: EnhancementState | None = None
 
     def __post_init__(self) -> None:
         _positive(mass_flow_per_tube=self.mass_flow_per_tube,
@@ -145,6 +171,8 @@ class EnhancementInput:
             raise TypeError("wall must be an EnhancementState.")
         if self.thermal is not None and not isinstance(self.thermal, EnhancementState):
             raise TypeError("thermal must be an EnhancementState.")
+        if self.hydraulic is not None and not isinstance(self.hydraulic, EnhancementState):
+            raise TypeError("hydraulic must be an EnhancementState.")
 
     @property
     def base_mass_flux(self) -> float | None:
@@ -214,11 +242,15 @@ class EnhancementResult:
     warnings: tuple[ModelWarning, ...] = ()
     diagnostics: tuple[EnhancementDiagnostic, ...] = ()
     thermal_property_reference: str = "bulk"
+    # Additional source-to-canonical reference conversion after the ordinary
+    # Fanning-to-Darcy factor. One preserves every pre-v0.8.2 provider.
+    friction_normalization: float = 1.0
 
     def __post_init__(self) -> None:
         _positive(f_darcy=self.f_darcy,
                   friction_factor_native=self.friction_factor_native,
-                  wall_correction=self.wall_correction)
+                  wall_correction=self.wall_correction,
+                  friction_normalization=self.friction_normalization)
         if self.alpha_inside is not None:
             _positive(alpha_inside=self.alpha_inside)
         elif self.nusselt is not None:
@@ -247,7 +279,8 @@ class EnhancementResult:
         if self.friction_basis not in ("darcy", "fanning"):
             raise ValueError("Friction basis must be darcy or fanning.")
         factor = 4.0 if self.friction_basis == "fanning" else 1.0
-        if not math.isclose(self.f_darcy, factor*self.friction_factor_native, rel_tol=1e-12):
+        if not math.isclose(self.f_darcy, factor*self.friction_factor_native
+                            * self.friction_normalization, rel_tol=1e-12):
             raise ValueError("Inconsistent Darcy/native friction convention.")
 
     @property

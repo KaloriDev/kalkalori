@@ -774,10 +774,13 @@ class BareTubeHeatExchanger:
                 tube_side_heat_flow_direction = "cooling"
             elif tube_side_temperature_out > tube_side_temperature_in:
                 tube_side_heat_flow_direction = "heating"
-        from core.enhancements.integration import thermal_property_reference
+        from core.enhancements.integration import (
+            hydraulic_property_reference, thermal_property_reference,
+        )
         wall_temperature = None
         wall_props = None
-        if thermal_property_reference(self.tube_side_enhancement) != "bulk":
+        if (thermal_property_reference(self.tube_side_enhancement) != "bulk"
+                or hydraulic_property_reference(self.tube_side_enhancement) != "bulk"):
             # Even a fixed-bulk snapshot needs a resolved wall for a film/wall
             # reference. Reuse the existing local resistance-network iteration.
             from core.heat_transfer.thermal_iteration import _solve_wall_temperature_probe
@@ -824,7 +827,9 @@ class BareTubeHeatExchanger:
             alfa_i, internal_ht_warnings = enhancement.alpha_inside, list(enhancement.warnings)
 
         enhancement_evaluator = hydraulic_evaluator(
-            self.tube_side_enhancement, self.bundle, tube_side_provider)
+            self.tube_side_enhancement, self.bundle, tube_side_provider,
+            wall_temperature=wall_temperature,
+            heat_flow_direction=tube_side_heat_flow_direction)
         tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, alfa=alfa_i)
 
         # --------------------------------------------------------------
