@@ -1,5 +1,10 @@
 # Tube-side enhancements
 
+The [Inaba1994 wire-coil provider](wire_coil_inaba1994.md) adds a distinct
+insert family without using twisted-tape geometry or clearance semantics. Its
+hydraulic and thermal film properties, source diameter/area normalization and
+restricted `P/e > 10` applicability are documented on the dedicated page.
+
 The additional [Rossi2017 open-secondary comparator](twisted_tape_rossi2017.md)
 uses film thermal properties and bulk hydraulic states, with explicit
 extrapolation policy. The Yang2020 example and limits below remain separate.
@@ -148,10 +153,10 @@ All core contract types are exported from `core.enhancements`:
 
 | Contract | Required interpretation |
 | --- | --- |
-| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall and backend-evaluated thermal reference states, declared phase, position and heating/cooling direction |
+| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall and backend-evaluated thermal/hydraulic reference states, declared phase, position and heating/cooling direction |
 | `EnhancementState` | Positive finite density, viscosity, conductivity and cp; optional temperature and pressure |
 | `EnhancementReferenceState` | Per-tube flow area and consistent mass-flow velocity, provider-owned Re/Pr, friction diameter, separate hydraulic diameter and Nu reference length |
-| `EnhancementResult` | Positive thermal `alpha_inside` and `f_darcy`, native friction and explicit `darcy`/`fanning` basis, reference state, regime, applicability, provenance, thermal property reference and optional Nu; hydraulic-only nodes may omit alpha and Nu |
+| `EnhancementResult` | Positive thermal `alpha_inside` and canonical `f_darcy`, native friction with explicit `darcy`/`fanning` basis and reference normalization, reference state, regime, applicability, provenance, thermal property reference and optional Nu; hydraulic-only nodes may omit alpha and Nu |
 | `EnhancementDiagnostic` | Named scalar/string diagnostic and units, opaque to the solver |
 
 An alpha-only model may leave `nusselt=None`; core derives a bulk-equivalent
@@ -167,6 +172,14 @@ conversion. It integrates each provider gradient
 `f_darcy * rho * velocity**2 / (2 * friction_diameter)` with Simpson weights
 at inlet/midpoint/outlet. It never substitutes generic smooth-tube Re,
 friction or wall/length corrections into the enhanced result.
+
+Providers may independently declare `hydraulic_property_reference` as bulk,
+wall, or film. For wall/film hydraulics, integration evaluates the same fluid
+backend at the required temperature for every hydraulic quadrature point and
+supplies `state.hydraulic`; it never averages transport properties. A native
+friction factor whose source diameter/velocity differs from the canonical
+returned Darcy reference uses explicit `friction_normalization`, which is
+validated together with the ordinary Fanning factor of four.
 
 Provenance includes `provider_id`, `correlation_id`, nonempty
 `source_references` and `source_access_basis` (`open`, `private` or `external`).

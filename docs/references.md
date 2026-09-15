@@ -422,6 +422,19 @@ Open article, CC BY 3.0. Eqs.9/10 are the implementation authority for
 attribution, not independently verified primary authority.
 See [equations, property references and limitations](twisted_tape_rossi2017.md).
 
+### Primary-source wire-coil implementation
+
+Inaba, H., Ozaki, K., and Kanaoka, S. (1994). *A Fundamental Study of
+Heat-Transfer Enhancement and Flow-Drag Reduction in Tubes by Means of Wire
+Coil Insert: 1st Report, Characteristics of Flow Resistance and Heat Transfer
+in Tubes with Wire Coil Insert*. Transactions of the Japan Society of
+Mechanical Engineers Series B, 60(569), 240--247.
+[doi:10.1299/kikaib.60.240](https://doi.org/10.1299/kikaib.60.240).
+Official free-access [J-STAGE record](https://www.jstage.jst.go.jp/article/kikaib1979/60/569/60_569_240/_article/-char/en).
+Eqs. (7), (10), and (11) are the primary authority for the restricted
+`P/e > 10` `Inaba1994WireCoilProvider`. See the
+[model definitions, normalization and limits](wire_coil_inaba1994.md).
+
 The references listed here are not a substitute for validation.
 
 KalKalori correlations and property helpers should always be used with:

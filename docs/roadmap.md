@@ -205,11 +205,13 @@ finite-width clearance correlation remains future work.
 
 **Planned v0.8.x follow-ups:**
 
-- **v0.8.2 — further open enhancement coverage and capability maturation.**
-  Candidate work includes a Bas–Özceyhan clearance model within its actual
-  turbulent range and possibly García wire-coil support or another model with
-  adequate provenance. Exact models remain conditional on source and licence
-  review; provider requirements should drive any capability/provenance changes.
+- **v0.8.2 — Inaba1994 wire-coil insert (implementation in progress).** The
+  selected public direction is the coherent primary-source `P/e > 10` subset:
+  Eq. (7) distributed friction and Eqs. (10)/(11) heat transfer, with film
+  properties, source hydraulic diameter, Fanning-to-Darcy conversion and
+  source-area normalization. No second model is included. García 2005/2007
+  remains pending source completion; Bas & Özceyhan remains pending source-
+  definition closure; Zimparov remains pending methodological closure.
 - **v0.8.3 — source/legal/design decision point.** Do not define this patch in
   detail until sources and supported APIs are known. Possible private work
   includes an Al-Fahed/Chamra/Chakroun real-width model if a sufficient legal
