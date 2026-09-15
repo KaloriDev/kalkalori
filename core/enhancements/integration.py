@@ -22,6 +22,19 @@ def thermal_property_reference(configuration):
     return reference
 
 
+def hydraulic_property_reference(configuration):
+    """Optional source-neutral hydraulic property reference; default bulk."""
+    provider = configuration.provider if configuration else None
+    if configuration and configuration.clearance_provider is not None:
+        from .clearance import ClearanceModelMode
+        if configuration.clearance_provider.mode is ClearanceModelMode.ABSOLUTE:
+            provider = configuration.clearance_provider
+    reference = getattr(provider, "hydraulic_property_reference", "bulk")
+    if reference not in ("bulk", "wall", "film"):
+        raise ValueError("Unknown enhancement hydraulic property reference.")
+    return reference
+
+
 def guard_phase(configuration, provider, temperature, pressure):
     """Use authoritative phase data where available; never infer from rho/cp.
 
@@ -91,6 +104,20 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
         guard_phase(configuration, property_provider, thermal_temperature, pressure)
         thermal = EnhancementState.from_properties(
             property_provider.at(T=thermal_temperature, p=pressure), thermal_temperature, pressure)
+    hydraulic = None
+    hydraulic_reference = hydraulic_property_reference(configuration)
+    if hydraulic_reference != "bulk":
+        if wall_temperature is None or temperature is None or property_provider is None or pressure is None:
+            raise EnhancementUnsupportedError("enhancement_hydraulic_reference_state_required: wall/bulk temperatures and property backend required.")
+        hydraulic_temperature = ((temperature + wall_temperature)/2
+                                 if hydraulic_reference == "film" else wall_temperature)
+        guard_phase(configuration, property_provider, hydraulic_temperature, pressure)
+        if (thermal is not None and thermal.temperature == hydraulic_temperature):
+            hydraulic = thermal
+        else:
+            hydraulic = EnhancementState.from_properties(
+                property_provider.at(T=hydraulic_temperature, p=pressure),
+                hydraulic_temperature, pressure)
     state = EnhancementInput(
         mass_flow_per_tube=mass_flow/bundle.n_tubes_per_pass_effective,
         tube_inner_diameter=bundle.internal_hydraulic_diameter,
@@ -106,6 +133,7 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
                                 / bundle.n_tubes_per_pass_effective),
         hydraulic_length_total=bundle.internal_length_total,
         thermal=thermal,
+        hydraulic=hydraulic,
     )
     result = evaluate_enhancement(configuration, state)
     return replace(result, warnings=result.warnings + (make_warning(
@@ -134,7 +162,7 @@ def internal_diagnostics(result, bulk_k):
     )
 
 
-def hydraulic_evaluator(configuration, bundle, property_provider):
+def hydraulic_evaluator(configuration, bundle, property_provider, *, wall_temperature=None):
     """Build the same dispatcher for snapshots and refreshed hydraulic paths."""
     if configuration is None:
         return None
@@ -144,6 +172,7 @@ def hydraulic_evaluator(configuration, bundle, property_provider):
             configuration, bundle, point.mass_flux*bundle.internal_flow_area_per_pass,
             point.props, temperature=point.temperature, pressure=point.pressure,
             property_provider=property_provider, position=point.position,
+            wall_temperature=wall_temperature,
         )
     return evaluate
 

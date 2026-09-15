@@ -824,7 +824,8 @@ class BareTubeHeatExchanger:
             alfa_i, internal_ht_warnings = enhancement.alpha_inside, list(enhancement.warnings)
 
         enhancement_evaluator = hydraulic_evaluator(
-            self.tube_side_enhancement, self.bundle, tube_side_provider)
+            self.tube_side_enhancement, self.bundle, tube_side_provider,
+            wall_temperature=wall_temperature)
         tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, alfa=alfa_i)
 
         # --------------------------------------------------------------
