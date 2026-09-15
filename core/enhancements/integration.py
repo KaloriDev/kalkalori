@@ -162,7 +162,8 @@ def internal_diagnostics(result, bulk_k):
     )
 
 
-def hydraulic_evaluator(configuration, bundle, property_provider, *, wall_temperature=None):
+def hydraulic_evaluator(configuration, bundle, property_provider, *, wall_temperature=None,
+                        heat_flow_direction="unknown"):
     """Build the same dispatcher for snapshots and refreshed hydraulic paths."""
     if configuration is None:
         return None
@@ -173,6 +174,7 @@ def hydraulic_evaluator(configuration, bundle, property_provider, *, wall_temper
             point.props, temperature=point.temperature, pressure=point.pressure,
             property_provider=property_provider, position=point.position,
             wall_temperature=wall_temperature,
+            heat_flow_direction=heat_flow_direction,
         )
     return evaluate
 

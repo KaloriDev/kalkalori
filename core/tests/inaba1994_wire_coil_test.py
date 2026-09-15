@@ -256,6 +256,8 @@ def test_rating_simulation_and_three_point_hydraulics_use_same_model():
         assert point.enhancement.provider_id == simulation.tube_side_enhancement.provider_id
         assert point.enhancement.alpha_inside is None
         d = diagnostics(point.enhancement)
+        assert "inaba1994_heating_context_unmatched" not in {
+            warning.code for warning in point.enhancement.warnings}
         assert d["hydraulic_reference_temperature"] == pytest.approx(
             (point.temperature + diagnostics(simulation.tube_side_enhancement)["thermal_reference_temperature"]*2
              - .5*(300+simulation.T_out_inside))/2, rel=2e-2)
