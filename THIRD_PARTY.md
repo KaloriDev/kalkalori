@@ -34,3 +34,14 @@ redistributed as part of the KalKalori source code.
 REFPROP is not a dependency of KalKalori and is not distributed with this
 project. If selected as a CoolProp backend, it must be installed, licensed,
 and configured locally by the user.
+
+### EnergyPlus equation reference (verification stage)
+
+The isolated Elmahdy-Mitalas kernel is an original GPL-3.0-only implementation
+of documented equations, referenced to EnergyPlus v25.2.0 commit
+`cf7368216c73c43181e057fa33b479c4e0c86df0`. Its four-condition upstream license
+is not treated as BSD-3-Clause or relicensed. The optional native verification
+tool reads separately obtained, hash-checked sources, retains their notices
+in generated C++, and runs them in a separate process. No generated native
+source/binary is distributed or linked with the production package.
+See [the equation and interface map](docs/elmahdy_mitalas.md).

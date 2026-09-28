@@ -1,0 +1,35 @@
+{
+  "revision": "cf7368216c73c43181e057fa33b479c4e0c86df0",
+  "files": [
+    {
+      "path": "LICENSE.txt",
+      "sha256": "722f94f361ce8636a722472155d82ba6da84a435e0d527d70918a467b275f15d"
+    },
+    {
+      "path": "src/EnergyPlus/WaterCoils.cc",
+      "sha256": "91131d0304b86defa05c44842a938cbdb096460d90e5542f11512e3c39bd7267"
+    },
+    {
+      "path": "src/EnergyPlus/WaterCoils.hh",
+      "sha256": "bd98127ce58a5f359323f38cc1edd3b707a519553801380e517399e91a6aefe0"
+    },
+    {
+      "path": "src/EnergyPlus/Psychrometrics.cc",
+      "sha256": "b0110e633d7231483585bf187c07dee4a034d7bb771a4f9d2c91ed192fc6c09f"
+    },
+    {
+      "path": "src/EnergyPlus/Psychrometrics.hh",
+      "sha256": "bf52623f71aa66043707f2f9fdfc4b96b922072c8c56aca24a3ce7e2e79cab02"
+    },
+    {
+      "path": "tst/EnergyPlus/unit/WaterCoils.unit.cc",
+      "sha256": "9e2b1aeb1c0290e944dc630fc26c2a01bfa939d835b88e97144e3123049cd5c5"
+    },
+    {
+      "path": "doc/engineering-reference/src/simulation-models-encyclopedic-reference-001/coils.tex",
+      "sha256": "8141b04808239db56221775388b4487d7b89fdd2ca79d789f952edbf2898727d"
+    }
+  ],
+  "tag": "v25.2.0",
+  "repository": "https://github.com/NatLabRockies/EnergyPlus"
+}
