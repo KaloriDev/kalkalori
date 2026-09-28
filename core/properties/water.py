@@ -24,10 +24,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 import math
 from typing import Optional
 
 from iapws import IAPWS97
+from iapws import iapws97 as _if97
 
 from core.common.warnings import ModelWarning
 from core.properties.common import FluidTransportProperties
@@ -501,7 +503,17 @@ def water_saturation_pressure(T: float) -> float:
     Ref: IAPWS-IF97, Region 4 (saturation line).
     """
     _validate_saturation_temperature(T)
+    return _saturation_pressure_at_temperature(T)
+
+
+@lru_cache(maxsize=16384)
+def _saturation_pressure_at_temperature(T: float) -> float:
+    """Exact-query cache; use the same IF97 region as the original Tx route."""
     try:
+        if T <= 623.15:
+            return float(_if97._PSat_T(T)) * 1.0e6
+        # Above the Region1/2 boundary the original Tx route reports the
+        # Region3 pressure. Preserve it instead of substituting Region4 P(T).
         state = IAPWS97(T=T, x=0.0)
     except Exception as exc:
         raise ValueError(f"IAPWS-IF97 saturation pressure failed for T={T} K.") from exc
@@ -577,12 +589,87 @@ def _saturation_enthalpy(
         raise ValueError("Exactly one of T [K] or p [Pa] must be provided.")
     if T is not None:
         _validate_saturation_temperature(T)
-        return water_steam_props_iapws97(T=T, x=x).h
+        pair = _saturation_enthalpies_at_temperature(T)
+        if pair is not None:
+            return pair[0] if x == 0.0 else pair[1]
+        return _saturation_enthalpy_at_temperature(T, x)
     _validate_saturation_pressure(p)
     if p < WATER_CRITICAL_PRESSURE_PA:
         snapshot = water_saturation_snapshot(p)
         return snapshot.hf if x == 0.0 else snapshot.hg
     return water_steam_props_iapws97(p=p, x=x).h
+
+
+@lru_cache(maxsize=16384)
+def _saturation_enthalpies_at_temperature(T: float) -> tuple[float, float] | None:
+    """Authoritative saturated enthalpies, without unused transport objects.
+
+    Preserve the existing T -> pressure -> saturated-state convention, its
+    unit roundtrip, and IF97's pressure-based region boundary. The library's
+    own Region1/2 equations provide the same enthalpies. No table, temperature
+    rounding or fitted coefficients are involved. Return None outside this
+    fast domain so each requested phase retains its own compatibility call.
+    """
+    try:
+        if T <= 623.15:
+            p_mpa = _pa_to_mpa(water_saturation_pressure(T))
+            if p_mpa <= _if97.Ps_623:
+                saturation_T = _if97._TSat_P(p_mpa)
+                return _region12_saturation_enthalpies(saturation_T, p_mpa)
+        return None
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"IAPWS-IF97 saturation enthalpies failed for T={T} K.") from exc
+
+
+def _region12_saturation_enthalpies(T: float, p_mpa: float) -> tuple[float, float]:
+    """Evaluate only h from the backend's unchanged IF97 Region1/2 equations.
+
+    IF97 equations 7 and 15--17 give h=R*T*tau*gamma_tau. Retain the backend's
+    coefficient arrays, reduction and arithmetic order, omitting unrelated
+    volume, heat-capacity, entropy and speed-of-sound derivatives. This is
+    the same state evaluation, not interpolation or a new caloric model.
+    The caller owns saturation conversion and pressure-based region selection.
+    """
+    coefficients = _if97.Const
+    tau = 1386 / T
+    pi = p_mpa / 16.53
+    gt = _if97.np.sum(
+        coefficients.Region1_n * coefficients.Region1_Lj
+        * (7.1-pi)**coefficients.Region1_Li
+        * (tau-1.222)**coefficients.Region1_Lj_less_1
+    )
+    liquid = float(tau * gt * _if97.R * T) * 1000.0
+    tau = 540 / T
+    got = _if97.np.sum(
+        coefficients.Region2_cp0_no * coefficients.Region2_cp0_Jo
+        * tau**(coefficients.Region2_cp0_Jo-1)
+    )
+    if hasattr(coefficients, 'Region2_n'):
+        # iapws >= 1.5.5 names the residual arrays n, Li and Lj.
+        residual_nj = coefficients.Region2_n * coefficients.Region2_Lj
+        residual_i = coefficients.Region2_Li
+        residual_j_less_1 = coefficients.Region2_Lj_less_1
+    else:
+        # iapws 1.5.4 uses nr, Ir and Jr, including the same precomputed
+        # n*j product used by its authoritative _Region2 implementation.
+        residual_nj = coefficients.Region2_nr_Jr_product
+        residual_i = coefficients.Region2_Ir
+        residual_j_less_1 = coefficients.Region2_Jr_less_1
+    grt = _if97.np.sum(
+        residual_nj * p_mpa**residual_i
+        * (tau-0.5)**residual_j_less_1
+    )
+    vapor = float(tau * (got+grt) * _if97.R * T) * 1000.0
+    return liquid, vapor
+
+
+@lru_cache(maxsize=16384)
+def _saturation_enthalpy_at_temperature(T: float, x: float) -> float:
+    # Preserve quality-specific Region3 pressure/density solves: asking for
+    # liquid enthalpy must not depend on evaluating an unrequested vapor state.
+    return water_steam_props_iapws97(T=T, x=x).h
 
 
 def _validate_saturation_temperature(T: Optional[float]) -> None:

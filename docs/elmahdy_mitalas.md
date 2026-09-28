@@ -2,6 +2,9 @@
 
 Status: isolated source-equation kernel; NOT integrated into Rating/Simulation.
 No process or notebook acceptance is claimed. Release remains on hold.
+The separate [production adaptation](elmahdy_mitalas_production.md) records the
+approved source-profile moisture closure, coupled drain equations and adapters.
+This page describes the frozen reference and its historical verification limits.
 
 ## Authority and licensing
 
