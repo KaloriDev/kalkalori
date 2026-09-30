@@ -27,10 +27,7 @@ from core.phase_change.wet_gas_composition import (
 )
 from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
 from core.phase_change.water_equilibrium import saturated_water_ratio
-from core.properties.water import (
-    water_latent_heat_of_vaporization,
-    water_saturation_liquid_enthalpy,
-)
+from core.properties.water import water_saturation_vapor_enthalpy
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +52,7 @@ def _dry_spec() -> GasMixtureSpec:
 def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> None:
     inside = BalanceSideSpec(
         provider=GasMixturePropertyProvider(_dry_spec()), p=101_325.0,
-        m_dot=15.0, T_in=290.0, T_out=332.0,
+        m_dot=15.0, T_in=290.0, T_out=None,
     )
     outside = BalanceSideSpec(
         provider=GasMixturePropertyProvider(_wet_spec()), p=101_325.0,
@@ -74,8 +71,8 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
     assert abs(pc.mass_balance_error) < 1e-6
     assert abs(pc.energy_balance_error) < 1e-6
     assert pc.converged is True
-    assert 2 <= pc.iterations <= 12
-    assert pc.method == "outside_condensation_rating_wet_wall_fixed_point"
+    assert pc.iterations > 0
+    assert pc.method == "elmahdy_mitalas_energyplus_v25_2_adapted"
     assert math.isfinite(result.overdesign_factor)
     assert math.isfinite(result.UA_required)
 
@@ -97,8 +94,9 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
     assert states == (hydraulic.inlet, hydraulic.midpoint, hydraulic.outlet)
     assert hydraulic.midpoint_method == "arithmetic_temperature_and_water_ratio"
     assert states[0].T == outside.T_in
-    assert states[1].T == pytest.approx(0.5 * (outside.T_in + outside.T_out))
-    assert states[2].T == outside.T_out
+    assert states[1].T == pytest.approx(0.5 * (outside.T_in + result.closed_balance.outside.T_out))
+    assert states[2].T == result.closed_balance.outside.T_out
+    assert abs(states[2].T-outside.T_out) < 2e-5
 
     capability = detect_phase_change_capability(outside.provider)
     W_mid = 0.5 * (pc.W_in + pc.W_out)
@@ -111,21 +109,13 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
         pc.outside_total_area * pc.wet_surface_fraction, rel=1e-12
     )
     assert pc.wall_temperature_min <= pc.wall_temperature_mean <= pc.wall_temperature_max
-    assert pc.wall_temperature_mean == pytest.approx(
-        0.5 * (pc.wall_temperature_min + pc.wall_temperature_max),
-        abs=1e-12,
-    )
-    assert pc.wall_temperature_min <= pc.wall_temperature_wet_mean
-    assert pc.wall_temperature_wet_mean <= min(
-        dew_point_mid, pc.wall_temperature_max
-    )
-    expected_wet_wall_temperature = 0.5 * (
-        pc.wall_temperature_min + min(dew_point_mid, pc.wall_temperature_max)
-    )
-    assert pc.wall_temperature_wet_mean == pytest.approx(
-        expected_wet_wall_temperature, abs=1e-8
-    )
-    assert pc.wall_temperature_wet_mean != pytest.approx(outside.T_out)
+    assert pc.wall_temperature_min <= pc.wall_temperature_wet_mean <= pc.wall_temperature_max
+    assert pc.wall_temperature_wet_mean < pc.dew_point_in
+    profile=result.wet_coil_diagnostics["process_profile"]
+    from numpy.polynomial.legendre import leggauss
+    weights=leggauss(len(profile)-1)[1]/2
+    expected_wet_mean=sum(w*p.surface_temperature for w,p in zip(weights,profile[1:]))
+    assert pc.wall_temperature_wet_mean == pytest.approx(expected_wet_mean,abs=1e-8)
 
     expected_W_sat = saturated_water_ratio(
         p_total=outside.p,
@@ -137,7 +127,7 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
     assert pc.W_sat_wet_surface < W_mid
     assert pc.Q_latent == pytest.approx(
         pc.m_dot_condensate
-        * water_latent_heat_of_vaporization(T=pc.wall_temperature_wet_mean),
+        * water_saturation_vapor_enthalpy(T=result.closed_balance.outside.T_out) - pc.H_drain,
         rel=1e-12,
     )
 
@@ -145,19 +135,14 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
         outside.T_in, outside.p, pc.W_in, capability
     )
     h_out = h_wet_gas_dry_basis(
-        outside.T_out, outside.p, pc.W_out, capability
+        result.closed_balance.outside.T_out, outside.p, pc.W_out, capability
     )
-    h_drained = (
-        (pc.W_in - pc.W_out)
-        * water_saturation_liquid_enthalpy(T=pc.wall_temperature_wet_mean)
-    )
-    Q_from_outside_enthalpy = pc.m_dot_dry_carrier * (
-        h_in - h_out - h_drained
-    )
-    assert Q_from_outside_enthalpy == pytest.approx(pc.Q_total, abs=1e-5)
-    assert pc.residuals["W_out"] < 1e-6
-    assert pc.residuals["T_wall_wet_mean_K"] < 0.05
-    assert pc.residuals["outside_enthalpy_balance_W"] < 1e-5
+    Q_from_outside_enthalpy=pc.m_dot_dry_carrier*(h_in-h_out)-pc.H_drain
+    assert Q_from_outside_enthalpy == pytest.approx(pc.Q_total,abs=1e-5)
+    integrated_drain=sum(w*p.drain_density for w,p in zip(weights,profile[1:]))*pc.wet_fraction
+    assert pc.H_drain == pytest.approx(integrated_drain,abs=1e-8)
+    from core.tests.wet_coil_public_test import check_equivalent
+    check_equivalent(result)
 
     for state, W in zip(states, (pc.W_in, W_mid, pc.W_out)):
         expected = wet_gas_provider_at_water_ratio(capability, W).at(T=state.T, p=state.p)

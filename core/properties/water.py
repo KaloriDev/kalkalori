@@ -665,6 +665,67 @@ def _region12_saturation_enthalpies(T: float, p_mpa: float) -> tuple[float, floa
     return liquid, vapor
 
 
+def _saturation_enthalpy_pairs_batch(temperatures):
+    """Exact IF97 queries grouped along a batch axis, without interpolation.
+
+    The scalar API is unchanged. Keep each temperature/pressure roundtrip,
+    backend coefficient order and row reduction identical to the scalar
+    Region1/2 path. Other regions retain their existing scalar evaluations.
+    This private helper serves repeated radial quadrature property queries.
+    """
+    np = _if97.np
+    temperatures = tuple(temperatures)
+    result = [None] * len(temperatures)
+    indices, pressures, saturation_temperatures = [], [], []
+    for index, value in enumerate(temperatures):
+        _validate_saturation_temperature(value)
+        if value <= 623.15:
+            pressure = _pa_to_mpa(water_saturation_pressure(value))
+            if pressure <= _if97.Ps_623:
+                indices.append(index)
+                pressures.append(pressure)
+                saturation_temperatures.append(_if97._TSat_P(pressure))
+                continue
+        result[index] = (
+            water_saturation_liquid_enthalpy(T=value),
+            water_saturation_vapor_enthalpy(T=value),
+        )
+    if indices:
+        pressure = np.asarray(pressures)[:, None]
+        temperature = np.asarray(saturation_temperatures)[:, None]
+        coefficients = _if97.Const
+        tau = 1386 / temperature
+        pi = pressure / 16.53
+        gt = np.sum(
+            coefficients.Region1_n * coefficients.Region1_Lj
+            * (7.1 - pi)**coefficients.Region1_Li
+            * (tau - 1.222)**coefficients.Region1_Lj_less_1,
+            axis=1,
+        )
+        liquid = tau[:, 0] * gt * _if97.R * temperature[:, 0] * 1000.0
+        tau = 540 / temperature
+        got = np.sum(
+            coefficients.Region2_cp0_no * coefficients.Region2_cp0_Jo
+            * tau**(coefficients.Region2_cp0_Jo - 1), axis=1,
+        )
+        if hasattr(coefficients, "Region2_n"):
+            residual_nj = coefficients.Region2_n * coefficients.Region2_Lj
+            residual_i = coefficients.Region2_Li
+            residual_j_less_1 = coefficients.Region2_Lj_less_1
+        else:
+            residual_nj = coefficients.Region2_nr_Jr_product
+            residual_i = coefficients.Region2_Ir
+            residual_j_less_1 = coefficients.Region2_Jr_less_1
+        grt = np.sum(
+            residual_nj * pressure**residual_i
+            * (tau - 0.5)**residual_j_less_1, axis=1,
+        )
+        vapor = tau[:, 0] * (got + grt) * _if97.R * temperature[:, 0] * 1000.0
+        for index, hf, hg in zip(indices, liquid, vapor):
+            result[index] = (float(hf), float(hg))
+    return tuple(result)
+
+
 @lru_cache(maxsize=16384)
 def _saturation_enthalpy_at_temperature(T: float, x: float) -> float:
     # Preserve quality-specific Region3 pressure/density solves: asking for

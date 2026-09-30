@@ -29,6 +29,9 @@ class AnnularResponse:
     wet_area: float
     energy_residual: float
     iterations: int
+    surface_temperature_area_mean: float
+    heat_sensible: float
+    wet_temperature_area_integral: float
 
 
 def annular_response(
@@ -94,7 +97,7 @@ def annular_response(
             elif dew is not None and T[i] < dew:
                 ws, hl, hfg = props.values(T[i])
                 m = alpha / cp_dry * (humidity - ws) * area
-                loads.append([m, m * hfg, m * hl, m * T[i], m * ws])
+                loads.append([m, m * hfg, m * hl, m * T[i], m * ws, area * T[i]])
                 wet += area
                 if derivatives:
                     dw, dl, dh = props.derivatives(T[i])
@@ -103,7 +106,7 @@ def annular_response(
                 else:
                     jac.append({})
             else:
-                loads.append([0.0] * 5)
+                loads.append([0.0] * 6)
                 jac.append({})
         residual = []
         lo = list(lower)
@@ -151,6 +154,12 @@ def annular_response(
                 wet,
                 fsum(residual),
                 iteration + 1,
+                fsum(A * T for A, T in zip(areas, temperatures)) / fsum(areas),
+                fsum(
+                    alpha * A * (gas_temperature - T)
+                    for A, T in zip(areas, temperatures)
+                ),
+                fsum(v[5] for v in loads),
             )
         delta = _solve_tridiagonal(lo, dd, up, [-v for v in residual])
         damping = 1.0

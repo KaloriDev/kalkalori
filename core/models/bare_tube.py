@@ -1376,6 +1376,18 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
 
+        from core.phase_change.wet_coil_integration import route_outside_wet
+        wet_result = route_outside_wet(
+            self, inside, outside, mode="simulation", settings=settings,
+            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            surface_margin=surface_margin, iterate=iterate,
+            flow_arrangement=flow_arrangement, euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+        if wet_result is not None:
+            return wet_result
+
         guarded_inside_provider = guard_pure_water_single_phase_provider(
             inside.provider, T_in=inside.T_in, p=inside.p
         )
@@ -1563,6 +1575,19 @@ class BareTubeHeatExchanger:
         reject_outside_pure_water_evaporation_rating(
             outside, inside, Q=Q
         )
+        from core.phase_change.wet_coil_integration import route_outside_wet
+        wet_result = route_outside_wet(
+            self, inside, outside, mode="rating", settings=settings,
+            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            Q=Q, effectiveness=effectiveness, include_simulation=include_simulation,
+            over_specified_tolerance=over_specified_tolerance,
+            flow_arrangement=flow_arrangement, euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+        if wet_result is not None:
+            return wet_result
+
         if is_inside_water_evaporation_rating_case(
             inside,
             outside,

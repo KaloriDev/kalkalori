@@ -20,6 +20,7 @@ from core.phase_change.water_equilibrium import (
     water_mole_fraction_from_ratio,
 )
 from core.properties.water import (
+    _saturation_enthalpy_pairs_batch,
     WATER_CRITICAL_TEMPERATURE_K,
     WATER_TRIPLE_POINT_TEMPERATURE_K,
     water_latent_heat_of_vaporization,
@@ -94,6 +95,38 @@ class SurfaceProperties:
             )
         return self._values[T]
 
+    def prefetch(self, temperatures, *, with_derivatives):
+        """Group only exact, uncached quadrature/derivative temperatures."""
+        requested = dict.fromkeys(temperatures)
+        if with_derivatives:
+            step = 1e-4
+            for T in temperatures:
+                if T - step < WATER_TRIPLE_POINT_TEMPERATURE_K:
+                    points = (T + step, T + 2 * step)
+                elif T + step >= WATER_CRITICAL_TEMPERATURE_K:
+                    points = (T - step, T - 2 * step)
+                else:
+                    points = (T - step, T + step)
+                requested.update(dict.fromkeys(points))
+        ready, humidity = [], []
+        for T in requested:
+            if T in self._values:
+                continue
+            try:
+                sigma = saturated_water_ratio(
+                    p_total=self.p, T=T, M_dry=self.md, M_h2o=self.mw
+                )
+            except ValueError as exc:
+                if "no saturated gas-phase state exists" not in str(exc):
+                    raise
+                self._values[T] = (math.inf, 0.0, 0.0)
+                continue
+            ready.append(T)
+            humidity.append(sigma)
+        pairs = _saturation_enthalpy_pairs_batch(ready)
+        for T, sigma, (hf, hg) in zip(ready, humidity, pairs):
+            self._values[T] = (sigma, hf, hg - hf)
+
     def derivatives(self, T):
         step = 1e-4
         if T - step < WATER_TRIPLE_POINT_TEMPERATURE_K:
@@ -136,11 +169,11 @@ def integrate_face_piece(
 ):
     """Integrals and derivatives with respect to two radial endpoint nodes.
 
-    Values are mass, latent, drain, mass*temperature and mass*saturation.
+    Values are mass, latent, drain, mass*temperature, mass*saturation and wet-area*temperature.
     Jacobian rows are mass, latent and drain; columns are the two temperatures.
     ``slope`` includes the actual taper and geometric fin-area replication.
     """
-    values = [0.0] * 5
+    values = [0.0] * 6
     jacobian = [[0.0, 0.0] for _ in range(3)]
     if dew is None or fraction == 0:
         return values, jacobian, 0.0
@@ -159,11 +192,17 @@ def integrate_face_piece(
     if hi <= lo:
         return values, jacobian, 0.0
     points, weights = _GAUSS[order]
+    samples = []
     for point, weight in zip(points, weights):
         r = (hi + lo) / 2 + point * (hi - lo) / 2
         right_shape = (r - r_left) / dr
         shapes = (1 - right_shape, right_shape)
         T = T_left + right_shape * dt + offset
+        samples.append((r, shapes, T, weight))
+    prefetch = getattr(properties, "prefetch", None)
+    if prefetch is not None:
+        prefetch([sample[2] for sample in samples], with_derivatives=with_derivatives)
+    for r, shapes, T, weight in samples:
         sigma, hl, hfg = properties.values(T)
         driving = W - sigma
         if driving <= 0:
@@ -171,7 +210,7 @@ def integrate_face_piece(
         measure = 4 * math.pi * r * slope * weight * (hi - lo) / 2 * fraction
         mass = km * driving
         for k, value in enumerate(
-            (mass, mass * hfg, mass * hl, mass * T, mass * sigma)
+            (mass, mass * hfg, mass * hl, mass * T, mass * sigma, T)
         ):
             values[k] += measure * value
         if with_derivatives:
@@ -226,7 +265,7 @@ def integrate_fin_cells(
         factor = chain.surface_areas[index] / (
             2 * math.pi * (east * east - west * west)
         )
-        values = [0.0] * 5
+        values = [0.0] * 6
         derivatives = {}
         wet_area = 0.0
         for left, a, b in ((k, west, radii[k + 1]), (k + 1, radii[k + 1], east)):

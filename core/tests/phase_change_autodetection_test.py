@@ -88,7 +88,7 @@ def test_dry_provider_has_no_capability_and_matches_sensible_only() -> None:
 # ---------------------------------------------------------------------------
 # Wet gas, capable, but the dry baseline never reaches the dew point.
 # ---------------------------------------------------------------------------
-def test_wet_gas_capable_but_no_condensation_matches_sensible_only() -> None:
+def test_wet_gas_capable_but_no_condensation_uses_production_dry_closure() -> None:
     from core.models.simulation import run_simulation
 
     hx = _hx()
@@ -103,9 +103,22 @@ def test_wet_gas_capable_but_no_condensation_matches_sensible_only() -> None:
     assert pc.active is False
     assert pc.m_dot_condensate == 0.0
     assert pc.Q_latent == 0.0
-    assert result.q == expected.q
-    assert result.T_out_inside == expected.T_out_inside
-    assert result.T_out_outside == expected.T_out_outside
+    # Approved AUTO contract: capable dry gas retains the production caloric
+    # closure. DISABLED alone retains the legacy dry operating point.
+    from dataclasses import replace
+    from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
+    disabled=hx.simulate(inside,replace(outside,phase_change_mode=PhaseChangeMode.DISABLED))
+    assert disabled.q == expected.q
+    assert disabled.T_out_inside == expected.T_out_inside
+    assert disabled.T_out_outside == expected.T_out_outside
+    assert pc.regime == "DRY"
+    assert result.ua_is_equivalent
+    assert result.q != expected.q
+    cap=detect_phase_change_capability(outside.provider)
+    gas=pc.m_dot_dry_carrier*(
+        h_wet_gas_dry_basis(outside.T_in,outside.p,pc.W_in,cap)
+        -h_wet_gas_dry_basis(result.T_out_outside,outside.p,pc.W_out,cap))
+    assert gas == pytest.approx(result.q,abs=1e-6)
 
     # Fix (v0.7.5 patch, spec section 6): capable-but-inactive AUTO must
     # still expose the real sensible duty on both sides.

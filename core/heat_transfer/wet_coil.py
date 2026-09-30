@@ -65,6 +65,25 @@ def _exprel(z):
     return expm1(z) / z
 
 
+def _profile_derivative(function, temperature):
+    """Fourth-order property derivative without small-step datum cancellation.
+
+    The stencil changes numerical evaluation only, not the source-profile
+    moisture law. Halving keeps probes inside a callback's property domain;
+    failure at every step is propagated rather than accepting a derivative.
+    """
+    step = 0.02
+    for attempt in range(8):
+        try:
+            near = function(temperature + step) - function(temperature - step)
+            far = function(temperature + 2 * step) - function(temperature - 2 * step)
+            return (8 * near - far) / (12 * step)
+        except ValueError:
+            if attempt == 7:
+                raise
+            step /= 2
+
+
 class _Region:
     """A wet-region analytic profile and its bounded drain quadrature."""
 
@@ -114,6 +133,9 @@ class _Region:
                 gamma,
             )
             self.poly = cheb.chebfit(nodes, density, order - 1)
+            # Coefficients are fixed for this iterate. Surface points reuse
+            # the same endpoint and local forcing integrals many times.
+            self._forcing_cache = {}
             # Particular solution for a zero homogeneous driving force.
             ih, it = self._forcing(f)
             J = f * _exprel(lam * f)
@@ -205,6 +227,8 @@ class _Region:
         # D'=lambda D+gamma*d. Analytically integrate its exponential kernel.
         if z == 0:
             return 0.0, 0.0
+        if z in self._forcing_cache:
+            return self._forcing_cache[z]
         ss = (self.qnodes + 1) * z / 2
         ds = self._density(ss)
         spans = z - ss
@@ -212,10 +236,12 @@ class _Region:
         intd = float(np.dot(self.qweights, ds) * z / 2)
         intD = self.gamma * float(np.dot(self.qweights, kernels * ds) * z / 2)
         k, ri, b, rw = self.k, self.ri, self.b, self.x.wet_air_resistance
-        return (
+        result = (
             k / self.x.dry_mass_flow * (intD + b * ri * intd),
             k / self.x.liquid_capacity * (intD - rw * intd),
         )
+        self._forcing_cache[z] = result
+        return result
 
     def thermal(self, z):
         md, cw = self.x.dry_mass_flow, self.x.liquid_capacity
@@ -257,27 +283,37 @@ class _Region:
         seff = self.sensible_coordinate(teff)
         sint = self.sensible_coordinate(self.tint)
         gas = self.temperature_from_coordinate(seff + (sint - seff) * bypass)
-        W = x.humidity_at_temperature_enthalpy(gas, h)
-        step = 1e-3
-        hsprime = (
-            x.saturation_enthalpy(teff + step) - x.saturation_enthalpy(teff - step)
-        ) / (2 * step)
+        # Algebraic source-profile moisture construction, anchored at Win.
+        # h(T,W) is affine in W for both supported property formulations.
+        # With F=1-bypass and h_eff=h_sat(T_eff), the unchanged source law is
+        #   Win-W = F * (Win-Wsat(T_eff)) * h_v(T_eff)/h_v(T_gas).
+        # Evaluating this deficit avoids recovering an O(f**2) moisture
+        # change by subtracting large absolute enthalpies at dry onset.
+        # There is no clipping, blending, transport ODE or alternate closure.
+        base_humidity = x.humidity_at_temperature_enthalpy(gas, h)
+        # The humidity inverse is affine in enthalpy. A caloric-scale
+        # interval computes its exact slope without differencing W at a
+        # one-joule perturbation, which causes drain-density roundoff.
+        enthalpy_span = 1e6
+        wh = (
+            x.humidity_at_temperature_enthalpy(gas, h + enthalpy_span) - base_humidity
+        ) / enthalpy_span
+        hs = x.saturation_enthalpy(teff)
+        weff = x.humidity_at_temperature_enthalpy(teff, hs)
+        wh_eff = (
+            x.humidity_at_temperature_enthalpy(teff, hs + enthalpy_span) - weff
+        ) / enthalpy_span
+        W = x.humidity_in - fraction * (x.humidity_in - weff) * wh / wh_eff
+        hsprime = _profile_derivative(x.saturation_enthalpy, teff)
         effprime = (hp / fraction - rate * bypass * dh / fraction**2) / hsprime
-        sp_eff = (
-            self.sensible_coordinate(teff + step)
-            - self.sensible_coordinate(teff - step)
-        ) / (2 * step)
-        sp_gas = (
-            self.sensible_coordinate(gas + step) - self.sensible_coordinate(gas - step)
-        ) / (2 * step)
+        sp_eff = _profile_derivative(self.sensible_coordinate, teff)
+        sp_gas = _profile_derivative(self.sensible_coordinate, gas)
         gasprime = (
             fraction * sp_eff * effprime + rate * bypass * (sint - seff)
         ) / sp_gas
-        wh = x.humidity_at_temperature_enthalpy(gas, h + 1) - W
-        wt = (
-            x.humidity_at_temperature_enthalpy(gas + step, h)
-            - x.humidity_at_temperature_enthalpy(gas - step, h)
-        ) / (2 * step)
+        wt = _profile_derivative(
+            lambda T: x.humidity_at_temperature_enthalpy(T, h), gas
+        )
         j = x.dry_mass_flow * (wh * hp + wt * gasprime)
         hcond = (
             hl(ts)
@@ -387,25 +423,29 @@ def _solve_profile_candidate(
             diagnostics.setdefault("wet_fraction", f)
             raise WetCoilModelError(reason, **diagnostics) from exc
 
-    wet = region(1.0)
-    if wet.hot < x.dewpoint:
+    # One general partial-wet formulation supplies both boundary limits.
+    # The specialized all-wet hot surface is not a complementarity test:
+    # it can cross the dewpoint while a stable interior dry region remains.
+    wet = region(1.0, True)
+    full_interface_margin = wet.interface_surface - x.dewpoint
+    if full_interface_margin <= 0:
         f = 1.0
     else:
-        wet = region(1.0, True)
-        if wet.interface_surface <= x.dewpoint:
-            f = 1.0
-        else:
-            candidates = {}
+        candidates = {}
 
-            def boundary(f):
-                if f == 0:
-                    return margin
-                candidate = region(f, True)
-                candidates[f] = candidate
-                return candidate.interface_surface - x.dewpoint
+        def boundary(f):
+            if f == 0:
+                return margin
+            candidate = region(f, True)
+            candidates[f] = candidate
+            return candidate.interface_surface - x.dewpoint
 
-            f = brentq(boundary, 0.0, 1.0, xtol=2e-10)
-            wet = candidates[f] if f in candidates else region(f, True)
+        # Resolve the physical root relatively near f=0, without an onset
+        # threshold, clipping, or interpolation between different models.
+        fraction_scale = -margin / (full_interface_margin - margin)
+        root_tolerance = max(np.nextafter(0.0, 1.0), min(2e-10, 1e-6 * fraction_scale))
+        f = brentq(boundary, 0.0, 1.0, xtol=root_tolerance)
+        wet = candidates[f] if f in candidates else region(f, True)
     check_nodes, check_weights = leggauss(min(32, 2 * quadrature_order))
     checked = [
         wet.point(float((v + 1) * f / 2), liquid_enthalpy, drain_enabled)
@@ -437,6 +477,9 @@ def _solve_profile_candidate(
     vapor = min(saturation_humidity(p.gas_temperature) - p.humidity for p in sample)
     diagnostics = dict(
         onset_margin=margin,
+        regime_formulation="general_partial_wet_boundary_limits",
+        full_interface_margin=full_interface_margin,
+        interface_margin=wet.interface_surface - x.dewpoint,
         wet_fraction=f,
         condensate=mass,
         min_wet_driving_force=force,

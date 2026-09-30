@@ -211,6 +211,11 @@ class ThermalIterationDiagnostics:
 class IterativeThermalState:
     """Converged (or last-iterate) mean-property / wall-temperature state.
 
+    For eligible outside AUTO, walls sample the native Elmahdy-Mitalas
+    profile, diagnostics retain the actual production correlations, residual
+    is the final property-iteration temperature residual, and U/UA use the
+    explicitly marked equivalent process basis. No legacy dry state is used.
+
     For multi-zone pure steam, ``alfa_i`` is the resistance-consistent
     equivalent HTC used by the 0D wall-temperature approximation.
     """
@@ -263,6 +268,9 @@ class IterativeThermalState:
     outside_alpha_wet_effective_basis: str = ""
     tube_side_enhancement: EnhancementResult | None = None
 
+    ua_reporting_basis: str = "thermal_resistance"
+    ua_is_equivalent: bool = False
+
 
 @dataclass(frozen=True)
 class WallTemperatureProbe:
@@ -312,7 +320,11 @@ class WallTemperatureProbe:
 
 @dataclass(frozen=True)
 class WallTemperatureEnvelope:
-    """Estimated wall-temperature extrema from four independent 0D probes.
+    """Wall-temperature extrema with an explicitly declared sampling method.
+
+    Legacy paths use four independent 0D probes. Eligible outside AUTO uses
+    the native wet/dry process profile and radial fin states; means are
+    axial-area integrals. Neither envelope is an input to the process solve.
 
     ``outside_min``/``outside_max`` keep their historical meaning: the
     extrema of the existing outside/core-wall network node (see

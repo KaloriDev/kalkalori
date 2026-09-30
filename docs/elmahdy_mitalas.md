@@ -1,6 +1,8 @@
 # Elmahdy-Mitalas equation interface (verification stage)
 
-Status: isolated source-equation kernel; NOT integrated into Rating/Simulation.
+This page documents the isolated, frozen source-reference kernel.
+Current production routing is described in the separate
+[Rating/Simulation integration](elmahdy_mitalas_integration.md).
 No process or notebook acceptance is claimed. Release remains on hold.
 The separate [production adaptation](elmahdy_mitalas_production.md) records the
 approved source-profile moisture closure, coupled drain equations and adapters.
@@ -86,7 +88,7 @@ allowance; it must call the eventual SAME forward kernel at every trial.
 Physical required area differs from conductance-equivalent area. Published
 `overdesign_factor=UA_actual/UA_required-1` and `A_required=UA_required/U_mean`
 are not silently redefined. Reference-state conversions, physical area and
-length belong in explicit diagnostics; their final mapping is not yet accepted.
+length belong in explicit diagnostics; their approved mapping is documented in the integration page linked above.
 
 ## Predeclared native comparison tolerances
 

@@ -170,6 +170,11 @@ class HXRatingResult:
     inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
 
+    # Active outside-wet values use a post-solve common process reference.
+    ua_reporting_basis: str = "thermal_resistance"
+    ua_is_equivalent: bool = False
+    wet_coil_diagnostics: dict | None = None
+
     @property
     def UA_process(self) -> float:
         """UA required by the closed, reported Rating process [W/K]."""

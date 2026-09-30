@@ -96,7 +96,7 @@ def test_source_inadmissibility_is_reported_not_clipped(W):
     assert "negative" in d["rejection_reason"]
 
 
-def test_reference_limit_uses_same_region_equations_and_existing_tolerances():
+def test_reference_equations_and_general_production_limit_have_explicit_bases():
     from core.heat_transfer.wet_coil import _solve_profile_candidate, validate_wet_coil
 
     fixture = json.loads(
@@ -115,14 +115,39 @@ def test_reference_limit_uses_same_region_equations_and_existing_tolerances():
             saturation_humidity=ws,
             drain_enabled=False,
         )
-        assert r.heat_liquid == pytest.approx(case["Q_W"], rel=0.002)
-        assert r.air_out == pytest.approx(case["air_out_C"], abs=0.08)
-        assert r.liquid_out == pytest.approx(case["water_out_C"], abs=0.08)
-        assert r.humidity_out == pytest.approx(case["W_out"], abs=4e-5)
-        assert r.condensate == pytest.approx(case["condensate_kg_s"], abs=2e-5)
-        assert r.wet_fraction == pytest.approx(case["wet_fraction"], abs=0.002)
-        assert r.interface_air == pytest.approx(case["interface_air_C"], abs=0.08)
-        assert r.outlet_enthalpy == pytest.approx(reference.outlet_enthalpy, abs=2e-4)
+        if reference.wet_fraction < 1:
+            assert r.heat_liquid == pytest.approx(case["Q_W"], rel=0.002)
+            assert r.air_out == pytest.approx(case["air_out_C"], abs=0.08)
+            assert r.liquid_out == pytest.approx(case["water_out_C"], abs=0.08)
+            assert r.humidity_out == pytest.approx(case["W_out"], abs=4e-5)
+            assert r.condensate == pytest.approx(case["condensate_kg_s"], abs=2e-5)
+            assert r.wet_fraction == pytest.approx(case["wet_fraction"], abs=0.002)
+            assert r.interface_air == pytest.approx(case["interface_air_C"], abs=0.08)
+            assert r.outlet_enthalpy == pytest.approx(reference.outlet_enthalpy, abs=2e-4)
+        else:
+            # 18C: the general f=1 secant is authoritative in production.
+            # Keep the specialized/source solution as an independent oracle,
+            # never as a test-only bypass inside the production solver.
+            specialized = _Region(
+                x, 1.0, lambda T: 4180*T, drain=False, order=10
+            )
+            assert specialized.h0 == pytest.approx(reference.outlet_enthalpy, abs=2e-4)
+            assert reference.heat == pytest.approx(case["Q_W"], rel=0.002)
+            assert reference.air_out == pytest.approx(case["air_out_C"], abs=0.08)
+            assert reference.humidity_out == pytest.approx(case["W_out"], abs=4e-5)
+            assert r.wet_fraction == 1.0
+            assert r.diagnostics["full_interface_margin"] <= 0
+            assert r.heat_gas == pytest.approx(r.heat_liquid, abs=2e-4)
+            assert r.heat_liquid == pytest.approx(
+                x.liquid_capacity*(r.liquid_out-x.liquid_in), abs=2e-4
+            )
+            assert r._region.b == pytest.approx(
+                (x.saturation_enthalpy(x.dewpoint)-x.saturation_enthalpy(r.cold_surface))
+                /(x.dewpoint-r.cold_surface), rel=2e-9
+            )
+            # These pinned full-wet inputs have distinct general/source
+            # saturation secants; treating them as identical hides the change.
+            assert abs(r.heat_liquid-reference.heat) > 1.0
         if r.diagnostics["rejection_reason"]:
             # Source approximations can violate local wet admissibility despite
             # valid-looking outlet endpoints. Production never bypasses it.
@@ -316,7 +341,7 @@ def test_finned_adapter_uses_same_engine_and_radial_drain(humidity, expected):
         abs=0.002,
     )
     assert r.diagnostics["geometry_adapter"] == "CircularFinnedTube"
-    assert r.diagnostics["outside_htc_model"] == "Briggs-Young 1963"
+    assert r.diagnostics["outside_htc_model"] == "briggs_young_1963"
     assert r.diagnostics["radial_drain_enthalpy_iteration_error_J_kg"] < 0.002
     assert r.diagnostics["wet_effective_area"] <= b.total_outer_area
     for p in r.diagnostics["surface_states"]:
@@ -453,3 +478,112 @@ def test_finned_dry_limit_uses_physical_dry_network():
         i.mass_flow * i.enthalpy_difference(280.15, r.liquid_out),
         abs=0.002,
     )
+
+
+def test_interior_partial_root_precedes_specialized_full_surface_criterion():
+    """18C regression: a wet hot surface does not eliminate a stable dry end."""
+    from core.phase_change.capability import detect_phase_change_capability
+    from core.heat_transfer.wet_coil_adapters import WetGasThermodynamics
+    from core.heat_transfer.elmahdy_mitalas import CoilInput
+    from core.tests.wet_finned_simulation_test import _side_inputs
+
+    _, gas = _side_inputs()
+    cap = detect_phase_change_capability(gas.provider)
+    t = WetGasThermodynamics(gas.p, cap)
+    # Fixed constitutive state from the rejected transition, without any
+    # property relaxation or radial-response substitution in production.
+    x = CoilInput(
+        390.0, 280.0, cap.W_in, gas.m_dot/(1+cap.W_in),
+        15193.6264459, 1196.1130676, t.enthalpy(390.0, cap.W_in),
+        t.dewpoint(cap.W_in), 0.000106955707, 0.228264825,
+        lambda T: 6.5631101315e-5,
+        t.saturation_enthalpy, t.saturation_temperature, t.humidity,
+    )
+    kwargs = dict(
+        sensible_coordinate=lambda T: x.air_in+(t.enthalpy(T,x.humidity_in)-x.gas_h_in)/x.gas_cp,
+        temperature_from_coordinate=lambda u: t.temperature(x.gas_h_in+x.gas_cp*(u-x.air_in),x.humidity_in),
+    )
+    def specialized(rw):
+        return _Region(replace(x,wet_air_resistance=rw),1.0,
+                       t.condensate_enthalpy,drain=True,order=10,**kwargs)
+    threshold=brentq(lambda rw:specialized(rw).hot-x.dewpoint,0.20,0.26,xtol=1e-12)
+    reference=specialized(threshold)
+    assert reference.interface_surface-x.dewpoint > 5.0
+    results=[solve_wet_coil(
+        replace(x,wet_air_resistance=threshold*(1+d)),
+        liquid_enthalpy=t.condensate_enthalpy,
+        saturation_humidity=t.saturation_humidity,**kwargs,
+    ) for d in (-1e-7,1e-7)]
+    for r in results:
+        assert r.regime == "PARTIALLY_WET"
+        assert 0.7 < r.wet_fraction < 0.8
+        assert r.diagnostics["interface_margin"] == pytest.approx(0,abs=2e-7)
+        assert r.diagnostics["full_interface_margin"] > 5.0
+    assert results[0].heat_liquid == pytest.approx(results[1].heat_liquid,abs=0.1)
+    assert results[0].air_out == pytest.approx(results[1].air_out,abs=2e-5)
+
+
+def test_large_drain_coupled_profile_preserves_extensive_scaling():
+    """MW-scale drainage must converge at the same absolute balance gates."""
+    from core.heat_transfer.elmahdy_mitalas import CoilInput
+
+    _, thermo, _ = production_context()
+    ta, tw, humidity = 370.0, 293.0, 0.12
+    cp = thermo.secant_cp(ta, thermo.dewpoint(humidity), humidity)
+    h_in = thermo.enthalpy(ta, humidity)
+    results = []
+    for scale in (1.0, 50.0):
+        x = CoilInput(
+            ta, tw, humidity, scale, 1440.0 * scale, cp, h_in,
+            thermo.dewpoint(humidity), 0.00014 / scale, 0.4 / scale,
+            lambda T: 0.000085 / scale,
+            thermo.saturation_enthalpy, thermo.saturation_temperature,
+            thermo.humidity,
+        )
+        r = solve_wet_coil(
+            x, liquid_enthalpy=thermo.condensate_enthalpy,
+            saturation_humidity=thermo.saturation_humidity,
+            sensible_coordinate=lambda T: ta + (thermo.enthalpy(T, humidity) - h_in) / cp,
+            temperature_from_coordinate=lambda u: thermo.temperature(h_in + cp * (u - ta), humidity),
+        )
+        assert abs(scale * (h_in - thermo.enthalpy(r.air_out, r.humidity_out))
+                   - x.liquid_capacity * (r.liquid_out - tw) - r.drain_enthalpy) < 2e-4
+        assert abs(r.diagnostics["mass_residual"]) < 2e-10
+        results.append(r)
+    small, large = results
+    assert large.regime == small.regime
+    assert large.heat_liquid == pytest.approx(50 * small.heat_liquid, abs=2e-4)
+    assert large.drain_enthalpy == pytest.approx(50 * small.drain_enthalpy, abs=2e-4)
+    assert large.condensate == pytest.approx(50 * small.condensate, abs=2e-10)
+    assert large.air_out == pytest.approx(small.air_out, abs=2e-7)
+    assert large.humidity_out == pytest.approx(small.humidity_out, abs=2e-10)
+
+
+def test_refined_finned_profile_matches_fresh_solve_on_same_quadrature():
+    """Refinement's initial guess must not change the accepted physical state."""
+    from core.heat_transfer.wet_coil_adapters import solve_production_coil
+
+    bundle, thermo, inside = production_context(finned=True)
+    # A large bank exposes absolute whole-coil drain quadrature error while
+    # retaining the same tube/fin construction and radial discretization.
+    bundle = replace(bundle, n_tubes_per_row=100 * bundle.n_tubes_per_row)
+    inside = replace(inside, bundle=bundle, mass_flow=100 * inside.mass_flow)
+    arguments = dict(
+        bundle=bundle, thermodynamics=thermo, inside=inside,
+        air_in=300.15, liquid_in=280.15, humidity_in=0.016, dry_mass_flow=50.0,
+    )
+    refined = solve_production_coil(**arguments, quadrature_order=6)
+    order = refined.diagnostics["quadrature_order"]
+    assert order > 6  # This physical case actually exercises refinement.
+    fresh = solve_production_coil(**arguments, quadrature_order=order)
+    assert refined.regime == fresh.regime
+    for name, tolerance in (
+        ("heat_liquid", 0.002), ("drain_enthalpy", 2e-4),
+        ("air_out", 2e-7), ("liquid_out", 2e-7),
+        ("humidity_out", 2e-10), ("condensate", 2e-10),
+        ("wet_fraction", 2e-8),
+    ):
+        assert getattr(refined, name) == pytest.approx(getattr(fresh, name), abs=tolerance, rel=0)
+    for result in (refined, fresh):
+        assert abs(result.diagnostics["independent_radial_drain_integral_error_W"]) < 2e-4
+        assert abs(result.diagnostics["mass_residual"]) < 2e-10

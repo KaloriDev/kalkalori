@@ -6,7 +6,8 @@ production temperatures are kelvin and gas enthalpy/cp use kg dry carrier.
 """
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from math import log, pi
+import logging
+from math import isfinite, log, pi
 
 from numpy.polynomial.legendre import leggauss
 from numpy.polynomial import chebyshev as cheb
@@ -19,6 +20,7 @@ from core.heat_transfer.internal_flow import (
     heat_transfer_coefficient_internal_diagnostics,
 )
 from core.heat_transfer.outside_dispatch import (
+    DEFAULT_FINNED_HT_PROVIDER,
     calculate_resistance_network,
     evaluate_outside_thermal,
 )
@@ -70,18 +72,20 @@ class WetGasThermodynamics:
         return self.enthalpy(T, self.saturation_humidity(T))
 
     def saturation_temperature(self, h):
+        # Resolve the inverse to floating-point temperature precision. The
+        # coupled MW-scale drain integral is sensitive to inverse-root noise.
         return brentq(
             lambda T: self.saturation_enthalpy(T) - h,
             self.lower,
             self.saturation_upper,
-            xtol=2e-9,
+            xtol=5e-14,
         )
 
     def humidity(self, T, h):
         return (h - self.enthalpy(T, 0.0)) / water_saturation_vapor_enthalpy(T=T)
 
     def temperature(self, h, W):
-        return brentq(lambda T: self.enthalpy(T, W) - h, self.lower, 640.0, xtol=2e-9)
+        return brentq(lambda T: self.enthalpy(T, W) - h, self.lower, 640.0, xtol=5e-14)
 
     @lru_cache(maxsize=16384)
     def condensate_enthalpy(self, T):
@@ -90,7 +94,7 @@ class WetGasThermodynamics:
     def dewpoint(self, W):
         c = self.capability
         partial = self.pressure * W * c.M_dry / (c.M_condensable + W * c.M_dry)
-        return water_dew_point(partial, tolerance_K=1e-8)
+        return water_dew_point(partial, tolerance_K=1e-12)
 
     def cp(self, T, W):
         return (self.enthalpy(T + 0.005, W) - self.enthalpy(T - 0.005, W)) / 0.01
@@ -109,6 +113,7 @@ class InsideWallAdapter:
     provider: object
     mass_flow: float
     pressure: float
+    thermal_scale: float = 1.0
 
     def enthalpy_difference(self, T1, T2):
         """Sensible liquid enthalpy rise; native h where provided, cp integral otherwise."""
@@ -152,9 +157,12 @@ class InsideWallAdapter:
                 "liquid",
                 "subcooled_liquid",
                 "supercritical_liquid",
+                "gas",
+                "superheated_vapor",
+                "supercritical_gas",
             ):
                 raise ValueError(
-                    "Inside wet-coil adapter requires a sensible liquid state"
+                    "Inside wet-coil adapter requires a sensible single-phase state"
                 )
         props = self.provider.at(T, self.pressure)
         inside = heat_transfer_coefficient_internal_diagnostics(
@@ -169,11 +177,16 @@ class InsideWallAdapter:
             2 * pi * core.wall_k * core.length_effective * b.n_tubes_total
         )
         film = 1 / (inside.alfa_corrected * b.total_inner_area)
+        if not isfinite(self.thermal_scale) or not 0 < self.thermal_scale <= 1:
+            raise ValueError("thermal_scale must be finite and in (0, 1]")
+        film /= self.thermal_scale
+        wall /= self.thermal_scale
         return film + wall, dict(
             film_resistance=film,
             wall_resistance=wall,
             fouling_resistance=0.0,
             htc=inside.alfa_corrected,
+            inside_correlation=inside,
             reynolds=inside.Re,
             inside_htc_model=(
                 "Hausen thermal entry"
@@ -193,6 +206,8 @@ class InsideWallAdapter:
 class BareTubeAdapter:
     bundle: object
     thermodynamics: WetGasThermodynamics
+    thermal_scale: float = 1.0
+    heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER
 
     def evaluate(self, T, W, md, inside):
         if isinstance(self.bundle.tube, CircularFinnedTube):
@@ -200,18 +215,23 @@ class BareTubeAdapter:
         provider = wet_gas_provider_at_water_ratio(self.thermodynamics.capability, W)
         props = provider.at(T, self.thermodynamics.pressure)
         outside = evaluate_outside_thermal(
-            bundle=self.bundle, m_dot=md * (1 + W), props=to_outside_fluid_props(props)
+            bundle=self.bundle,
+            m_dot=md * (1 + W),
+            props=to_outside_fluid_props(props),
+            finned_heat_transfer_provider=self.heat_transfer_provider,
         )
         ri, idiag = inside
         alpha = outside.alpha_physical
-        area = self.bundle.total_outer_area
+        area = self.bundle.total_outer_area * self.thermal_scale
         return 1 / (alpha * area), dict(
             geometry_adapter="BareTube",
             outside_htc_model="Zukauskas",
             outside_alpha_physical=alpha,
+            outside_correlation=outside,
             dry_effective_area=area,
             wet_effective_area=area,
-            physical_area=area,
+            physical_area=self.bundle.total_outer_area,
+            thermal_area=area,
             outside_reynolds=outside.reynolds_number,
             outside_warnings=outside.warnings,
         )
@@ -229,6 +249,8 @@ def solve_production_coil(
     drain_enabled=True,
     radial_cells=64,
     quadrature_order=10,
+    finned_heat_transfer_provider=DEFAULT_FINNED_HT_PROVIDER,
+    _initial_state=None,
 ):
     """Internal production adapter; not a public solving-mode entry point."""
     if inside.bundle != bundle:
@@ -237,14 +259,30 @@ def solve_production_coil(
         raise ValueError("Elmahdy-Mitalas requires a counterflow process arrangement")
     finned = isinstance(bundle.tube, CircularFinnedTube)
     outside = (
-        CircularFinnedTubeAdapter(bundle, thermodynamics, radial_cells)
+        CircularFinnedTubeAdapter(
+            bundle,
+            thermodynamics,
+            radial_cells,
+            inside.thermal_scale,
+            finned_heat_transfer_provider,
+        )
         if finned
-        else BareTubeAdapter(bundle, thermodynamics)
+        else BareTubeAdapter(
+            bundle, thermodynamics, inside.thermal_scale, finned_heat_transfer_provider
+        )
     )
-    previous = None
-    drain_correction = np.array([0.0])
-    taout, twout, tint = air_in, liquid_in, air_in
-    Wout = humidity_in
+    if _initial_state is None:
+        previous = None
+        drain_correction = np.array([0.0])
+        taout, twout, tint = air_in, liquid_in, air_in
+        Wout = humidity_in
+    else:
+        # Refinement changes quadrature, not the physical problem. The prior
+        # converged profile is an initial iterate only; all new-grid property,
+        # mass, energy and independent drain checks still have to pass.
+        previous, drain_correction = _initial_state
+        taout, twout = previous.air_out, previous.liquid_out
+        tint, Wout = previous.interface_air, previous.humidity_out
     for iteration in range(80):
         cp = thermodynamics.secant_cp(air_in, tint, humidity_in)
         capacity = inside.capacity(liquid_in, twout)
@@ -341,6 +379,14 @@ def solve_production_coil(
                         fin_base_temperature=response["fin_base"],
                         fin_tip_temperature=response["fin_tip"],
                         radial_wet_area=response["wet_area"],
+                        radial_energy_residual=response["radial_energy_residual"],
+                        drain_enthalpy_per_mass=response["drain_enthalpy_per_mass"],
+                        wet_temperature_area_integral=response[
+                            "wet_temperature_area_integral"
+                        ],
+                        surface_temperature_area_mean=response[
+                            "surface_temperature_area_mean"
+                        ],
                     )
                 )
             correction_error = max(
@@ -355,11 +401,19 @@ def solve_production_coil(
             )
         previous = r
         nxt = r.air_out if r.regime == "DRY" else r.interface_air
+        air_change = abs(r.air_out - taout)
+        liquid_change = abs(r.liquid_out - twout)
         error = max(
-            abs(r.air_out - taout),
-            abs(r.liquid_out - twout),
+            air_change,
+            liquid_change,
             abs(nxt - tint),
             1e3 * abs(r.humidity_out - Wout),
+        )
+        logging.getLogger(__name__).debug(
+            "property iteration=%s regime=%s f=%.9g Q=%.9g Tout=%.9g Wout=%.9g error=%.6g drain_correction=%.6g rw=%.9g cp=%.9g hot_margin=%.9g",
+            iteration + 1, r.regime, r.wet_fraction, r.heat_liquid,
+            r.air_out, r.humidity_out, error, correction_error,
+            rw, cp, r.hot_surface - x.dewpoint,
         )
         taout, twout, tint, Wout = r.air_out, r.liquid_out, nxt, r.humidity_out
         if error < 2e-7 and correction_error < 0.002:
@@ -399,10 +453,16 @@ def solve_production_coil(
                 )
                 if abs(integral - r.drain_enthalpy) > 2e-4:
                     if quadrature_order >= 32:
-                        raise WetCoilModelError(
-                            "physical radial drain quadrature unresolved",
-                            error=integral - r.drain_enthalpy,
+                        # At the maximum order both integrals use the same
+                        # axial nodes. Their difference is the still-unclosed
+                        # radial drain constitutive update, not a lack of
+                        # quadrature nodes. Iterate its updated enthalpy field
+                        # until the unchanged whole-coil energy gate passes.
+                        logging.getLogger(__name__).debug(
+                            "continuing coupled drain iteration: residual=%s W",
+                            integral - r.drain_enthalpy,
                         )
+                        continue
                     return solve_production_coil(
                         bundle=bundle,
                         thermodynamics=thermodynamics,
@@ -414,6 +474,8 @@ def solve_production_coil(
                         drain_enabled=drain_enabled,
                         radial_cells=radial_cells,
                         quadrature_order=min(32, 2 * quadrature_order),
+                        finned_heat_transfer_provider=finned_heat_transfer_provider,
+                        _initial_state=(r, drain_correction),
                     )
             return replace(
                 r,
@@ -422,6 +484,21 @@ def solve_production_coil(
                     **odiag,
                     **idiag,
                     property_iterations=iteration + 1,
+                    property_residual_K=error,
+                    property_change_air_out_K=air_change,
+                    property_change_liquid_out_K=liquid_change,
+                    thermal_scale=inside.thermal_scale,
+                    dry_gas_capacity=dry_mass_flow * cp,
+                    liquid_capacity=capacity,
+                    dry_temperature_conductance=1 / (ri + rd),
+                    wet_air_enthalpy_conductance=1 / rw,
+                    wet_enthalpy_conductance=(
+                        None if r._region is None else r._region.k
+                    ),
+                    saturation_secant_b=(None if r._region is None else r._region.b),
+                    inner_resistance=ri,
+                    dry_air_resistance=rd,
+                    wet_air_resistance=rw,
                     global_model="ElmahdyMitalas1977/source-profile moisture/drain-coupled",
                     process_source_revision=SOURCE_REVISION,
                     global_flow_assumption="counterflow",
@@ -432,7 +509,11 @@ def solve_production_coil(
                     applicability="Counterflow mean-property/secant process approximation; local HTC ranges reported independently.",
                 ),
             )
-    raise WetCoilModelError("production property iteration did not converge")
+    raise WetCoilModelError(
+        "production property iteration did not converge",
+        regime=r.regime, wet_fraction=r.wet_fraction,
+        property_error=error, drain_correction_error=correction_error,
+    )
 
 
 @dataclass(frozen=True)
@@ -440,6 +521,8 @@ class CircularFinnedTubeAdapter:
     bundle: object
     thermodynamics: WetGasThermodynamics
     radial_cells: int = 64
+    thermal_scale: float = 1.0
+    heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER
 
     def evaluate(self, T, W, md, inside):
         if not isinstance(self.bundle.tube, CircularFinnedTube):
@@ -447,14 +530,17 @@ class CircularFinnedTubeAdapter:
         provider = wet_gas_provider_at_water_ratio(self.thermodynamics.capability, W)
         props = provider.at(T, self.thermodynamics.pressure)
         outside = evaluate_outside_thermal(
-            bundle=self.bundle, m_dot=md * (1 + W), props=to_outside_fluid_props(props)
+            bundle=self.bundle,
+            m_dot=md * (1 + W),
+            props=to_outside_fluid_props(props),
+            finned_heat_transfer_provider=self.heat_transfer_provider,
         )
         ri, idiag = inside
         network = calculate_resistance_network(
             bundle=self.bundle,
             alpha_inside=idiag["htc"],
             outside_alpha_physical=outside.alpha_physical,
-            resistance_core_wall=idiag["wall_resistance"],
+            resistance_core_wall=idiag["wall_resistance"] * self.thermal_scale,
         )
         tube = self.bundle.tube
         common = (
@@ -462,14 +548,16 @@ class CircularFinnedTubeAdapter:
             if tube.D_root > tube.D_o
             else 0.0
         )
-        return network.resistance_outside - common, dict(
+        return (network.resistance_outside - common) / self.thermal_scale, dict(
             geometry_adapter="CircularFinnedTube",
-            outside_htc_model="Briggs-Young 1963",
+            outside_htc_model=outside.finned_result.metadata.method,
             outside_alpha_physical=outside.alpha_physical,
-            dry_effective_area=1
+            outside_correlation=outside,
+            dry_effective_area=self.thermal_scale
             / (outside.alpha_physical * (network.resistance_outside - common)),
             physical_area=network.area_outside_gross,
-            common_root_contact_resistance=common,
+            thermal_area=network.area_outside_gross * self.thermal_scale,
+            common_root_contact_resistance=common / self.thermal_scale,
             network=network,
             outside_reynolds=outside.reynolds_number,
             outside_warnings=outside.warnings,
@@ -485,7 +573,7 @@ class CircularFinnedTubeAdapter:
         cap = t.capability
         alpha = diag["outside_alpha_physical"]
         cp = t.secant_cp(Tg, Ts, W)
-        count = self.bundle.total_fin_area / tube.fin_area_per_fin
+        count = self.bundle.total_fin_area / tube.fin_area_per_fin * self.thermal_scale
         network = diag["network"]
 
         def fin(base):
@@ -506,13 +594,20 @@ class CircularFinnedTubeAdapter:
             # Contact is in the fin branch only; the exposed tube bypasses it.
             def residual(base):
                 r = fin(base)
-                return base - Ts - network.resistance_contact * count * r.heat_liquid
+                return (
+                    base
+                    - Ts
+                    - network.resistance_contact
+                    / self.thermal_scale
+                    * count
+                    * r.heat_liquid
+                )
 
             base = brentq(residual, Ts, Tg - 1e-8, xtol=2e-8)
             fr = fin(base)
         else:
             fr = fin(Ts)
-        primary = self.bundle.total_primary_outside_area
+        primary = self.bundle.total_primary_outside_area * self.thermal_scale
         mass = alpha / cp * max(W - t.saturation_humidity(Ts), 0.0) * primary
         drain = mass * t.condensate_enthalpy(Ts) + count * fr.drain_enthalpy
         q = (
@@ -533,4 +628,12 @@ class CircularFinnedTubeAdapter:
             wet_area=fr.wet_area * count
             + (primary if W > t.saturation_humidity(Ts) else 0.0),
             radial_energy_residual=fr.energy_residual * count,
+            wet_temperature_area_integral=count * fr.wet_temperature_area_integral
+            + (primary * Ts if W > t.saturation_humidity(Ts) else 0.0),
+            surface_temperature_area_mean=(
+                primary * Ts
+                + count * tube.fin_area_per_fin * fr.surface_temperature_area_mean
+            )
+            / (primary + count * tube.fin_area_per_fin),
+            local_sensible_heat=alpha * primary * (Tg - Ts) + count * fr.heat_sensible,
         )

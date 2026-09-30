@@ -14,7 +14,6 @@ from core.models.heat_balance import BalanceSideSpec, close_heat_balance
 from core.models.rating import run_rating
 from core.phase_change import warning_codes as WC
 from core.phase_change.types import PhaseChangeMode
-from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
 from core.pressure_drop.finned_tube_pressure_drop import (
     RobinsonBriggs1966Provider,
 )
@@ -131,186 +130,55 @@ class _TaggedPressureDropProvider:
         )
 
 
-def test_active_auto_rating_uses_converged_wet_finned_surface() -> None:
+def test_active_auto_rating_uses_required_geometry_and_native_radial_profile() -> None:
+    from numpy.polynomial.legendre import leggauss
+    from core.tests.wet_coil_public_test import check_equivalent
     hx = _exchanger()
     inside, outside = _rating_sides(wet_outside=True)
+    inside = replace(inside, T_out=None)
     pressure_provider = _TaggedPressureDropProvider()
-
-    result = hx.rate(
-        inside,
-        outside,
-        finned_pressure_drop_provider=pressure_provider,
-        include_simulation=True,
-    )
-
+    result = hx.rate(inside, outside, finned_pressure_drop_provider=pressure_provider,
+                     include_simulation=True)
     phase_change = result.outside_phase_change
-    wet = result.wet_finned_surface
-    assert phase_change is not None and phase_change.active is True
-    assert phase_change.converged is True
-    assert phase_change.method == "outside_condensation_rating_wet_annular_fin_fvm"
-    assert isinstance(wet, WetFinnedSurfaceResult)
-    assert wet is phase_change.wet_finned_surface
-    assert wet is result.thermal_state.finned_tube_diagnostics.wet_surface
-    assert wet is result.final_result.finned_tube_diagnostics.wet_surface
-
-    assert wet.m_dot_condensate > 0.0
-    assert wet.Q_sensible > 0.0
-    assert wet.Q_latent > 0.0
-    assert wet.Q_total == pytest.approx(
-        wet.Q_sensible + wet.Q_latent, rel=1.0e-12
-    )
-    assert wet.Q_total == pytest.approx(phase_change.Q_total, rel=1.0e-12)
-    assert wet.m_dot_condensate == pytest.approx(
-        phase_change.m_dot_condensate, rel=1.0e-12
-    )
-    assert wet.Q_primary_total + wet.Q_fin_total == pytest.approx(
-        wet.Q_total, rel=1.0e-12
-    )
-    assert wet.Q_primary_sensible + wet.Q_fin_sensible == pytest.approx(
-        wet.Q_sensible, rel=1.0e-12
-    )
-    assert wet.Q_primary_latent + wet.Q_fin_latent == pytest.approx(
-        wet.Q_latent, rel=1.0e-12
-    )
-    assert (
-        wet.m_dot_condensate_primary + wet.m_dot_condensate_fin
-        == pytest.approx(wet.m_dot_condensate, rel=1.0e-12)
-    )
-    assert abs(phase_change.mass_balance_error) < 1.0e-6
-    assert abs(phase_change.energy_balance_error) < 1.0e-6
-    assert abs(wet.mass_balance_error) < 1.0e-12
-    assert abs(wet.energy_balance_error) < 1.0e-6
-    assert wet.wet_area == pytest.approx(
-        wet.wet_primary_area + wet.wet_fin_area, rel=1.0e-12
-    )
-    assert wet.wet_surface_fraction == pytest.approx(
-        wet.wet_area / wet.outside_total_area, rel=1.0e-12
-    )
-    assert wet.wall_temperature_wet_mean == pytest.approx(
-        phase_change.wall_temperature_wet_mean, rel=1.0e-12
-    )
-    exposed_temperatures = (
-        wet.primary_surface_temperature,
-        wet.fin_base_temperature,
-        wet.fin_tip_temperature,
-    )
-    assert phase_change.wall_temperature_min == pytest.approx(
-        min(exposed_temperatures)
-    )
-    assert phase_change.wall_temperature_max == pytest.approx(
-        max(exposed_temperatures)
-    )
-    assert phase_change.wall_temperature_mean == pytest.approx(
-        wet.outside_surface_temperature_area_mean
-    )
-    assert (
-        phase_change.wall_temperature_min
-        <= phase_change.wall_temperature_mean
-        <= phase_change.wall_temperature_max
-    )
-    assert "rating_raw_surface_Q_total_W" in wet.residuals
-    assert "rating_surface_Q_gap_W" in wet.residuals
-    assert "rating_raw_surface_condensate_kg_s" in wet.residuals
-    assert "rating_surface_condensate_gap_kg_s" in wet.residuals
-    assert (
-        "rating_closed_balance_normalized_primary_fin_distribution"
-        in wet.assumptions
-    )
-    assert (
-        "rating_closed_balance_normalized_primary_fin_distribution"
-        in phase_change.assumptions
-    )
-    assert wet.outside_alpha_wet_effective_basis == (
-        "gross_outside_area_and_bulk_gas_to_core_wall_temperature_difference_"
-        "using_raw_radial_transport_duty_before_rating_distribution_"
-        "normalization"
-    )
-    assert wet.outside_alpha_wet_effective_gross_core_basis == pytest.approx(
-        result.alfa_o
-    )
-    assert (
-        result.thermal_state.outside_alpha_wet_effective_gross_core_basis
-        == pytest.approx(wet.outside_alpha_wet_effective_gross_core_basis)
-    )
-    assert result.thermal_state.outside_alpha_wet_effective_basis == (
-        wet.outside_alpha_wet_effective_basis
-    )
-
+    native = result.wet_coil_diagnostics
+    assert phase_change.active and phase_change.converged
+    assert phase_change.method == "elmahdy_mitalas_energyplus_v25_2_adapted"
+    assert phase_change.m_dot_condensate > 0
+    assert phase_change.Q_sensible > 0 and phase_change.Q_latent > 0
+    assert phase_change.Q_total == pytest.approx(
+        phase_change.Q_sensible+phase_change.Q_latent,rel=1e-12)
+    assert abs(phase_change.mass_balance_error) < 1e-6
+    assert abs(phase_change.energy_balance_error) < 1e-6
+    assert phase_change.wet_area == pytest.approx(
+        phase_change.outside_total_area*phase_change.wet_surface_fraction,rel=1e-12)
+    profile = native["process_profile"]
+    radial = native["surface_states"]
+    weights=leggauss(len(profile)-1)[1]*phase_change.wet_fraction/2
+    assert len(radial) == len(profile)-1
+    assert phase_change.H_drain == pytest.approx(
+        sum(w*p.drain_density for w,p in zip(weights,profile[1:])),abs=1e-8)
+    assert phase_change.wet_area == pytest.approx(
+        sum(w*p["radial_wet_area"] for w,p in zip(weights,radial)),abs=1e-12)
+    for axial, surface in zip(profile[1:],radial):
+        assert axial.liquid_temperature <= surface["inside_wall_temperature"]
+        assert surface["inside_wall_temperature"] <= surface["core_wall_temperature"]
+        assert surface["surface_base_temperature"] <= surface["fin_tip_temperature"]
+    assert phase_change.wall_temperature_min <= phase_change.wall_temperature_mean <= phase_change.wall_temperature_max
+    check_equivalent(result)
+    assert result.A_required == native["required_physical_outside_area"]
+    assert native["required_geometry"].tube.length_effective == native["required_effective_length"]
+    assert result.final_result.A_o == result.A_required
     diagnostics = result.finned_tube_diagnostics
-    assert diagnostics is not None
-    assert diagnostics.outside_alpha_physical == pytest.approx(
-        result.thermal_state.outside_alpha_physical
-    )
-    # Established FinnedTubeDiagnostics thermal fields retain the dry
-    # resistance-network meaning.  The latent-inclusive wet coefficient is
-    # separately and unambiguously named on the nested wet result above.
-    assert diagnostics.outside_alpha_effective_gross == pytest.approx(
-        1.0
-        / (diagnostics.resistance_outside * diagnostics.area_outside_gross)
-    )
-    assert result.thermal_state.outside_alpha_effective_gross == pytest.approx(
-        diagnostics.outside_alpha_effective_gross
-    )
-    assert diagnostics.UA == pytest.approx(1.0 / diagnostics.resistance_total)
-    assert diagnostics.U == pytest.approx(
-        diagnostics.UA / diagnostics.area_outside_gross
-    )
-
-    expected_wet_UA = 1.0 / (
-        1.0
-        / (
-            result.thermal_state.alfa_i
-            * result.final_result.A_i
-        )
-        + hx.tube_wall_resistance()
-        + 1.0
-        / (
-            wet.outside_alpha_wet_effective_gross_core_basis
-            * result.A_o
-        )
-    )
-    assert result.UA_actual == pytest.approx(expected_wet_UA)
-    assert result.U_mean == pytest.approx(expected_wet_UA / result.A_o)
-    assert result.thermal_state.UA == pytest.approx(result.UA_actual)
-    assert result.thermal_state.U == pytest.approx(result.U_mean)
-    assert result.A_required == pytest.approx(
-        result.UA_required / result.U_mean
-    )
-    assert result.overdesign_factor == pytest.approx(
-        result.A_o / result.A_required - 1.0
-    )
-    assert result.ua_margin == pytest.approx(
-        result.UA_actual / result.UA_required - 1.0
-    )
-    assert math.isfinite(result.overdesign_factor)
-
+    assert diagnostics.outside_alpha_physical == pytest.approx(native["outside_alpha_physical"])
     assert result.wet_pressure_drop_supported is False
     assert diagnostics.outside_dp_reference_only is True
-    assert result.outside_dp_dry_reference == pytest.approx(
-        result.outside_dp_total
-    )
-    warning_sources = (
-        list(phase_change.warnings)
-        + list(diagnostics.warnings)
-        + list(result.warnings or [])
-    )
-    assert any(
-        warning.code
-        == WC.CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY
-        for warning in warning_sources
-    )
+    assert result.outside_dp_dry_reference == pytest.approx(result.outside_dp_total)
+    assert WC.CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY in {
+        w.code for w in phase_change.warnings}
     assert pressure_provider.calls > 0
-
-    # The optional achievable bridge must itself use the public phase-aware
-    # Simulation path, not the sensible-only internal rating driver.
-    achievable = result.simulation
+    achievable=result.simulation
     assert achievable is not None
-    assert achievable.outside_phase_change is not None
-    assert achievable.outside_phase_change.active is True
-    assert achievable.wet_finned_surface is not None
-    assert achievable.wet_finned_surface is (
-        achievable.outside_phase_change.wet_finned_surface
-    )
+    assert achievable.outside_phase_change.global_wet_model == phase_change.global_wet_model
     assert result.Q_achievable == pytest.approx(achievable.q)
 
     hydraulic = result.outside_tube_bank_hydraulic
@@ -386,7 +254,7 @@ def test_dry_finned_rating_keeps_the_legacy_result_exactly() -> None:
     assert actual.wall_temperature_envelope == expected.wall_temperature_envelope
 
 
-def _capable_auto_rating(inside_T_in_C: float):
+def _capable_auto_rating(inside_T_in_C: float, *, outside_T_out_K: float = 380.0):
     """Rating with a genuinely H2O-capable outside gas, AUTO on both sides.
 
     Sweeping ``inside_T_in_C`` alone (all else fixed) crosses the AUTO
@@ -399,28 +267,29 @@ def _capable_auto_rating(inside_T_in_C: float):
     inside_T_in = inside_T_in_C + 273.15
     inside = BalanceSideSpec(
         provider=_inside_provider(), p=P, m_dot=8.0,
-        T_in=inside_T_in, T_out=inside_T_in + 21.0,
+        T_in=inside_T_in, T_out=None,
         phase_change_mode=PhaseChangeMode.AUTO,
     )
     outside = BalanceSideSpec(
         provider=_wet_provider(), p=P, m_dot=6.0,
-        T_in=420.0, T_out=380.0,
+        T_in=420.0, T_out=outside_T_out_K,
         phase_change_mode=PhaseChangeMode.AUTO,
     )
     return hx.rate(inside, outside)
 
 
-def test_near_onset_auto_rating_is_a_valid_dry_result_not_a_failure() -> None:
+def test_auto_rating_dry_regime_is_a_valid_production_result() -> None:
     """Spec section 5/6/17.24: Rating's AUTO must also legitimately resolve
     to a converged near-onset/dry result, and that result must expose the
     real sensible duty rather than a hardcoded zero."""
-    result = _capable_auto_rating(41.5)
+    result = _capable_auto_rating(60.0)
     pc = result.outside_phase_change
 
     assert pc.capable is True
     assert pc.active is False
-    assert pc.near_onset is True
-    assert pc.possible is True
+    assert pc.regime == "DRY"
+    assert pc.possible is False
+    assert result.ua_is_equivalent
     assert result.wet_finned_surface is None
     assert pc.m_dot_condensate == 0.0
     assert pc.Q_latent == 0.0
@@ -431,11 +300,16 @@ def test_near_onset_auto_rating_is_a_valid_dry_result_not_a_failure() -> None:
 
 
 def test_crossing_auto_rating_onset_changes_regime_not_exception() -> None:
-    wet = _capable_auto_rating(41.0)
-    dry = _capable_auto_rating(41.5)
+    # At 380 K the required short geometry is physically DRY even with
+    # 20 C coolant (dry onset surface is 2.93 K above dewpoint). Use one
+    # fixed target within the verified wet bracket for the colder coolant.
+    wet = _capable_auto_rating(20.0, outside_T_out_K=360.0)
+    dry = _capable_auto_rating(60.0, outside_T_out_K=360.0)
 
     assert wet.outside_phase_change.active is True
     assert wet.outside_phase_change.m_dot_condensate > 0.0
+    assert wet.outside_phase_change.onset_margin_K > 0.0
     assert dry.outside_phase_change.active is False
-    assert dry.outside_phase_change.near_onset is True
+    assert dry.outside_phase_change.regime == "DRY"
+    assert dry.outside_phase_change.onset_margin_K < 0.0
     assert math.isfinite(wet.Q_required) and math.isfinite(dry.Q_required)
