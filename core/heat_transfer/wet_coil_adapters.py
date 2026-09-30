@@ -4,6 +4,7 @@
 No public model selector, Rating or Simulation wiring lives here. All
 production temperatures are kelvin and gas enthalpy/cp use kg dry carrier.
 """
+from bisect import bisect_left
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import logging
@@ -24,6 +25,7 @@ from core.heat_transfer.outside_dispatch import (
     calculate_resistance_network,
     evaluate_outside_thermal,
 )
+from core.heat_transfer.wet_coil_solver import _solve_budget
 from core.heat_transfer.wet_coil import (
     _solve_profile_candidate,
     validate_wet_coil,
@@ -52,6 +54,7 @@ class WetGasThermodynamics:
         )
         self.lower = 273.16
         self.saturation_upper = water_saturation_temperature(pressure) - 1e-3
+        self._saturation_inverse_roots = []
 
     def enthalpy(self, T, W):
         return self.evaluator.enthalpy(T, W)
@@ -72,14 +75,28 @@ class WetGasThermodynamics:
         return self.enthalpy(T, self.saturation_humidity(T))
 
     def saturation_temperature(self, h):
-        # Resolve the inverse to floating-point temperature precision. The
-        # coupled MW-scale drain integral is sensitive to inverse-root noise.
-        return brentq(
-            lambda T: self.saturation_enthalpy(T) - h,
-            self.lower,
-            self.saturation_upper,
-            xtol=5e-14,
-        )
+        # Reuse exact solved endpoints to bracket the same monotone saturation
+        # inverse. No interpolation/table approximates the returned property;
+        # Brent still solves the configured equation to floating-point accuracy.
+        roots = self._saturation_inverse_roots
+        index = bisect_left(roots, (h,))
+        if index < len(roots) and roots[index][0] == h:
+            return roots[index][1]
+        lower = self.lower if index == 0 else roots[index - 1][1]
+        upper = self.saturation_upper if index == len(roots) else roots[index][1]
+        # A stored root has finite rounding error. Confirm its bracket signs;
+        # fall back to the original domain when adjacent targets coalesce.
+        if self.saturation_enthalpy(lower) > h:
+            lower = self.lower
+        if self.saturation_enthalpy(upper) < h:
+            upper = self.saturation_upper
+        root = brentq(lambda T: self.saturation_enthalpy(T) - h,
+                      lower, upper, xtol=5e-14)
+        if len(roots) >= 4096:
+            roots.clear()
+            index = 0
+        roots.insert(index, (h, root))
+        return root
 
     def humidity(self, T, h):
         return (h - self.enthalpy(T, 0.0)) / water_saturation_vapor_enthalpy(T=T)
@@ -251,8 +268,15 @@ def solve_production_coil(
     quadrature_order=10,
     finned_heat_transfer_provider=DEFAULT_FINNED_HT_PROVIDER,
     _initial_state=None,
+    _refinement=False,
+    wet_solver_options=None,
+    _budget=None,
 ):
     """Internal production adapter; not a public solving-mode entry point."""
+    budget = _solve_budget(wet_solver_options, _budget)
+    options = budget.options
+    if not _refinement:
+        budget.count("forward_evaluations")
     if inside.bundle != bundle:
         raise ValueError("Inside/outside adapters must use the same bundle")
     if bundle.flow_arrangement == "cocurrentflow":
@@ -277,13 +301,14 @@ def solve_production_coil(
         taout, twout, tint = air_in, liquid_in, air_in
         Wout = humidity_in
     else:
-        # Refinement changes quadrature, not the physical problem. The prior
-        # converged profile is an initial iterate only; all new-grid property,
-        # mass, energy and independent drain checks still have to pass.
+        # A converged profile seeds quadrature refinement or a nearby Rating
+        # trial. It is only an initial iterate: all property, mass, energy,
+        # independent drain and physical admissibility checks still apply.
         previous, drain_correction = _initial_state
         taout, twout = previous.air_out, previous.liquid_out
         tint, Wout = previous.interface_air, previous.humidity_out
     for iteration in range(80):
+        budget.count("property_iterations")
         cp = thermodynamics.secant_cp(air_in, tint, humidity_in)
         capacity = inside.capacity(liquid_in, twout)
         ri, idiag = inside.evaluate((liquid_in + twout) / 2)
@@ -348,6 +373,8 @@ def solve_production_coil(
                 x.gas_h_in + cp * (u - air_in), humidity_in
             ),
             surface_enthalpy=surface_enthalpy,
+            wet_solver_options=options, _budget=budget,
+            _initial_region=None if previous is None else previous._region,
         )
         correction_error = 0.0
         if finned and r.profile:
@@ -416,12 +443,15 @@ def solve_production_coil(
             rw, cp, r.hot_surface - x.dewpoint,
         )
         taout, twout, tint, Wout = r.air_out, r.liquid_out, nxt, r.humidity_out
-        if error < 2e-7 and correction_error < 0.002:
+        budget.check(last_regime=r.regime, wet_fraction=r.wet_fraction)
+        temperature_gate = min(options.outlet_temperature_tolerance_K / 10,
+                               options.energy_tolerance_W / (10 * max(capacity, dry_mass_flow * cp)))
+        if error < temperature_gate and correction_error < 0.002:
             odiag.setdefault("wet_effective_area", odiag["dry_effective_area"])
             qactual = inside.mass_flow * inside.enthalpy_difference(
                 liquid_in, r.liquid_out
             )
-            if abs(qactual - r.heat_liquid) > 2e-3:
+            if abs(qactual - r.heat_liquid) > options.energy_tolerance_W:
                 raise WetCoilModelError(
                     "liquid provider energy mismatch", residual=qactual - r.heat_liquid
                 )
@@ -451,7 +481,7 @@ def solve_production_coil(
                 odiag["independent_radial_drain_integral_error_W"] = (
                     integral - r.drain_enthalpy
                 )
-                if abs(integral - r.drain_enthalpy) > 2e-4:
+                if abs(integral - r.drain_enthalpy) > options.energy_tolerance_W:
                     if quadrature_order >= 32:
                         # At the maximum order both integrals use the same
                         # axial nodes. Their difference is the still-unclosed
@@ -476,7 +506,10 @@ def solve_production_coil(
                         quadrature_order=min(32, 2 * quadrature_order),
                         finned_heat_transfer_provider=finned_heat_transfer_provider,
                         _initial_state=(r, drain_correction),
+                        _refinement=True,
+                        wet_solver_options=options, _budget=budget,
                     )
+            budget.check()
             return replace(
                 r,
                 diagnostics=dict(
@@ -484,6 +517,9 @@ def solve_production_coil(
                     **odiag,
                     **idiag,
                     property_iterations=iteration + 1,
+                    radial_drain_correction_coefficients=tuple(drain_correction),
+                    solver_options=options,
+                    solver_statistics=dict(budget.diagnostics),
                     property_residual_K=error,
                     property_change_air_out_K=air_change,
                     property_change_liquid_out_K=liquid_change,

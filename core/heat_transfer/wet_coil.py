@@ -16,6 +16,7 @@ from numpy.polynomial import chebyshev as cheb
 from numpy.polynomial.legendre import leggauss
 from scipy.optimize import brentq
 
+from core.heat_transfer.wet_coil_solver import _solve_budget
 from core.heat_transfer.elmahdy_mitalas import CoilInput, _counterflow_transfer
 
 
@@ -99,7 +100,12 @@ class _Region:
         sensible_coordinate=lambda T: T,
         temperature_from_coordinate=lambda u: u,
         surface_enthalpy=None,
+        wet_solver_options=None,
+        _budget=None,
+        _initial_region=None,
     ):
+        budget = _solve_budget(wet_solver_options, _budget)
+        options = budget.options
         self.x, self.f = x, f
         self.surface_enthalpy = surface_enthalpy
         self.sensible_coordinate = sensible_coordinate
@@ -115,8 +121,15 @@ class _Region:
         b = (x.saturation_enthalpy(high) - x.saturation_enthalpy(low)) / (high - low)
         a = x.saturation_enthalpy(low) - b * low
         tintw = outw = tw
+        if _initial_region is not None:
+            # Initial fixed-point values only; solve the new coefficients and
+            # drain field to all the same convergence/admissibility gates.
+            a, b = _initial_region.a, _initial_region.b
+            density = cheb.chebval(nodes, _initial_region.poly)
+            tintw, outw = _initial_region.tintw, _initial_region.outw
         previous = None
         for iteration in range(250):
+            budget.check(wet_fraction=f)
             ri = x.inner_resistance((tw + tintw) / 2)
             rid = x.inner_resistance((tintw + outw) / 2)
             if not all(isfinite(v) and v > 0 for v in (ri, rid, b)):
@@ -196,7 +209,18 @@ class _Region:
                 else float(np.max(np.abs(current - previous)))
             )
             derr = float(np.max(np.abs(nd - density)))
-            if err < 2e-8 and derr < 2e-5:
+            # Separate the old mixed kW/K/W vector into dimensional gates.
+            # Retain the surface/secant stability ceiling near the wet front;
+            # loosening it can violate the unchanged driving-force guard.
+            delta = None if previous is None else np.abs(current - previous)
+            temperature_gate = min(2e-8, options.outlet_temperature_tolerance_K / 10,
+                                   options.energy_tolerance_W / (10 * max(cw, md * cp)))
+            converged = (delta is not None
+                         and delta[0] * 1000 < options.energy_tolerance_W / 10
+                         and max(delta[1:5]) < temperature_gate
+                         and delta[5] < options.energy_tolerance_W / 10
+                         and derr < options.energy_tolerance_W / 10)
+            if converged:
                 self.cold, self.hot, self.tintw, self.outw = cold, hot, tintw, outw
                 self.points, self.outlet, self.iterations = (
                     tuple(points),
@@ -333,6 +357,9 @@ def _solve_profile_candidate(
     sensible_coordinate=lambda T: T,
     temperature_from_coordinate=lambda u: u,
     surface_enthalpy=None,
+    wet_solver_options=None,
+    _budget=None,
+    _initial_region=None,
 ) -> WetCoilResult:
     """Internal cooling solve with source-profile moisture and coupled drain.
 
@@ -340,6 +367,9 @@ def _solve_profile_candidate(
     production, Celsius in reference-equation comparisons). Resistances and
     cp are whole-coil SI dry-carrier quantities as in CoilInput.
     """
+    budget = _solve_budget(wet_solver_options, _budget)
+    options = budget.options
+    budget.check()
     md, cw, cp = x.dry_mass_flow, x.liquid_capacity, x.gas_cp
     values = (
         md,
@@ -366,6 +396,7 @@ def _solve_profile_candidate(
         raise ValueError("Positive flows/resistances and a hot gas inlet are required")
     twout = x.liquid_in
     for _ in range(200):
+        budget.check()
         ri = x.inner_resistance((x.liquid_in + twout) / 2)
         if not isfinite(ri) or ri <= 0:
             raise ValueError("Invalid inside resistance")
@@ -403,9 +434,12 @@ def _solve_profile_candidate(
             dict(rejection_reason=None, energy_residual=0.0, mass_residual=0.0),
         )
 
+    region_seed = _initial_region
+
     def region(f, bound=False):
+        nonlocal region_seed
         try:
-            return _Region(
+            candidate = _Region(
                 x,
                 f,
                 liquid_enthalpy,
@@ -415,7 +449,11 @@ def _solve_profile_candidate(
                 sensible_coordinate=sensible_coordinate,
                 temperature_from_coordinate=temperature_from_coordinate,
                 surface_enthalpy=surface_enthalpy,
+                wet_solver_options=options, _budget=budget,
+                _initial_region=region_seed,
             )
+            region_seed = candidate
+            return candidate
         except WetCoilModelError as exc:
             diagnostics = dict(exc.diagnostics)
             reason = diagnostics.pop("rejection_reason")
@@ -458,8 +496,8 @@ def _solve_profile_candidate(
         np.dot(check_weights, [p.drain_density for p in checked]) * f / 2
     )
     if (
-        abs(drain_check - wet.drain) > 2e-4
-        or abs(mass_check - wet.mass_integral) > 2e-10
+        abs(drain_check - wet.drain) > options.energy_tolerance_W
+        or abs(mass_check - wet.mass_integral) > options.mass_tolerance_kg_s
     ):
         raise WetCoilModelError(
             "wet profile quadrature unresolved",
@@ -501,9 +539,10 @@ def _solve_profile_candidate(
         reasons.append("negative wet driving force")
     if vapor < -1e-9 or min(p.humidity for p in sample) < 0:
         reasons.append("inadmissible vapor state")
-    if abs(energy_error) > 2e-4 or abs(mass_error) > 2e-10:
+    if abs(energy_error) > options.energy_tolerance_W or abs(mass_error) > options.mass_tolerance_kg_s:
         reasons.append("inconsistent integral balance")
     diagnostics["rejection_reason"] = ", ".join(reasons) if reasons else None
+    budget.check(last_regime="FULLY_WET" if f == 1 else "PARTIALLY_WET", wet_fraction=f)
     return WetCoilResult(
         "FULLY_WET" if f == 1 else "PARTIALLY_WET",
         wet.heat_liquid,

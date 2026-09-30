@@ -14,3 +14,7 @@ and liquid or steam on the tube side.
 """
 
 __version__ = "0.8.2"
+
+from core.heat_transfer.wet_coil_solver import (
+    WetCoilSolverOptions, WetCoilConvergenceError, WetCoilTimeoutError,
+)

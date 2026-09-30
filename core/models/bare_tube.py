@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from core.heat_transfer.wet_coil_solver import WetCoilSolverOptions, _wet_operation
+
 from core.enhancements.base import TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError
 from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
 
@@ -1185,6 +1187,7 @@ class BareTubeHeatExchanger:
 
 
 
+    @_wet_operation
     def simulate(
         self,
         inside: "HXSideInput",
@@ -1205,6 +1208,7 @@ class BareTubeHeatExchanger:
         relative_duty_tolerance: float = 1e-4,
         relaxation_factor: float = 0.5,
         relative_alfa_tolerance: float = 1e-3,
+        wet_solver_options: WetCoilSolverOptions | None = None,
         phase_change_onset_tolerance_K: float = 0.0,
         phase_change_activation_band_K: float = 0.5,
         lewis_number: float = 1.0,
@@ -1219,6 +1223,9 @@ class BareTubeHeatExchanger:
     ) -> "HXSimulationResult":
         """Simulate this exchanger, converging the wall/length-corrected
         iterative thermal state by default (v0.5.3).
+
+        ``wet_solver_options`` controls outside wet-coil convergence and one
+        operation-wide timeout; omission uses ``WetCoilSolverOptions()``.
 
         This is the intended default entry point for Simulation: given
         geometry, both inlet temperatures, and both flow rates, compute the
@@ -1379,6 +1386,7 @@ class BareTubeHeatExchanger:
         from core.phase_change.wet_coil_integration import route_outside_wet
         wet_result = route_outside_wet(
             self, inside, outside, mode="simulation", settings=settings,
+            wet_solver_options=wet_solver_options,
             K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
             surface_margin=surface_margin, iterate=iterate,
             flow_arrangement=flow_arrangement, euler_provider=euler_provider,
@@ -1451,6 +1459,7 @@ class BareTubeHeatExchanger:
             settings=settings,
         )
 
+    @_wet_operation
     def rate(
         self,
         inside: "BalanceSideSpec",
@@ -1472,6 +1481,7 @@ class BareTubeHeatExchanger:
         wall_temperature_tolerance_K: float = 0.05,
         relative_alfa_tolerance: float = 1e-3,
         relaxation_factor: float = 0.5,
+        wet_solver_options: WetCoilSolverOptions | None = None,
         phase_change_onset_tolerance_K: float = 0.0,
         phase_change_activation_band_K: float = 0.5,
         lewis_number: float = 1.0,
@@ -1490,6 +1500,9 @@ class BareTubeHeatExchanger:
         as ``simulate``: omit to inherit, supply a configuration to override,
         or pass ``None`` for the legacy smooth path. This also governs the
         optional Rating-to-Simulation bridge.
+
+        ``wet_solver_options`` controls outside wet-coil convergence and one
+        deadline shared by all geometry/flow trials and optional Simulation.
 
         This is the Rating entry point (v0.5.1, thermal state wiring since
         v0.5.3): given geometry and a *closed* heat balance (duty, both
@@ -1578,6 +1591,7 @@ class BareTubeHeatExchanger:
         from core.phase_change.wet_coil_integration import route_outside_wet
         wet_result = route_outside_wet(
             self, inside, outside, mode="rating", settings=settings,
+            wet_solver_options=wet_solver_options,
             K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
             Q=Q, effectiveness=effectiveness, include_simulation=include_simulation,
             over_specified_tolerance=over_specified_tolerance,

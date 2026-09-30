@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from core import WetCoilSolverOptions
 from core.tests.wet_coil_test import production_context
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput, run_simulation
@@ -15,6 +16,14 @@ from core.phase_change.wet_coil_integration import (
     forward_wet_process,
 )
 from core.phase_change.wet_coil_reporting import equivalent_wet_process
+
+# These regression assertions intentionally retain sub-engineering precision.
+TIGHT_OPTIONS = WetCoilSolverOptions(
+    energy_tolerance_W=2e-4,
+    mass_tolerance_kg_s=2e-10,
+    outlet_temperature_tolerance_K=2e-7,
+    timeout_s=None,
+)
 
 
 def context(finned=False, W=0.016):
@@ -104,12 +113,12 @@ def check_equivalent(r):
 )
 def test_public_forward_inverse_roundtrip(finned, W, regime):
     hx, a, b = context(finned, W)
-    sim = hx.simulate(a, b)
+    sim = hx.simulate(a, b, wet_solver_options=TIGHT_OPTIONS)
     installed = required_exchanger(hx, 2.3)
-    rating = installed.rate(*specs(a, b, sim.T_out_outside))
+    rating = installed.rate(*specs(a, b, sim.T_out_outside), wet_solver_options=TIGHT_OPTIONS)
     d = rating.wet_coil_diagnostics
     assert d["required_effective_length"] == pytest.approx(2.0, rel=2e-5)
-    recovered = BareTubeHeatExchanger(d["required_geometry"]).simulate(a, b)
+    recovered = BareTubeHeatExchanger(d["required_geometry"]).simulate(a, b, wet_solver_options=TIGHT_OPTIONS)
     assert recovered.q == pytest.approx(sim.q, rel=2e-6, abs=0.002)
     assert recovered.T_out_inside == pytest.approx(sim.T_out_inside, abs=2e-5)
     assert recovered.T_out_outside == pytest.approx(sim.T_out_outside, abs=2e-5)
@@ -164,9 +173,9 @@ def test_public_thermal_reserve_changes_wet_solution(finned):
 
 def test_inside_flow_inverse_roundtrip():
     hx, a, b = context()
-    sim = hx.simulate(a, b)
+    sim = hx.simulate(a, b, wet_solver_options=TIGHT_OPTIONS)
     rated = required_exchanger(hx, 2.2).rate(
-        *specs(a, b, sim.T_out_outside, sim.T_out_inside, False)
+        *specs(a, b, sim.T_out_outside, sim.T_out_inside, False), wet_solver_options=TIGHT_OPTIONS
     )
     assert rated.closed_balance.inside.m_dot == pytest.approx(a.m_dot, rel=2e-5)
     assert rated.wet_coil_diagnostics["required_effective_length"] == pytest.approx(

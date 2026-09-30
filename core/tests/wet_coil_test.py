@@ -10,7 +10,16 @@ from scipy.optimize import brentq
 
 from core.heat_transfer.elmahdy_mitalas import solve_source_coil, _counterflow_transfer
 from core.heat_transfer.wet_coil import solve_wet_coil, _Region, WetCoilModelError
+from core import WetCoilSolverOptions
 from core.tests.elmahdy_mitalas_test import source_case, _pressure
+
+# These regression assertions intentionally retain sub-engineering precision.
+TIGHT_OPTIONS = WetCoilSolverOptions(
+    energy_tolerance_W=2e-4,
+    mass_tolerance_kg_s=2e-10,
+    outlet_temperature_tolerance_K=2e-5,
+    timeout_s=None,
+)
 
 
 def ws(T):
@@ -110,7 +119,7 @@ def test_reference_equations_and_general_production_limit_have_explicit_bases():
         # Exactly the candidate function used by the real property iteration.
         # It solves f itself; no source result is supplied to the process solve.
         r = _solve_profile_candidate(
-            x,
+            x, wet_solver_options=TIGHT_OPTIONS,
             liquid_enthalpy=lambda T: 4180 * T,
             saturation_humidity=ws,
             drain_enabled=False,
@@ -129,7 +138,7 @@ def test_reference_equations_and_general_production_limit_have_explicit_bases():
             # Keep the specialized/source solution as an independent oracle,
             # never as a test-only bypass inside the production solver.
             specialized = _Region(
-                x, 1.0, lambda T: 4180*T, drain=False, order=10
+                x, 1.0, lambda T: 4180*T, drain=False, order=10, wet_solver_options=TIGHT_OPTIONS
             )
             assert specialized.h0 == pytest.approx(reference.outlet_enthalpy, abs=2e-4)
             assert reference.heat == pytest.approx(case["Q_W"], rel=0.002)
@@ -245,6 +254,7 @@ def test_bare_adapter_actual_composition_and_energy():
 
     b, t, i = production_context()
     r = solve_production_coil(
+        wet_solver_options=TIGHT_OPTIONS,
         bundle=b,
         thermodynamics=t,
         inside=i,
@@ -297,6 +307,7 @@ def test_real_property_dry_and_partial_branches(humidity, expected):
 
     b, t, i = production_context()
     r = solve_production_coil(
+        wet_solver_options=TIGHT_OPTIONS,
         bundle=b,
         thermodynamics=t,
         inside=i,
@@ -325,6 +336,7 @@ def test_finned_adapter_uses_same_engine_and_radial_drain(humidity, expected):
 
     b, t, i = production_context(finned=True)
     r = solve_production_coil(
+        wet_solver_options=TIGHT_OPTIONS,
         bundle=b,
         thermodynamics=t,
         inside=i,
@@ -460,6 +472,7 @@ def test_finned_dry_limit_uses_physical_dry_network():
 
     b, t, i = production_context(finned=True)
     r = solve_production_coil(
+        wet_solver_options=TIGHT_OPTIONS,
         bundle=b,
         thermodynamics=t,
         inside=i,
@@ -541,7 +554,7 @@ def test_large_drain_coupled_profile_preserves_extensive_scaling():
             thermo.humidity,
         )
         r = solve_wet_coil(
-            x, liquid_enthalpy=thermo.condensate_enthalpy,
+            x, wet_solver_options=TIGHT_OPTIONS, liquid_enthalpy=thermo.condensate_enthalpy,
             saturation_humidity=thermo.saturation_humidity,
             sensible_coordinate=lambda T: ta + (thermo.enthalpy(T, humidity) - h_in) / cp,
             temperature_from_coordinate=lambda u: thermo.temperature(h_in + cp * (u - ta), humidity),
@@ -569,6 +582,7 @@ def test_refined_finned_profile_matches_fresh_solve_on_same_quadrature():
     bundle = replace(bundle, n_tubes_per_row=100 * bundle.n_tubes_per_row)
     inside = replace(inside, bundle=bundle, mass_flow=100 * inside.mass_flow)
     arguments = dict(
+        wet_solver_options=TIGHT_OPTIONS,
         bundle=bundle, thermodynamics=thermo, inside=inside,
         air_in=300.15, liquid_in=280.15, humidity_in=0.016, dry_mass_flow=50.0,
     )

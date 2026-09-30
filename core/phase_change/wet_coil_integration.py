@@ -14,6 +14,7 @@ from numpy.polynomial.legendre import leggauss
 
 from core.geometry.finned_tube import CircularFinnedTube
 from core.heat_transfer.wet_coil import WetCoilModelError
+from core.heat_transfer.wet_coil_solver import _solve_budget
 from core.heat_transfer.wet_coil_adapters import (
     InsideWallAdapter,
     WetGasThermodynamics,
@@ -49,7 +50,6 @@ from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_p
 from core.properties.water import water_saturation_vapor_enthalpy
 
 # Numerical implementation tolerances, independent of model uncertainty.
-OUTLET_TOLERANCE_K = 2e-5
 LENGTH_ROOT_TOLERANCE = 2e-8
 
 
@@ -114,11 +114,17 @@ def forward_wet_process(
     inside,
     outside,
     *,
+    wet_solver_options=None,
+    _budget=None,
+    _initial_state=None,
+    _thermodynamics=None,
     surface_margin=0.0,
     flow_arrangement=None,
     finned_heat_transfer_provider=DEFAULT_FINNED_HT_PROVIDER,
 ):
     """Sole physical wet dispatch used by Simulation and every Rating trial."""
+    budget = _solve_budget(wet_solver_options, _budget)
+    budget.check()
     if not isfinite(surface_margin) or surface_margin < 0:
         raise ValueError("surface_margin must be a non-negative finite value")
     if hx.tube_side_enhancement is not None:
@@ -130,7 +136,9 @@ def forward_wet_process(
     flow = flow_arrangement or hx.bundle.flow_arrangement_resolved
     bundle = replace(hx.bundle, flow_arrangement=flow)
     cap = detect_phase_change_capability(outside.provider)
-    thermo = WetGasThermodynamics(outside.p, cap)
+    thermo = _thermodynamics or WetGasThermodynamics(outside.p, cap)
+    if thermo.pressure != outside.p or thermo.capability != cap:
+        raise ValueError("Wet thermodynamics must match the configured outside state")
     adapter = InsideWallAdapter(
         bundle,
         inside.provider,
@@ -139,6 +147,8 @@ def forward_wet_process(
         thermal_scale=1 / (1 + surface_margin),
     )
     r = solve_production_coil(
+        wet_solver_options=budget.options, _budget=budget,
+        _initial_state=_initial_state,
         bundle=bundle,
         thermodynamics=thermo,
         inside=adapter,
@@ -639,13 +649,17 @@ def route_outside_wet(hx, inside, outside, *, mode, settings, **options):
         raise ValueError(
             "Elmahdy-Mitalas source-profile closure requires Lewis number 1"
         )
+    budget = _solve_budget(options.pop("wet_solver_options", None))
+    budget.used = True
+    budget.check()
     if mode == "rating":
-        return _rate(hx, inside, outside, settings=settings, **options)
+        return _rate(hx, inside, outside, settings=settings, wet_solver_options=budget.options, _budget=budget, **options)
     margin = options.get("surface_margin", 0.0)
     physical = forward_wet_process(
         hx,
         inside,
         outside,
+        wet_solver_options=budget.options, _budget=budget,
         surface_margin=margin,
         flow_arrangement=options.get("flow_arrangement"),
         finned_heat_transfer_provider=options.get(
@@ -660,6 +674,7 @@ def route_outside_wet(hx, inside, outside, *, mode, settings, **options):
             hx,
             inside,
             outside,
+            wet_solver_options=budget.options, _budget=budget,
             flow_arrangement=options.get("flow_arrangement"),
             finned_heat_transfer_provider=options.get(
                 "finned_heat_transfer_provider", DEFAULT_FINNED_HT_PROVIDER
@@ -674,6 +689,8 @@ def _rate(
     outside,
     *,
     settings,
+    wet_solver_options=None,
+    _budget=None,
     Q=None,
     effectiveness=None,
     include_simulation=False,
@@ -683,6 +700,9 @@ def _rate(
     from core.models.rating import HXRatingResult
     from core.models.heat_balance import ClosedBalance, ClosedBalanceSide
 
+    budget = _solve_budget(wet_solver_options, _budget)
+    controls = budget.options
+    outlet_tolerance = controls.outlet_temperature_tolerance_K
     if outside.T_out is None:
         raise WetRatingIncompatibilityError(
             "Active outside-wet Rating requires outside.T_out; installed geometry cannot close an unspecified process"
@@ -701,8 +721,10 @@ def _rate(
         )
     base = hx.bundle.tube.length_effective
     cache = {}
+    thermodynamics = WetGasThermodynamics(outside.p, detect_phase_change_capability(outside.provider))
 
     def trial(length, mass):
+        budget.check(required_effective_length=length, inside_mass_flow=mass)
         key = (float(length), float(mass))
         if key not in cache:
             case = required_exchanger(hx, length)
@@ -717,11 +739,22 @@ def _rate(
             )
             log_trial = logging.getLogger(__name__)
             log_trial.debug("Rating trial L=%.12g m_inside=%.12g", length, mass)
+            # Reuse only an initial property/drain iterate from the nearest
+            # accepted geometry/flow trial. No result or physical gate is reused.
+            initial = None
+            if cache:
+                nearest = min(cache, key=lambda k: abs(log(length / k[0])) + abs(log(mass / k[1])))
+                previous_result = cache[nearest][2][0]
+                initial = (previous_result, np.asarray(previous_result.diagnostics[
+                    "radial_drain_correction_coefficients"]))
             try:
                 result = forward_wet_process(
                     case,
                     side,
                     outside,
+                    wet_solver_options=controls, _budget=budget,
+                    _initial_state=initial,
+                    _thermodynamics=thermodynamics,
                     flow_arrangement=options.get("flow_arrangement"),
                     finned_heat_transfer_provider=options.get(
                         "finned_heat_transfer_provider", DEFAULT_FINNED_HT_PROVIDER
@@ -737,6 +770,9 @@ def _rate(
                 "Rating trial accepted regime=%s Tout=%.12g", result[0].regime,
                 result[0].air_out,
             )
+            budget.check(last_regime=result[0].regime, wet_fraction=result[0].wet_fraction,
+                         outside_outlet_residual_K=result[0].air_out - outside.T_out,
+                         inside_outlet_residual_K=(None if inside.T_out is None else result[0].liquid_out - inside.T_out))
             cache[key] = (case, side, result)
         return cache[key]
 
@@ -768,7 +804,7 @@ def _rate(
                 raise WetRatingIncompatibilityError(
                     "No admissible required-length trial in the geometry family"
                 ) from initial_error
-        if abs(value) <= OUTLET_TOLERANCE_K / 10:
+        if abs(value) <= outlet_tolerance:
             length = exp(origin)
         else:
             direction = 1 if value > 0 else -1
@@ -807,9 +843,21 @@ def _rate(
                 raise WetRatingIncompatibilityError(
                     "Cannot bracket a physical required length"
                 )
-            length = exp(
-                brentq(residual, *bracket, xtol=LENGTH_ROOT_TOLERANCE, rtol=1e-12)
-            )
+            class LengthTargetMet(Exception):
+                def __init__(self, z):
+                    self.z = z
+
+            def root_residual(z):
+                value = residual(z)
+                if abs(value) <= outlet_tolerance:
+                    raise LengthTargetMet(z)
+                return value
+
+            try:
+                length = exp(brentq(root_residual, *bracket,
+                                    xtol=LENGTH_ROOT_TOLERANCE, rtol=1e-12))
+            except LengthTargetMet as solved:
+                length = exp(solved.z)
     else:
         if not inside.T_in < inside.T_out < outside.T_in:
             raise WetRatingIncompatibilityError(
@@ -827,42 +875,66 @@ def _rate(
             * (inside.T_out - inside.T_in)
         )
 
-        def residuals(z):
-            r = trial(exp(z[0]), exp(z[1]))[2][0]
-            return [r.air_out - outside.T_out, r.liquid_out - inside.T_out]
+        class TargetsMet(Exception):
+            def __init__(self, z):
+                self.z = z
 
-        fit = least_squares(
-            residuals,
-            [log(base), log(mass0)],
-            bounds=(
-                [log(base) - 10, log(mass0) - 10],
-                [log(base) + 10, log(mass0) + 10],
-            ),
-            xtol=1e-10,
-            ftol=1e-10,
-            gtol=1e-10,
-            diff_step=1e-4,
-            max_nfev=80,
-        )
-        if max(abs(v) for v in fit.fun) > OUTLET_TOLERANCE_K:
-            raise WetRatingIncompatibilityError(
-                "Bounded length/mass-flow solve did not reproduce both outlet targets"
+        def residuals(z):
+            budget.count("joint_solver_evaluations")
+            r = trial(exp(z[0]), exp(z[1]))[2][0]
+            values = [r.air_out - outside.T_out, r.liquid_out - inside.T_out]
+            if max(abs(v) for v in values) <= outlet_tolerance:
+                raise TargetsMet(z)
+            return values
+
+        lower_bounds = np.array([log(base) - 10, log(mass0) - 10])
+        upper_bounds = np.array([log(base) + 10, log(mass0) + 10])
+
+        def jacobian(z):
+            # A relative step collapses near log(length)=0 (a 1 m coil),
+            # measuring fixed-point noise instead of the physical slope.
+            # Use the existing 1e-4 scale as an absolute log-space step.
+            base_values = np.asarray(residuals(z))
+            columns = []
+            for axis in range(2):
+                shifted = np.array(z, copy=True)
+                step = 1e-4 if z[axis] + 1e-4 <= upper_bounds[axis] else -1e-4
+                shifted[axis] += step
+                columns.append((np.asarray(residuals(shifted)) - base_values) / step)
+            return np.column_stack(columns)
+
+        try:
+            fit = least_squares(
+                residuals,
+                [log(base), log(mass0)],
+                bounds=(lower_bounds, upper_bounds),
+                xtol=1e-10,
+                ftol=1e-10,
+                gtol=1e-10,
+                jac=jacobian,
+                max_nfev=80,
             )
-        length, mass = exp(fit.x[0]), exp(fit.x[1])
+            if max(abs(v) for v in fit.fun) > outlet_tolerance:
+                raise WetRatingIncompatibilityError(
+                    "Bounded length/mass-flow solve did not reproduce both outlet targets"
+                )
+            length, mass = exp(fit.x[0]), exp(fit.x[1])
+        except TargetsMet as solved:
+            length, mass = exp(solved.z[0]), exp(solved.z[1])
     case, side, physical = trial(length, mass)
     r = physical[0]
-    if abs(r.air_out - outside.T_out) > OUTLET_TOLERANCE_K:
+    if abs(r.air_out - outside.T_out) > outlet_tolerance:
         raise WetRatingIncompatibilityError(
             "Required-length outlet residual exceeds numerical tolerance"
         )
     if (
         inside.T_out is not None
-        and abs(r.liquid_out - inside.T_out) > OUTLET_TOLERANCE_K
+        and abs(r.liquid_out - inside.T_out) > outlet_tolerance
     ):
         raise WetRatingIncompatibilityError(
             "Fully specified outlet temperatures and mass flows are incompatible with the forward wet model"
         )
-    if Q is not None and abs(Q - r.heat_liquid) > max(2e-3, abs(Q) * 1e-7):
+    if Q is not None and abs(Q - r.heat_liquid) > max(controls.energy_tolerance_W, abs(Q) * 1e-7):
         raise WetRatingIncompatibilityError(
             "Specified duty is incompatible with the physical outlet solution"
         )
@@ -886,6 +958,7 @@ def _rate(
         physical_length_overdesign=base / length - 1,
         required_inside_mass_flow=mass,
         rating_forward_evaluations=len(cache),
+        solver_statistics=dict(budget.diagnostics),
         required_length_temperature_residual=r.air_out - outside.T_out,
         required_geometry=case.bundle,
     )
@@ -927,8 +1000,11 @@ def _rate(
                 outside.provider, outside.m_dot, outside.T_in, outside.p,
                 phase_change_mode=outside.phase_change_mode,
             ),
+            wet_solver_options=controls,
             **options,
         )
+    budget.check()
+    d["solver_statistics"] = dict(budget.diagnostics)
     return HXRatingResult(
         overdesign_factor=margin,
         ua_margin=margin,
