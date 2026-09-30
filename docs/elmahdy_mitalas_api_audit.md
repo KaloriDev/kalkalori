@@ -73,8 +73,10 @@ reports must carry the basis of fin efficiencies/resistances alongside the
 process-equivalent U/UA to avoid identifying them as one scalar wet network.
 No structural fallback to fabricated IterativeThermalState data is required.
 
-Validation status: focused integration gates and full suite pending. This
-file is the pre-commit API audit; it does not claim all gates passed.
+Validation status: focused integration gates, all 1404 public tests, seven
+private project cases and four strict notebook executions passed. Existing
+public field declarations and constructor prefixes retain the audited
+compatibility described above. Release remains HOLD.
 
 
 Simulation temperature residuals are the actual last native outlet changes

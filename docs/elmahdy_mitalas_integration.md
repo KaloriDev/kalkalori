@@ -117,8 +117,9 @@ Physical sizing diagnostics include `required_effective_length`,
 required geometry itself. The physical margin and reported wet UA margin
 share the approved common process reference.
 
-Validation is in progress. No project acceptance, full-suite pass or release
-is claimed by this working document. Release remains HOLD.
+Integration acceptance gates have passed: the complete public test collection,
+private project checks and four strict notebook executions. Release remains
+HOLD; numerical acceptance does not authorize a release.
 
 
 ## Numerical onset evaluation
@@ -225,9 +226,19 @@ The focused public contract group also passes all 19 cases: all three
 regimes on both geometries in Simulation -> required-length Rating ->
 recovered-geometry Simulation, both geometry thermal reserves at 0/5/10%,
 the joint unknown-inside-flow inverse, exact dry onset, explicit DISABLED
-routing and the reporting identities. Larger integration regressions,
-project cases, the full suite and notebook execution remain pending until
-their own gates complete.
+routing and the reporting identities. Larger integration regressions and the
+complete public collection also passed: 1404 tests, no failures, errors or
+skips. Coverage was reconciled against the complete collected node list after
+an explicit interruption: 1227 completed results were preserved and the
+remaining 177 cases were executed on unchanged source.
+
+Seven private project cases and four clean notebook executions passed with
+unchanged process inputs. Independent endpoint mass, profile mass, gas/liquid
+energy and physical drain-integral checks retain their declared tolerances.
+The enabled workbook preserves the standard sheets and numeric equivalent
+thermal fields, identifies model/provider/basis provenance and contains no
+run_metadata sheet. Private datasets, execution logs and outputs remain
+outside version control.
 
 Profile property derivatives use a fourth-order centered stencil with a
 0.02 K initial step. This replaces cancellation-prone 0.001 K two-point
@@ -259,7 +270,18 @@ surface was 2.93 K above dewpoint. The revised fixture retains wet/dry and
 condensate assertions and also checks both physical onset signs.
 
 Caloric and saturation-enthalpy inversions use a 5e-14 K absolute root
-tolerance (with the existing Brent relative tolerance), tightening the former
-2e-12 K absolute tolerance. This reduces inverse-root noise in the coupled
-multi-megawatt drain profile. No property law or profile/mass/energy acceptance
+tolerance, with the existing Brent relative tolerance. This reduces
+inverse-root noise in the coupled multi-megawatt drain profile. No property law or profile/mass/energy acceptance
 tolerance is relaxed; the frozen source-reference kernel remains unchanged.
+
+
+## Applicability and computational cost
+
+These gates verify the implementation, balances and forward/inverse
+consistency. They do not establish experimental accuracy. Applicability
+remains limited to the declared counterflow mean-property/secant model and
+local correlation ranges.
+Circular-finned pressure drop remains the existing dry-bank reference;
+condensate-film hydraulics are not added. Large finned inverse cases require
+repeated coupled profile and radial solves and can take substantial time.
+VDI, Jeong and the future wet-model selector remain outside this integration.
