@@ -21,4 +21,5 @@ from core.heat_transfer.wet_coil_solver import (
 from core.phase_change.wet_coil_provider import (
     WetCoilModelProvider, WetCoilOperationContext,
     WetCoilProviderUnsupportedError, ElmahdyMitalasWetCoilProvider,
+    LegacyBulkMeanWetCoilProvider,
 )

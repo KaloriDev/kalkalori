@@ -90,6 +90,11 @@ class ElmahdyMitalasWetCoilProvider:
 
     def simulate(self, hx, inside, outside, *, settings, wet_solver_options, context, **options):
         from core.phase_change.wet_coil_integration import _run_elmahdy
+        # This engine has no dry baseline; these controls belong only to
+        # providers that run the historical sensible Simulation first.
+        for name in ("max_iter", "temperature_tolerance_K", "relative_duty_tolerance",
+                     "relaxation_factor", "relative_alfa_tolerance"):
+            options.pop(name, None)
         return _run_elmahdy(hx, inside, outside, mode="simulation", settings=settings,
                             wet_solver_options=wet_solver_options, _budget=context, **options)
 
@@ -97,6 +102,45 @@ class ElmahdyMitalasWetCoilProvider:
         from core.phase_change.wet_coil_integration import _run_elmahdy
         return _run_elmahdy(hx, inside, outside, mode="rating", settings=settings,
                             wet_solver_options=wet_solver_options, _budget=context, **options)
+
+
+@dataclass(frozen=True)
+class LegacyBulkMeanWetCoilProvider:
+    """Historical KalKalori outside-condensation Simulation, explicitly selected."""
+
+    model_id: str = "legacy_outside_condensation_0d_bulk_mean"
+    model_name: str = "KalKalori legacy bulk-mean outside condensation"
+    source: str = "KalKalori c80e779 (v0.8.2); docs/wet_coil_providers.md"
+    applicability: str = (
+        "Outside H2O in a carrier gas; sensible inside fluid; BareTube or "
+        "CircularFinnedTube; installed bundle flow; no tube-side enhancement; "
+        "surface_margin=0; no frost or simultaneous active phase-change sides."
+    )
+    supports_simulation: bool = True
+    supports_rating: bool = False
+
+    def is_applicable(self, hx, inside, outside, *, settings, **options):
+        from core.geometry.tube import TubeSurfaceType
+        from core.phase_change.capability import detect_phase_change_capability
+
+        cap = detect_phase_change_capability(outside.provider)
+        flow = options.get("flow_arrangement") or hx.bundle.flow_arrangement_resolved
+        return (
+            cap.capable and cap.component == "H2O" and cap.provider_kind == "gas_mixture"
+            and hx.bundle.tube.surface_type in (TubeSurfaceType.PLAIN, TubeSurfaceType.CIRCULAR_FINNED)
+            and hx.tube_side_enhancement is None
+            and options.get("surface_margin", 0.0) == 0.0
+            and flow == hx.bundle.flow_arrangement_resolved
+        )
+
+    def simulate(self, hx, inside, outside, *, settings, wet_solver_options, context, **options):
+        from core.phase_change.legacy_wet_coil_integration import run_legacy_simulation
+
+        return run_legacy_simulation(hx, inside, outside, settings=settings,
+                                     context=context, **options)
+
+    def rate(self, *args, **kwargs):
+        raise WetCoilProviderUnsupportedError("Legacy wet provider does not support rating")
 
 
 def dispatch_wet_coil(hx, inside, outside, *, mode, settings,

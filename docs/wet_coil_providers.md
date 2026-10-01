@@ -42,7 +42,50 @@ Simulation uses installed physical geometry and hydraulics with existing
 thermal surface-margin semantics. Rating solves required thermal area / area
 scale with installed hydraulics; it does not infer required physical tube
 length. The Elmahdy adapter calls the existing engine without moving equations
-or altering solver options. Legacy and other wet models are not included.
+or altering solver options.
+
+`ElmahdyMitalasWetCoilProvider` remains the default for Simulation and Rating.
+`LegacyBulkMeanWetCoilProvider` is available only by explicit selection and
+supports Simulation only:
+
+```python
+from core import LegacyBulkMeanWetCoilProvider
+
+result = hx.simulate(
+    inside, outside,
+    surface_margin=0,
+    wet_coil_provider=LegacyBulkMeanWetCoilProvider(),
+)
+```
+
+Legacy restores the historical KalKalori bulk-mean outside-condensation model
+from `c80e779` (v0.8.2): a dry onset screen, whole-HX coupled enthalpy/water/wall
+iteration, fully drained condensate, and Chilton-Colburn/Lewis mass transfer.
+Its wall/wet-area envelope is a **0D estimate**, not an axial distribution.
+CircularFinnedTube uses the historical nonlinear wet annular-fin FVM, including
+its endpoint cold-zone fallback and dry-collapse behavior.
+
+The supported outside phase change is H2O condensation from a carrier gas on
+BareTube or CircularFinnedTube, with a sensible inside fluid (liquid or the
+historically tested dry gas). Installed bundle flow semantics and existing
+geometry/correlation guards apply; a conflicting per-call flow override is
+rejected. Tube-side enhancement, nonzero surface margin, inside condensation,
+and Rating are unsupported. Simultaneously active phase-change sides retain
+the existing guard. Frost retains the historical warning/dry behavior; no ice
+physics is added. Unsupported condensables are not routed to another model.
+There is **no automatic fallback** between providers.
+
+Legacy uses the existing `phase_change_*` convergence settings. Generic wet
+energy/mass/outlet-temperature tolerances are not reinterpreted as legacy
+residual tolerances. The same operation deadline is checked before/after the
+dry baseline and during the global and radial iterations.
+As historically, exhausted iterations return `converged=False`; callers must
+check this flag. Increasing `phase_change_max_iterations` permits more work
+without changing convergence tolerances or the operation deadline.
+
+Hydraulics use installed geometry and the historical solved gas states. Wet
+pressure-drop correction is not implemented; active circular-fin results
+explicitly label outside dp as a dry/reference bank correlation.
 
 Results retain native diagnostics. `wet_coil_diagnostics["provider"]` contains
 the selected model's identity, source, applicability and support flags; the
@@ -70,3 +113,16 @@ reports these aliases of its existing accepted solution:
 
 Missing diagnostics are omitted rather than estimated. Providers may preserve
 additional native values alongside the generic surface dictionary.
+
+Legacy preserves the historical method under `wet_coil_diagnostics["native_method"]`
+before the dispatcher attaches its provider identity. Its `surface` dictionary
+maps native wall minima/maxima/wet mean, inlet/outlet dew points and onset margin;
+`wet_surface_fraction` retains its original area definition and is **not** named
+`axial_wet_fraction`. `wall_temperature_mean` and `global_core_wall_temperature`
+remain separate. When a native wet-fin state exists, fin base/tip temperatures,
+wet/dry boundary radius (possibly `None`), fin wet fraction, primary surface,
+core wall and root surface temperatures are also reported. A distinct
+condensate-film interface temperature is not synthesized.
+Finned extrema retain their radial exposed-surface meaning, including any
+native cold-zone offset; the onset envelope remains identified as a 0D estimate.
+`H_drain` retains the model's drained-condensate enthalpy rate (W).
