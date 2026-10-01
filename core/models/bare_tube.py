@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from core.heat_transfer.wet_coil_solver import WetCoilSolverOptions, _wet_operation
+from core.phase_change.wet_coil_provider import WetCoilModelProvider
 
 from core.enhancements.base import TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError
 from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
@@ -1209,6 +1210,7 @@ class BareTubeHeatExchanger:
         relaxation_factor: float = 0.5,
         relative_alfa_tolerance: float = 1e-3,
         wet_solver_options: WetCoilSolverOptions | None = None,
+        wet_coil_provider: WetCoilModelProvider | None = None,
         phase_change_onset_tolerance_K: float = 0.0,
         phase_change_activation_band_K: float = 0.5,
         lewis_number: float = 1.0,
@@ -1223,6 +1225,9 @@ class BareTubeHeatExchanger:
     ) -> "HXSimulationResult":
         """Simulate this exchanger, converging the wall/length-corrected
         iterative thermal state by default (v0.5.3).
+
+        ``wet_coil_provider`` selects a global model object (default Elmahdy-
+        Mitalas). Unsupported selections raise; DISABLED bypasses the provider.
 
         ``wet_solver_options`` controls outside wet-coil convergence and one
         operation-wide timeout; omission uses ``WetCoilSolverOptions()``.
@@ -1387,6 +1392,7 @@ class BareTubeHeatExchanger:
         wet_result = route_outside_wet(
             self, inside, outside, mode="simulation", settings=settings,
             wet_solver_options=wet_solver_options,
+            wet_coil_provider=wet_coil_provider,
             K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
             surface_margin=surface_margin, iterate=iterate,
             flow_arrangement=flow_arrangement, euler_provider=euler_provider,
@@ -1482,6 +1488,7 @@ class BareTubeHeatExchanger:
         relative_alfa_tolerance: float = 1e-3,
         relaxation_factor: float = 0.5,
         wet_solver_options: WetCoilSolverOptions | None = None,
+        wet_coil_provider: WetCoilModelProvider | None = None,
         phase_change_onset_tolerance_K: float = 0.0,
         phase_change_activation_band_K: float = 0.5,
         lewis_number: float = 1.0,
@@ -1500,6 +1507,9 @@ class BareTubeHeatExchanger:
         as ``simulate``: omit to inherit, supply a configuration to override,
         or pass ``None`` for the legacy smooth path. This also governs the
         optional Rating-to-Simulation bridge.
+
+        ``wet_coil_provider`` selects a global model object (default Elmahdy-
+        Mitalas). Unsupported selections raise; DISABLED bypasses the provider.
 
         ``wet_solver_options`` controls outside wet-coil convergence and one
         deadline shared by all thermal-area/flow trials and optional Simulation.
@@ -1592,6 +1602,7 @@ class BareTubeHeatExchanger:
         wet_result = route_outside_wet(
             self, inside, outside, mode="rating", settings=settings,
             wet_solver_options=wet_solver_options,
+            wet_coil_provider=wet_coil_provider,
             K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
             Q=Q, effectiveness=effectiveness, include_simulation=include_simulation,
             over_specified_tolerance=over_specified_tolerance,

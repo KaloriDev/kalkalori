@@ -521,6 +521,34 @@ def _public_simulation(
         )
     d["physical_wet_area"] = wet_area
     d["physical_wet_surface_fraction"] = wet_area / thermal_area
+    # Generic reporting aliases of the accepted native solution, in K.
+    # Keep the gas/interface surface and the underlying metal wall distinct.
+    d["surface"] = dict(
+        surface_temperature_min=envelope.outside_skin_min,
+        surface_temperature_max=envelope.outside_skin_max,
+        surface_temperature_wet_mean=wet_mean,
+        dew_point_in=thermo.dewpoint(wi),
+        dew_point_out=thermo.dewpoint(wo),
+        onset_margin=-r.onset_margin,  # dew point minus dry cold surface [K]
+        wet_regime=r.regime,
+        axial_wet_fraction=r.wet_fraction,
+        metal_wall_temperature_min=envelope.outside_min,
+        metal_wall_temperature_max=envelope.outside_max,
+        metal_wall_temperature_mean=envelope.outside_mean,
+        interface_temperature=tuple(p.outside_primary_surface_temperature
+                                    for p in envelope.probes),
+        metal_wall_temperature=tuple(p.outside_wall_temperature for p in envelope.probes),
+    )
+    if fins is not None:
+        d["surface"].update(
+            fin_base_temperature=tuple(p.fin_base_temperature for p in envelope.probes),
+            fin_tip_temperature=tuple(p.fin_tip_temperature for p in envelope.probes),
+        )
+        if "surface_states" in d:
+            d["surface"]["radial_wet_fraction"] = tuple(
+                dict(coordinate=p["coordinate"], fraction=p["radial_wet_area"] / thermal_area)
+                for p in d["surface_states"]
+            )
     pc = PhaseChangeResult(
         side="outside",
         mode=outside.phase_change_mode,
@@ -626,18 +654,18 @@ def _public_simulation(
 
 
 def route_outside_wet(hx, inside, outside, *, mode, settings, **options):
-    """Eligible AUTO uses one engine in every regime; other paths stay legacy."""
-    force_candidate = options.pop("force_candidate", False)
-    if not force_candidate:
-        flow = options.get("flow_arrangement") or hx.bundle.flow_arrangement_resolved
-        if (not _eligible(inside, outside) or hx.tube_side_enhancement is not None
-                or flow == "cocurrentflow"):
-            return None
+    """Global model selection shared by the public and deferred wet paths."""
+    from core.phase_change.wet_coil_provider import dispatch_wet_coil
+    return dispatch_wet_coil(hx, inside, outside, mode=mode, settings=settings, **options)
+
+
+def _run_elmahdy(hx, inside, outside, *, mode, settings, _budget=None, **options):
+    """Existing Elmahdy orchestration, invoked by its thin provider adapter."""
     if settings.lewis_number != 1.0:
         raise ValueError(
             "Elmahdy-Mitalas source-profile closure requires Lewis number 1"
         )
-    budget = _solve_budget(options.pop("wet_solver_options", None))
+    budget = _solve_budget(options.pop("wet_solver_options", None), _budget)
     budget.used = True
     budget.check()
     if mode == "rating":

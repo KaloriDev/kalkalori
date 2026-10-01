@@ -18,3 +18,7 @@ __version__ = "0.8.2"
 from core.heat_transfer.wet_coil_solver import (
     WetCoilSolverOptions, WetCoilConvergenceError, WetCoilTimeoutError,
 )
+from core.phase_change.wet_coil_provider import (
+    WetCoilModelProvider, WetCoilOperationContext,
+    WetCoilProviderUnsupportedError, ElmahdyMitalasWetCoilProvider,
+)

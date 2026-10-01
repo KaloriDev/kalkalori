@@ -5,6 +5,16 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## Unreleased — v0.8.3 provider interface
+
+- Added direct global wet-coil provider selection to Simulation and Rating,
+  with typed operation support, applicability, provenance and shared solver
+  context. The default Elmahdy-Mitalas provider wraps the existing engine.
+- Added nested generic wet-surface diagnostics while preserving native
+  interface and metal-wall temperatures. Physics, Rating area semantics,
+  solver options and whole-operation deadlines are unchanged.
+- See `docs/wet_coil_providers.md` for the public provider contract.
+
 ## [0.8.2] — Inaba1994 wire-coil release
 
 ### Added and changed
