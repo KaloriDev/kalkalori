@@ -1502,7 +1502,7 @@ class BareTubeHeatExchanger:
         optional Rating-to-Simulation bridge.
 
         ``wet_solver_options`` controls outside wet-coil convergence and one
-        deadline shared by all geometry/flow trials and optional Simulation.
+        deadline shared by all thermal-area/flow trials and optional Simulation.
 
         This is the Rating entry point (v0.5.1, thermal state wiring since
         v0.5.3): given geometry and a *closed* heat balance (duty, both

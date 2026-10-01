@@ -2,16 +2,16 @@
 
 The outside water-condensing gas route uses the accepted production engine
 through `core.phase_change.wet_coil_integration.forward_wet_process`.
-Simulation supplies installed geometry. Rating varies physical effective
-tube length and rebuilds each trial exchanger with fixed tube type, fin
-geometry, topology, pitches and materials. Total length preserves the
-installed difference between total and effective length. Trial flow areas,
-velocities, Reynolds numbers, correlations and areas are reevaluated.
+Simulation and Rating both use installed geometry. Rating solves a positive
+thermal area scale, with `A_required=thermal_scale*A_o`. Tube lengths, fin
+geometry, topology, pitches, materials and hydraulic flow areas remain
+installed. Velocities, Reynolds numbers and correlations are evaluated on
+that geometry at the solved fluid states and flow rates.
 
 Rating supports a specified gas outlet and known inside mass flow, predicting
 inside outlet; or two specified outlets and an unknown inside mass flow,
-solving bounded positive length and flow together. Fully specified inconsistent
-processes are errors. Installed geometry never closes an unspecified active
+solving bounded positive area scale and flow together. Fully specified
+inconsistent processes are errors. Installed geometry never closes an unspecified active
 wet gas outlet. The same physical forward solve supplies all wet outputs.
 
 ## AUTO and DISABLED routing
@@ -38,10 +38,11 @@ states can of course change viscosity, velocity and Reynolds number.
 `Q_full` is a separate zero-margin physical forward result; `q` and
 `Q_derated` are the actual reserved-area result. No flow or outlet is rescaled.
 
-Rating instead changes real geometry: its hydraulic diagnostics correspond
-to the required trial exchanger. `A_o` on Rating is installed outside area;
-`final_result` is the required-geometry process/hydraulic snapshot. Detailed
-required and installed geometry fields make these bases explicit.
+Rating uses the same thermal scaling mechanism, allowing scales below or above
+one. Its hydraulic diagnostics always use installed geometry. Both `A_o` and
+`final_result.A_o` are installed outside area; `A_required` is the required
+thermal area. `final_result` combines the required thermal process with
+hydraulics evaluated on installed geometry at that process's fluid states.
 
 ## Numeric equivalent UA reporting (approved process reduction)
 
@@ -61,7 +62,7 @@ inside/outside capacities for crossflow). A degenerate zero-duty/isothermal
 sensible program or an unreachable conventional equivalent raises a controlled
 error; arbitrary epsilon temperature changes are not inserted.
 
-For wet Rating, `A_required` is physical required outside area,
+For wet Rating, `A_required` is required thermal outside area,
 `UA_required=UA_process_eq`, `U_mean=UA_required/A_required`, and
 `UA_actual=U_mean*A_o` at that SAME required-process reference. Consequently
 `overdesign_factor=ua_margin=UA_actual/UA_required-1=A_o/A_required-1`.
@@ -75,7 +76,7 @@ UA ratio reproduces the requested reserve without changing the solved duty.
 These values describe a conventional two-stream exchanger with secant process
 capacities that reproduces the solved wet operating point. They are NOT native
 Elmahdy-Mitalas temperature/enthalpy conductances and cannot feed back into
-wet heat, moisture, wall or geometry solving. Results identify
+wet heat, moisture, wall or thermal-area solving. Results identify
 `ua_reporting_basis="wet_equivalent_secant_capacity_ntu"` and
 `ua_is_equivalent=True`. Native conductances, saturation secant, surfaces,
 radial response, wet fraction and integrated drain remain separate in
@@ -111,15 +112,17 @@ Finned pressure drop remains the existing dry-bank reference evaluated with
 wet gas properties and real physical geometry; no wet film or fewer-than-four-
 row pressure-drop correction is introduced.
 
-Physical sizing diagnostics include `required_effective_length`,
-`required_total_length`, `required_physical_outside_area`,
-`installed_physical_outside_area`, `physical_surface_overdesign`, and the
-required geometry itself. The physical margin and reported wet UA margin
-share the approved common process reference.
+Rating sizing diagnostics include `required_area_scale`,
+`required_thermal_outside_area`, `installed_physical_outside_area`,
+`physical_surface_overdesign`, and `required_area_temperature_residual`.
+Hydraulic length and flow-area diagnostics describe installed geometry.
+Required tube lengths and required geometry are not Rating outputs. The
+surface margin and reported wet UA margin share the same process reference.
 
-Integration acceptance gates have passed: the complete public test collection,
-private project checks and four strict notebook executions. Release remains
-HOLD; numerical acceptance does not authorize a release.
+Before the required-area correction, integration acceptance gates passed:
+the complete public test collection, private project checks and four strict
+notebook executions. Those runs do not validate the corrected Rating contract.
+Release remains HOLD; numerical acceptance does not authorize a release.
 
 
 ## Numerical onset evaluation
@@ -206,6 +209,11 @@ introduced. Exact scalar equality is checked separately from radial and
 coupled-process convergence. This changes evaluation cost, not constitutive
 properties or quadrature/admissibility tolerances.
 
+The radial property batch spans all wet half-cells of a fin evaluation.
+Each face retains its original wet-support nodes, derivative stencil and
+integration order. Grouping the exact property rows avoids repeated small
+array evaluations; scalar face integrals and their derivatives remain equal.
+
 
 ## Physical transition verification
 
@@ -222,9 +230,11 @@ liquid / drain energy within 0.002 W; humidity and condensate signs are
 checked directly. No branch interpolation or post-solve correction is used.
 
 
-The focused public contract group also passes all 19 cases: all three
-regimes on both geometries in Simulation -> required-length Rating ->
-recovered-geometry Simulation, both geometry thermal reserves at 0/5/10%,
+The earlier focused public contract group passed all 19 cases using the
+superseded physical-length Rating contract. The corrected roundtrip uses
+reserved-area Simulation -> required-area Rating -> reserved-area Simulation
+on the same installed geometry. Coverage retains all three regimes on both
+geometries, both geometry thermal reserves at 0/5/10%,
 the joint unknown-inside-flow inverse, exact dry onset, explicit DISABLED
 routing and the reporting identities. Larger integration regressions and the
 complete public collection also passed: 1404 tests, no failures, errors or
@@ -264,10 +274,9 @@ field until the original 0.0002 W whole-coil gate passes, within its existing
 80-iteration bound; it does not increase the tolerance or alter condensate.
 
 The Rating regime-pair fixture uses a common 360 K gas outlet target and
-varies only coolant inlet temperature (20/60 C). Its former 380 K target
-sized a short, physically dry coil even with 20 C coolant: the dry onset
-surface was 2.93 K above dewpoint. The revised fixture retains wet/dry and
-condensate assertions and also checks both physical onset signs.
+varies only coolant inlet temperature (20/60 C), retaining installed hydraulic
+geometry. The fixture retains wet/dry and condensate assertions and also
+checks both physical onset signs.
 
 Caloric and saturation-enthalpy inversions use a 5e-14 K absolute root
 tolerance, with the existing Brent relative tolerance. This reduces

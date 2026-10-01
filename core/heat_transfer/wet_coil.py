@@ -58,6 +58,7 @@ class WetCoilResult:
     profile: tuple[ProfilePoint, ...]
     diagnostics: dict
     _region: object = field(default=None, repr=False, compare=False)
+    _full_region: object = field(default=None, repr=False, compare=False)
 
 
 def _exprel(z):
@@ -360,6 +361,8 @@ def _solve_profile_candidate(
     wet_solver_options=None,
     _budget=None,
     _initial_region=None,
+    _initial_full_region=None,
+    _reuse_interface_bracket=False,
 ) -> WetCoilResult:
     """Internal cooling solve with source-profile moisture and coupled drain.
 
@@ -450,7 +453,11 @@ def _solve_profile_candidate(
                 temperature_from_coordinate=temperature_from_coordinate,
                 surface_enthalpy=surface_enthalpy,
                 wet_solver_options=options, _budget=budget,
-                _initial_region=region_seed,
+                _initial_region=(
+                    _initial_full_region
+                    if f == 1.0 and _initial_full_region is not None
+                    else region_seed
+                ),
             )
             region_seed = candidate
             return candidate
@@ -465,15 +472,18 @@ def _solve_profile_candidate(
     # The specialized all-wet hot surface is not a complementarity test:
     # it can cross the dewpoint while a stable interior dry region remains.
     wet = region(1.0, True)
+    full_region = wet
     full_interface_margin = wet.interface_surface - x.dewpoint
     if full_interface_margin <= 0:
         f = 1.0
     else:
-        candidates = {}
+        candidates = {1.0: wet} if _reuse_interface_bracket else {}
 
         def boundary(f):
             if f == 0:
                 return margin
+            if _reuse_interface_bracket and f in candidates:
+                return candidates[f].interface_surface - x.dewpoint
             candidate = region(f, True)
             candidates[f] = candidate
             return candidate.interface_surface - x.dewpoint
@@ -482,7 +492,31 @@ def _solve_profile_candidate(
         # threshold, clipping, or interpolation between different models.
         fraction_scale = -margin / (full_interface_margin - margin)
         root_tolerance = max(np.nextafter(0.0, 1.0), min(2e-10, 1e-6 * fraction_scale))
-        f = brentq(boundary, 0.0, 1.0, xtol=root_tolerance)
+        lower, upper = 0.0, 1.0
+        if (_reuse_interface_bracket and _initial_region is not None
+                and 0.0 < _initial_region.f < 1.0):
+            # Rebracket the unchanged interface equation near the accepted
+            # prior root. Every sample solves the new coefficients; no old
+            # residual or physical gate is accepted as a new result.
+            seed = _initial_region.f
+            region_seed = _initial_region
+            value = boundary(seed)
+            direction = -1 if value > 0 else 1
+            step = max(1e-6, 0.01 * min(seed, 1.0 - seed))
+            while value != 0:
+                probe = seed + direction * step
+                if probe <= 0.0:
+                    probe = 0.0
+                elif probe >= 1.0:
+                    probe = 1.0
+                if boundary(probe) * value <= 0:
+                    lower, upper = sorted((seed, probe))
+                    break
+                step *= 2
+            if value == 0:
+                lower = upper = seed
+        f = (lower if lower == upper else
+             brentq(boundary, lower, upper, xtol=root_tolerance))
         wet = candidates[f] if f in candidates else region(f, True)
     check_nodes, check_weights = leggauss(min(32, 2 * quadrature_order))
     checked = [
@@ -562,6 +596,7 @@ def _solve_profile_candidate(
         sample,
         diagnostics,
         _region=wet,
+        _full_region=full_region,
     )
 
 

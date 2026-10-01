@@ -1,10 +1,10 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
-"""Physical length/flow Rating closures of the shared wet forward engine.
+"""Thermal area/flow Rating closures of the shared wet forward engine.
 
 The legacy installed-duty scalar closure, activation band and discontinuous
 residual solver have been retired. AUTO dry and wet regimes share the same
-production caloric/surface definitions and independent physical sizing.
+production caloric/surface definitions and thermal sizing on installed geometry.
 """
 
 from __future__ import annotations
@@ -66,7 +66,10 @@ def active_unknown_m_dot_result():
         provider=_wet_provider(), p=P, m_dot=6.0, T_in=420.0, T_out=333.0,
         phase_change_mode=PhaseChangeMode.AUTO,
     )
-    return hx.rate(inside, outside, include_simulation=False)
+    from core import WetCoilSolverOptions
+    return hx.rate(inside, outside, include_simulation=False,
+                   wet_solver_options=WetCoilSolverOptions(
+                       outlet_temperature_tolerance_K=1e-4, timeout_s=None))
 
 
 def test_active_condensation_solves_unknown_inside_mass_flow(active_unknown_m_dot_result) -> None:
@@ -101,7 +104,10 @@ def test_active_condensation_solves_unknown_inside_outlet_temperature(active_unk
         provider=_wet_provider(), p=P, m_dot=6.0, T_in=420.0, T_out=333.0,
         phase_change_mode=PhaseChangeMode.AUTO,
     )
-    result = hx.rate(inside, outside, include_simulation=False)
+    result = hx.rate(
+        inside, outside, include_simulation=False,
+        wet_solver_options=active_unknown_m_dot_result.wet_coil_diagnostics["solver_options"],
+    )
     pc = result.outside_phase_change
 
     assert pc.active is True
@@ -109,12 +115,12 @@ def test_active_condensation_solves_unknown_inside_outlet_temperature(active_unk
     assert result.closed_balance.inside.T_out == pytest.approx(311.0, abs=1.0e-2)
     assert abs(pc.mass_balance_error) < 1.0e-3
     assert abs(pc.energy_balance_error) < 1.0
-    assert result.wet_coil_diagnostics["required_effective_length"] > 0
+    assert result.wet_coil_diagnostics["required_area_scale"] > 0
     assert result.wet_coil_diagnostics["required_inside_mass_flow"] == solved_m_dot
 
 
 def test_dry_auto_with_unknown_inside_mass_flow_still_solves() -> None:
-    """AUTO-DRY sizes length and flow with the same production engine."""
+    """AUTO-DRY solves thermal area and flow with the same production engine."""
     hx = _exchanger()
     inside = BalanceSideSpec(
         provider=_inside_provider(), p=P, m_dot=None, T_in=333.15, T_out=354.15,

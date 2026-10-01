@@ -26,19 +26,36 @@ Non-wet routes do not acquire a wet timeout. Independent internal forward calls
 create their own budget. A timeout raises `WetCoilTimeoutError` (a
 `WetCoilConvergenceError` / `RuntimeError`), never an accepted last iterate.
 Its `diagnostics` contain elapsed/configured seconds, attempted forward and
-property evaluation counts, and available length, flow, residual and regime
-information. It cannot be swallowed by inadmissible-trial `ValueError` handlers.
+property evaluation counts, and available thermal area scale, flow, residual
+and regime information. It cannot be swallowed by inadmissible-trial `ValueError` handlers.
 Checks occur between numerical evaluations; an individual property call is
 not preempted.
 
 Rating stops when the specified outlet residuals meet the selected tolerance.
 Nearby accepted trials supply an initial property/drain iterate only. Successive
 wet-fraction/property evaluations also reuse fixed-point coefficients as seeds. Every
-new geometry/flow still solves the same equations and passes all checks. Exact
-saturation-inverse roots narrow subsequent Brent brackets without property
+new area-scale/flow trial still solves the same equations on installed geometry
+and passes all checks. Exact saturation-inverse roots narrow subsequent Brent
+brackets without property
 interpolation; all trials share one operation-local thermodynamics evaluator.
 `wet_coil_diagnostics["solver_options"]` records the selected object;
 `solver_statistics` records operation-wide counts and elapsed seconds.
+
+Rating warm starts retain the accepted axial quadrature order, the full-wet
+boundary iterate and a local sign-changing interface bracket. Its caloric
+inversions reuse exact solved roots as brackets at the same humidity; every
+new root still satisfies the original equation and precision. These are
+initial guesses and numerical work reuse, not reused acceptance decisions.
+Exact caloric property values are cached within the Rating operation.
+Nearby converged radial temperature shapes also seed Rating's annular Newton
+solve; each new surface state retains the same residual and quadrature checks.
+The joint inverse starts with finite differences in log area and log flow,
+then updates that Jacobian from accepted outlet secants (Broyden update).
+This avoids repeating two complete forward solves at each optimizer step;
+the bounded least-squares solve still requires both original outlet gates.
+An accepted scale-one trial at the solved flow also supplies optional
+installed Simulation without repeating that forward solve. All work remains
+inside the same unchanged operation deadline.
 
 ## Inventory before this change
 
@@ -53,14 +70,15 @@ This inventory refers to production code at
 | Liquid-provider duty check | 0.002 W | Public energy tolerance |
 | Independent radial drain integral | 2e-4 W; refine axial quadrature 10 → 20 → 32 | Public energy tolerance; same refinement |
 | Rating outlet acceptance | 2e-5 K; installed-length shortcut 2e-6 K | Public outlet temperature tolerance |
-| Rating length root | log-length xtol 2e-8, rtol 1e-12 | Retained internal root limits; stop once outlet accuracy is met |
-| Joint length/flow root | outlet residuals 2e-5 K; optimizer xtol/ftol/gtol 1e-10; diff_step 1e-4; 80 function evaluations | Public outlet tolerance with early completion; optimizer safeguards retained; Jacobian uses an absolute 1e-4 log-space step so it does not collapse at a 1 m starting length |
+| Rating area-scale root | log-length xtol 2e-8, rtol 1e-12 | Same internal root limits in log-area-scale; stop once outlet accuracy is met |
+| Joint area-scale/flow root | outlet residuals 2e-5 K; optimizer xtol/ftol/gtol 1e-10; diff_step 1e-4; 80 function evaluations | Public outlet tolerance with early completion; optimizer safeguards retained; Jacobian uses an absolute 1e-4 log-space step so it does not collapse at the installed-area starting scale of one |
 | Specified duty consistency | max(0.002 W, 1e-7 × duty) | max(energy tolerance, 1e-7 × duty) |
 
 Other internal limits remain: 250 wet-profile iterations with 0.6 drain
 relaxation; 200 dry-profile iterations at 1e-10 K; 80 production property
-iterations; 26 length-bracketing doublings, up to 18 admissible-boundary
-bisections; joint log-length/log-flow bounds ±10. Wet-fraction Brent roots use
+iterations; 26 area-scale-bracketing doublings, up to 18 admissible-boundary
+bisections; joint log-area-scale/log-flow bounds ±10 about their initial
+values. Wet-fraction Brent roots use
 `min(2e-10, 1e-6 × onset fraction scale)` with a positive floating-point floor.
 Brent's default evaluation limit is 100. Property enthalpy inversions use
 5e-14 K, inlet dewpoint 1e-12 K; finite-difference derivatives use a 0.02 K
@@ -71,12 +89,19 @@ The local annular-fin solve retains 64 radial cells, 60 Newton iterations,
 independent radial quadrature floors 2e-14 kg/s and 2e-8 W with 2e-8 relative
 accuracy. These are local constitutive/discretization safeguards, distinct
 from whole-coil balance accuracy. Radial dewpoint accuracy remains 1e-10 K.
+Its Newton loop reuses the accepted line-search residual and requests a new
+Jacobian only when another step is needed. Converged surfaces still pass the
+same independent radial quadrature check.
 
-The expensive nesting is Rating residual/Jacobian evaluation → new geometry
-and flow → production property iteration → dry/full/partial regime tests →
-wet-fraction root → coupled profile/drain fixed point → thermodynamic
+The expensive nesting is Rating residual/Jacobian evaluation → new thermal
+area scale and flow on installed geometry → production property iteration →
+dry/full/partial regime tests → wet-fraction root → coupled profile/drain fixed point → thermodynamic
 inversions (plus radial-fin solves and quadrature refinement when applicable).
 
 Tests requiring numerical regression precision pass explicit tighter options;
 their expected accuracy is unchanged. Unlimited validation is intentional and
 must be requested with `timeout_s=None`.
+The finned inverse-area and joint inverse regressions retain their original
+energy/outlet assertions with explicit validation controls. Separate tests
+run both closures with the unchanged default controls and 300-second deadline,
+including optional installed Simulation for the known-flow Rating.

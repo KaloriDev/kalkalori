@@ -130,15 +130,45 @@ class _TaggedPressureDropProvider:
         )
 
 
-def test_active_auto_rating_uses_required_geometry_and_native_radial_profile() -> None:
+@pytest.mark.parametrize("unknown_flow", [False, True])
+def test_inverse_area_rating_with_default_deadline(unknown_flow) -> None:
+    """Production accuracy and deadline, independently of strict regressions."""
+    from core import WetCoilSolverOptions
+
+    hx = _exchanger()
+    inside, outside = _rating_sides(wet_outside=True)
+    inside = replace(inside, m_dot=None) if unknown_flow else replace(inside, T_out=None)
+    result = hx.rate(inside, outside, include_simulation=not unknown_flow)
+    controls = WetCoilSolverOptions()
+    diagnostics = result.wet_coil_diagnostics
+    assert diagnostics["solver_options"] == controls
+    assert diagnostics["solver_statistics"]["elapsed_s"] < controls.timeout_s
+    assert abs(result.closed_balance.outside.T_out - outside.T_out) <= controls.outlet_temperature_tolerance_K
+    if unknown_flow:
+        assert abs(result.closed_balance.inside.T_out - inside.T_out) <= controls.outlet_temperature_tolerance_K
+        assert result.closed_balance.inside.m_dot > 0
+    else:
+        assert result.simulation is not None
+    assert abs(result.outside_phase_change.energy_balance_error) <= controls.energy_tolerance_W
+    assert abs(result.outside_phase_change.mass_balance_error) <= controls.mass_tolerance_kg_s
+    assert result.A_required == pytest.approx(result.A_o * diagnostics["required_area_scale"])
+    assert result.overdesign_factor == pytest.approx(result.A_o / result.A_required - 1)
+    assert diagnostics["hydraulic_effective_length"] == hx.bundle.tube.length_effective
+    assert result.outside_tube_bank_hydraulic.face_area == hx.bundle.frontal_flow_area
+
+
+def test_active_auto_rating_uses_installed_geometry_and_native_radial_profile() -> None:
     from numpy.polynomial.legendre import leggauss
+    from core import WetCoilSolverOptions
     from core.tests.wet_coil_public_test import check_equivalent
     hx = _exchanger()
     inside, outside = _rating_sides(wet_outside=True)
     inside = replace(inside, T_out=None)
     pressure_provider = _TaggedPressureDropProvider()
     result = hx.rate(inside, outside, finned_pressure_drop_provider=pressure_provider,
-                     include_simulation=True)
+                     include_simulation=True,
+                     wet_solver_options=WetCoilSolverOptions(
+                         energy_tolerance_W=2e-4, timeout_s=None))
     phase_change = result.outside_phase_change
     native = result.wet_coil_diagnostics
     assert phase_change.active and phase_change.converged
@@ -165,9 +195,9 @@ def test_active_auto_rating_uses_required_geometry_and_native_radial_profile() -
         assert surface["surface_base_temperature"] <= surface["fin_tip_temperature"]
     assert phase_change.wall_temperature_min <= phase_change.wall_temperature_mean <= phase_change.wall_temperature_max
     check_equivalent(result)
-    assert result.A_required == native["required_physical_outside_area"]
-    assert native["required_geometry"].tube.length_effective == native["required_effective_length"]
-    assert result.final_result.A_o == result.A_required
+    assert result.A_required == native["required_thermal_outside_area"]
+    assert native["hydraulic_effective_length"] == hx.bundle.tube.length_effective
+    assert result.final_result.A_o == result.A_o == hx.bundle.total_outer_area
     diagnostics = result.finned_tube_diagnostics
     assert diagnostics.outside_alpha_physical == pytest.approx(native["outside_alpha_physical"])
     assert result.wet_pressure_drop_supported is False
@@ -300,9 +330,8 @@ def test_auto_rating_dry_regime_is_a_valid_production_result() -> None:
 
 
 def test_crossing_auto_rating_onset_changes_regime_not_exception() -> None:
-    # At 380 K the required short geometry is physically DRY even with
-    # 20 C coolant (dry onset surface is 2.93 K above dewpoint). Use one
-    # fixed target within the verified wet bracket for the colder coolant.
+    # Use the same outlet target to compare cold and warm coolant at
+    # installed hydraulic geometry.
     wet = _capable_auto_rating(20.0, outside_T_out_K=360.0)
     dry = _capable_auto_rating(60.0, outside_T_out_K=360.0)
 

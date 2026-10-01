@@ -45,19 +45,26 @@ from core.properties.water import (
 class WetGasThermodynamics:
     """Existing dry-carrier CoolProp + water IAPWS datum, without air substitution."""
 
-    def __init__(self, pressure, capability):
+    def __init__(self, pressure, capability, *, _reuse_inverse_state=False):
         if not capability.capable or capability.component != "H2O":
             raise ValueError("The wet coil requires a configured H2O/dry-carrier gas")
         self.pressure, self.capability = pressure, capability
+        self._reuse_inverse_state = _reuse_inverse_state
         self.evaluator = WetGasEnthalpyEvaluator(
             pressure, capability, reuse_dry_backend_state=True
+        )
+        self._enthalpy = (
+            lru_cache(maxsize=16384)(self.evaluator.enthalpy)
+            if _reuse_inverse_state else self.evaluator.enthalpy
         )
         self.lower = 273.16
         self.saturation_upper = water_saturation_temperature(pressure) - 1e-3
         self._saturation_inverse_roots = []
+        self._temperature_inverse_roots = {}
+        self._radial_initial_states = {}
 
     def enthalpy(self, T, W):
-        return self.evaluator.enthalpy(T, W)
+        return self._enthalpy(T, W)
 
     @lru_cache(maxsize=16384)
     def saturation_humidity(self, T):
@@ -102,7 +109,26 @@ class WetGasThermodynamics:
         return (h - self.enthalpy(T, 0.0)) / water_saturation_vapor_enthalpy(T=T)
 
     def temperature(self, h, W):
-        return brentq(lambda T: self.enthalpy(T, W) - h, self.lower, 640.0, xtol=5e-14)
+        if not self._reuse_inverse_state:
+            return brentq(lambda T: self.enthalpy(T, W) - h, self.lower, 640.0, xtol=5e-14)
+        # Rating repeatedly inverts the same fixed-humidity caloric curve.
+        # Exact solved roots supply brackets, never interpolated properties.
+        roots = self._temperature_inverse_roots.setdefault(W, [])
+        index = bisect_left(roots, (h,))
+        if index < len(roots) and roots[index][0] == h:
+            return roots[index][1]
+        lower = self.lower if index == 0 else roots[index - 1][1]
+        upper = 640.0 if index == len(roots) else roots[index][1]
+        if self.enthalpy(lower, W) > h:
+            lower = self.lower
+        if self.enthalpy(upper, W) < h:
+            upper = 640.0
+        root = brentq(lambda T: self.enthalpy(T, W) - h, lower, upper, xtol=5e-14)
+        if len(roots) >= 4096:
+            roots.clear()
+            index = 0
+        roots.insert(index, (h, root))
+        return root
 
     @lru_cache(maxsize=16384)
     def condensate_enthalpy(self, T):
@@ -194,8 +220,8 @@ class InsideWallAdapter:
             2 * pi * core.wall_k * core.length_effective * b.n_tubes_total
         )
         film = 1 / (inside.alfa_corrected * b.total_inner_area)
-        if not isfinite(self.thermal_scale) or not 0 < self.thermal_scale <= 1:
-            raise ValueError("thermal_scale must be finite and in (0, 1]")
+        if not isfinite(self.thermal_scale) or self.thermal_scale <= 0:
+            raise ValueError("thermal_scale must be positive and finite")
         film /= self.thermal_scale
         wall /= self.thermal_scale
         return film + wall, dict(
@@ -375,6 +401,12 @@ def solve_production_coil(
             surface_enthalpy=surface_enthalpy,
             wet_solver_options=options, _budget=budget,
             _initial_region=None if previous is None else previous._region,
+            _initial_full_region=(
+                previous._full_region
+                if thermodynamics._reuse_inverse_state and previous is not None
+                else None
+            ),
+            _reuse_interface_bracket=thermodynamics._reuse_inverse_state,
         )
         correction_error = 0.0
         if finned and r.profile:
@@ -613,7 +645,15 @@ class CircularFinnedTubeAdapter:
         network = diag["network"]
 
         def fin(base):
-            return annular_response(
+            seeds = t._radial_initial_states.setdefault((id(tube), self.radial_cells), [])
+            initial = None
+            if t._reuse_inverse_state and seeds:
+                nearest = min(seeds, key=lambda s: (
+                    abs(base - s[0]) + abs(Tg - s[1]) + 1000 * abs(W - s[2])
+                    + abs(log(alpha / s[3])) + abs(log(cp / s[4]))
+                ))
+                initial = tuple(base + (Tg - base) * v for v in nearest[5])
+            result = annular_response(
                 tube,
                 base_temperature=base,
                 gas_temperature=Tg,
@@ -624,7 +664,18 @@ class CircularFinnedTubeAdapter:
                 M_dry=cap.M_dry,
                 M_water=cap.M_condensable,
                 radial_cells=self.radial_cells,
+                _initial_temperatures=initial,
             )
+            if t._reuse_inverse_state:
+                # Only a normalized initial temperature shape is reused.
+                # New boundaries, properties, residuals and quadrature gates
+                # are evaluated by the unchanged annular Newton solve.
+                seeds.append((base, Tg, W, alpha, cp, tuple(
+                    (v - base) / (Tg - base) for v in result.radial_temperatures
+                )))
+                if len(seeds) > 128:
+                    del seeds[0]
+            return result
 
         if tube.D_root == tube.D_o and network.resistance_contact > 0:
             # Contact is in the fin branch only; the exposed tube bypasses it.

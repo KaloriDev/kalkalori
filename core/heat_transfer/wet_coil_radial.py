@@ -123,6 +123,8 @@ class SurfaceProperties:
                 continue
             ready.append(T)
             humidity.append(sigma)
+        if not ready:
+            return
         pairs = _saturation_enthalpy_pairs_batch(ready)
         for T, sigma, (hf, hg) in zip(ready, humidity, pairs):
             self._values[T] = (sigma, hf, hg - hf)
@@ -149,6 +151,35 @@ class SurfaceProperties:
         return water_dew_point(partial, tolerance_K=1e-10)
 
 
+def _face_quadrature(r_left, r_right, T_left, T_right, a, b, dew, order, offset):
+    """Identical wet-support nodes for property prefetch and integration."""
+    if dew is None:
+        return (), a, a
+    dt, dr = T_right - T_left, r_right - r_left
+    ta = T_left + (a - r_left) / dr * dt + offset
+    tb = T_left + (b - r_left) / dr * dt + offset
+    if min(ta, tb) >= dew:
+        return (), a, a
+    lo, hi = a, b
+    if max(ta, tb) > dew:
+        crossing = r_left + (dew - offset - T_left) * dr / dt
+        if dt > 0:
+            hi = crossing
+        else:
+            lo = crossing
+    if hi <= lo:
+        return (), a, a
+    points, weights = _GAUSS[order]
+    samples = []
+    for point, weight in zip(points, weights):
+        r = (hi + lo) / 2 + point * (hi - lo) / 2
+        right_shape = (r - r_left) / dr
+        shapes = (1 - right_shape, right_shape)
+        T = T_left + right_shape * dt + offset
+        samples.append((r, shapes, T, weight))
+    return samples, lo, hi
+
+
 def integrate_face_piece(
     *,
     r_left,
@@ -166,6 +197,7 @@ def integrate_face_piece(
     offset=0.0,
     fraction=1.0,
     with_derivatives=True,
+    _prefetched=False,
 ):
     """Integrals and derivatives with respect to two radial endpoint nodes.
 
@@ -177,30 +209,11 @@ def integrate_face_piece(
     jacobian = [[0.0, 0.0] for _ in range(3)]
     if dew is None or fraction == 0:
         return values, jacobian, 0.0
-    dt, dr = T_right - T_left, r_right - r_left
-    ta = T_left + (a - r_left) / dr * dt + offset
-    tb = T_left + (b - r_left) / dr * dt + offset
-    if min(ta, tb) >= dew:
-        return values, jacobian, 0.0
-    lo, hi = a, b
-    if max(ta, tb) > dew:
-        crossing = r_left + (dew - offset - T_left) * dr / dt
-        if dt > 0:
-            hi = crossing
-        else:
-            lo = crossing
-    if hi <= lo:
-        return values, jacobian, 0.0
-    points, weights = _GAUSS[order]
-    samples = []
-    for point, weight in zip(points, weights):
-        r = (hi + lo) / 2 + point * (hi - lo) / 2
-        right_shape = (r - r_left) / dr
-        shapes = (1 - right_shape, right_shape)
-        T = T_left + right_shape * dt + offset
-        samples.append((r, shapes, T, weight))
+    samples, lo, hi = _face_quadrature(
+        r_left, r_right, T_left, T_right, a, b, dew, order, offset
+    )
     prefetch = getattr(properties, "prefetch", None)
-    if prefetch is not None:
+    if prefetch is not None and not _prefetched:
         prefetch([sample[2] for sample in samples], with_derivatives=with_derivatives)
     for r, shapes, T, weight in samples:
         sigma, hl, hfg = properties.values(T)
@@ -258,6 +271,20 @@ def integrate_fin_cells(
         *(temperatures[i] for i in chain.fin_cell_indices),
         temperatures[chain.fin_tip_index],
     )
+    prefetch = getattr(properties, "prefetch", None)
+    if prefetch is not None:
+        # Evaluate exact IF97 rows in one fin-wide batch. Nodes, derivative
+        # stencils and per-row arithmetic are unchanged; no interpolation.
+        pending = []
+        for k in range(len(chain.fin_cell_indices)):
+            west, east = mesh.r_root + k * mesh.dr, mesh.r_root + (k + 1) * mesh.dr
+            for left, a, b in ((k, west, radii[k + 1]), (k + 1, radii[k + 1], east)):
+                samples, _, _ = _face_quadrature(
+                    radii[left], radii[left + 1], nodes[left], nodes[left + 1],
+                    a, b, dew, order, offset,
+                )
+                pending.extend(sample[2] for sample in samples)
+        prefetch(pending, with_derivatives=with_derivatives)
     result = {}
     for k, index in enumerate(chain.fin_cell_indices):
         west, east = mesh.r_root + k * mesh.dr, mesh.r_root + (k + 1) * mesh.dr
@@ -285,6 +312,7 @@ def integrate_fin_cells(
                 offset=offset,
                 fraction=fraction,
                 with_derivatives=with_derivatives,
+                _prefetched=prefetch is not None,
             )
             values = [x + y for x, y in zip(values, vals)]
             wet_area += wet

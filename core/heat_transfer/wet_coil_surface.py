@@ -46,6 +46,7 @@ def annular_response(
     M_dry,
     M_water,
     radial_cells=64,
+    _initial_temperatures=None,
 ):
     if gas_temperature <= base_temperature or min(alpha, cp_dry, pressure) <= 0:
         raise ValueError("Invalid annular surface boundary")
@@ -70,7 +71,12 @@ def annular_response(
         rhs.append(
             alpha * area * gas_temperature + boundary * chain.boundary_temperatures[i]
         )
-    temperatures = _solve_tridiagonal(lower, diag, upper, rhs)
+    temperatures = (
+        _solve_tridiagonal(lower, diag, upper, rhs)
+        if _initial_temperatures is None else list(_initial_temperatures)
+    )
+    if len(temperatures) != count:
+        raise ValueError("Radial initial state must match the fin mesh")
 
     def evaluate(T, order=4, derivatives=True):
         cells = integrate_fin_cells(
@@ -125,8 +131,11 @@ def annular_response(
                 row[i] -= values[1]
         return residual, lo, dd, up, loads, wet
 
+    state = evaluate(temperatures, derivatives=False)
     for iteration in range(60):
-        residual, lo, dd, up, loads, wet = evaluate(temperatures)
+        # A successful line search already evaluated this residual. Check it
+        # before requesting derivatives; a converged surface needs no Jacobian.
+        residual, lo, dd, up, loads, wet = state
         heat = fsum(
             alpha * A * (gas_temperature - T) + v[1]
             for A, T, v in zip(areas, temperatures, loads)
@@ -161,6 +170,7 @@ def annular_response(
                 ),
                 fsum(v[5] for v in loads),
             )
+        _, lo, dd, up, _, _ = evaluate(temperatures)
         delta = _solve_tridiagonal(lo, dd, up, [-v for v in residual])
         damping = 1.0
         for _ in range(16):
@@ -172,6 +182,7 @@ def annular_response(
                 candidate = evaluate(trial, derivatives=False)
                 if max(abs(v) for v in candidate[0]) < norm:
                     temperatures = trial
+                    state = candidate
                     break
             damping /= 2
         else:

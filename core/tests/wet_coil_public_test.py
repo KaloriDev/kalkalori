@@ -12,7 +12,6 @@ from core.models.heat_balance import BalanceSideSpec
 from core.phase_change.types import PhaseChangeMode
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
 from core.phase_change.wet_coil_integration import (
-    required_exchanger,
     forward_wet_process,
 )
 from core.phase_change.wet_coil_reporting import equivalent_wet_process
@@ -113,12 +112,13 @@ def check_equivalent(r):
 )
 def test_public_forward_inverse_roundtrip(finned, W, regime):
     hx, a, b = context(finned, W)
-    sim = hx.simulate(a, b, wet_solver_options=TIGHT_OPTIONS)
-    installed = required_exchanger(hx, 2.3)
-    rating = installed.rate(*specs(a, b, sim.T_out_outside), wet_solver_options=TIGHT_OPTIONS)
+    sim = hx.simulate(a, b, surface_margin=0.1, wet_solver_options=TIGHT_OPTIONS)
+    rating = hx.rate(*specs(a, b, sim.T_out_outside), wet_solver_options=TIGHT_OPTIONS)
     d = rating.wet_coil_diagnostics
-    assert d["required_effective_length"] == pytest.approx(2.0, rel=2e-5)
-    recovered = BareTubeHeatExchanger(d["required_geometry"]).simulate(a, b, wet_solver_options=TIGHT_OPTIONS)
+    assert d["required_area_scale"] == pytest.approx(1 / 1.1, rel=2e-5)
+    assert rating.A_required == pytest.approx(hx.bundle.total_outer_area / 1.1, rel=2e-5)
+    assert rating.final_result.A_o == rating.A_o == hx.bundle.total_outer_area
+    recovered = hx.simulate(a, b, surface_margin=rating.overdesign_factor, wet_solver_options=TIGHT_OPTIONS)
     assert recovered.q == pytest.approx(sim.q, rel=2e-6, abs=0.002)
     assert recovered.T_out_inside == pytest.approx(sim.T_out_inside, abs=2e-5)
     assert recovered.T_out_outside == pytest.approx(sim.T_out_outside, abs=2e-5)
@@ -171,16 +171,18 @@ def test_public_thermal_reserve_changes_wet_solution(finned):
         assert r.Q_full == pytest.approx(results[0].q, abs=0.002)
 
 
-def test_inside_flow_inverse_roundtrip():
-    hx, a, b = context()
-    sim = hx.simulate(a, b, wet_solver_options=TIGHT_OPTIONS)
-    rated = required_exchanger(hx, 2.2).rate(
+@pytest.mark.parametrize("finned", [False, True])
+def test_inside_flow_inverse_roundtrip(finned):
+    hx, a, b = context(finned)
+    sim = hx.simulate(a, b, surface_margin=0.1, wet_solver_options=TIGHT_OPTIONS)
+    rated = hx.rate(
         *specs(a, b, sim.T_out_outside, sim.T_out_inside, False), wet_solver_options=TIGHT_OPTIONS
     )
     assert rated.closed_balance.inside.m_dot == pytest.approx(a.m_dot, rel=2e-5)
-    assert rated.wet_coil_diagnostics["required_effective_length"] == pytest.approx(
-        2.0, rel=2e-5
+    assert rated.wet_coil_diagnostics["required_area_scale"] == pytest.approx(
+        1 / 1.1, rel=2e-5
     )
+    check_equivalent(rated)
     assert rated.Q_required == pytest.approx(sim.q, abs=0.002)
 
 
@@ -229,54 +231,117 @@ def test_disabled_dry_numerical_path_is_unchanged():
 
 
 @pytest.mark.parametrize("finned", [False, True])
-def test_thermal_scale_preserves_transport_at_identical_states(finned):
+@pytest.mark.parametrize("scale", [0.75, 1.0, 1.25])
+def test_thermal_scale_preserves_transport_at_identical_states(finned, scale):
     from core.heat_transfer.wet_coil_adapters import (
         BareTubeAdapter,
         CircularFinnedTubeAdapter,
     )
 
     b, t, i = production_context(finned)
-    scaled = replace(i, thermal_scale=1 / 1.1)
+    scaled = replace(i, thermal_scale=scale)
     ri, di = i.evaluate(285.0)
     rs, ds = scaled.evaluate(285.0)
-    assert rs == pytest.approx(ri * 1.1, rel=2e-13)
+    assert rs == pytest.approx(ri / scale, rel=2e-13)
+    assert scaled.bundle is b
+    assert ds["film_resistance"] == pytest.approx(di["film_resistance"] / scale)
+    assert ds["wall_resistance"] == pytest.approx(di["wall_resistance"] / scale)
+    assert ds["inside_correlation"] == di["inside_correlation"]
     assert ds["htc"] == di["htc"]
     assert ds["reynolds"] == di["reynolds"]
     typ = CircularFinnedTubeAdapter if finned else BareTubeAdapter
     a = typ(b, t)
-    c = typ(b, t, thermal_scale=1 / 1.1)
+    c = typ(b, t, thermal_scale=scale)
     rd, d = a.evaluate(300.0, 0.016, 0.5, (ri, di))
     sd, s = c.evaluate(300.0, 0.016, 0.5, (rs, ds))
-    assert sd == pytest.approx(rd * 1.1, rel=2e-13)
+    assert sd == pytest.approx(rd / scale, rel=2e-13)
     assert d["outside_alpha_physical"] == s["outside_alpha_physical"]
     assert d["outside_reynolds"] == s["outside_reynolds"]
     assert s["dry_effective_area"] == pytest.approx(
-        d["dry_effective_area"] / 1.1, rel=2e-13
+        d["dry_effective_area"] * scale, rel=2e-13
     )
+    assert s["outside_correlation"] == d["outside_correlation"]
+    assert s["thermal_area"] == pytest.approx(b.total_outer_area * scale)
     if finned:
+        assert s["common_root_contact_resistance"] == pytest.approx(
+            d["common_root_contact_resistance"] / scale)
         full = a.response(285.0, 300.0, 0.016, d)
         reserved = c.response(285.0, 300.0, 0.016, s)
-        assert reserved["heat_gas"] == pytest.approx(full["heat_gas"] / 1.1, rel=1e-10)
+        assert reserved["heat_gas"] == pytest.approx(full["heat_gas"] * scale, rel=1e-10)
+        assert reserved["wet_area"] == pytest.approx(full["wet_area"] * scale)
         assert reserved["fin_tip"] == pytest.approx(full["fin_tip"], abs=1e-7)
 
 
-def test_required_length_preserves_end_allowance_and_changes_hydraulics():
-    hx, _, _ = context(True)
-    core = replace(hx.bundle.tube.core_tube, length_total=2.2)
-    hx = BareTubeHeatExchanger(
-        replace(hx.bundle, tube=replace(hx.bundle.tube, core_tube=core))
-    )
-    trial = required_exchanger(hx, 1.5)
-    assert trial.bundle.tube.length_total == pytest.approx(1.7)
-    assert trial.bundle.n_tubes_total == hx.bundle.n_tubes_total
-    assert (
-        trial.bundle.internal_flow_area_per_pass
-        == hx.bundle.internal_flow_area_per_pass
-    )
-    assert trial.bundle.frontal_flow_area != hx.bundle.frontal_flow_area
-    assert trial.bundle.total_outer_area / hx.bundle.total_outer_area == pytest.approx(
-        0.75
-    )
+
+@pytest.mark.parametrize("finned", [False, True])
+@pytest.mark.parametrize("scale", [0.75, 1.0, 1.25])
+def test_rating_area_keeps_installed_hydraulics(finned, scale, monkeypatch):
+    from core.phase_change import wet_coil_integration as integration
+
+    hx, a, b = context(finned)
+    # Include unheated ends so hydraulic length cannot accidentally follow area.
+    tube = hx.bundle.tube
+    core = tube.core_tube if finned else tube
+    core = replace(core, length_total=core.length_effective + 0.2)
+    hx = BareTubeHeatExchanger(replace(
+        hx.bundle, tube=replace(tube, core_tube=core) if finned else core))
+    bundle = hx.bundle
+    target = forward_wet_process(
+        hx, a, b, _area_scale=scale, wet_solver_options=TIGHT_OPTIONS)[0]
+    original_forward = integration.forward_wet_process
+    original_solve = BareTubeHeatExchanger.solve
+    original_hydraulics = integration.evaluate_outside_hydraulics
+    snapshots, banks, trials = [], [], []
+
+    def forward(installed, *args, **kwargs):
+        assert installed is hx
+        trials.append(kwargs["_area_scale"])
+        return original_forward(installed, *args, **kwargs)
+
+    def solve(installed, *args, **kwargs):
+        assert installed is hx
+        snapshot = original_solve(installed, *args, **kwargs)
+        snapshots.append(snapshot)
+        return snapshot
+
+    def hydraulics(**kwargs):
+        assert kwargs["bundle"] is bundle
+        bank = original_hydraulics(**kwargs)
+        banks.append(bank)
+        return bank
+
+    monkeypatch.setattr(integration, "forward_wet_process", forward)
+    monkeypatch.setattr(BareTubeHeatExchanger, "solve", solve)
+    monkeypatch.setattr(integration, "evaluate_outside_hydraulics", hydraulics)
+    rated = hx.rate(*specs(a, b, target.air_out), wet_solver_options=TIGHT_OPTIONS)
+    d = rated.wet_coil_diagnostics
+    if scale == 1.0:
+        assert trials == [1.0]
+    else:
+        assert len(set(trials)) > 1
+    assert hx.bundle is bundle
+    assert rated.A_o == bundle.total_outer_area
+    assert rated.A_required == pytest.approx(bundle.total_outer_area * scale, rel=2e-5)
+    assert rated.Q_required == pytest.approx(target.heat_liquid, abs=0.002)
+    assert rated.closed_balance.inside.T_out == pytest.approx(target.liquid_out, abs=2e-5)
+    assert rated.closed_balance.outside.T_out == pytest.approx(target.air_out, abs=2e-7)
+    assert d["thermal_outside_area"] == rated.A_required
+    assert d["thermal_inside_area"] == pytest.approx(bundle.total_inner_area * scale, rel=2e-5)
+    assert d["hydraulic_total_length"] == bundle.tube.length_total
+    assert d["hydraulic_effective_length"] == bundle.tube.length_effective
+    assert d["hydraulic_inner_flow_area"] == bundle.internal_flow_area_per_pass
+    assert d["hydraulic_frontal_area"] == bundle.frontal_flow_area
+    assert not ({"required_effective_length", "required_total_length",
+                 "required_geometry", "physical_length_overdesign",
+                 "required_length_temperature_residual"} & d.keys())
+    assert "required_effective_length" not in d["solver_statistics"]
+    assert len(snapshots) == len(banks) == 1
+    assert rated.tube_side_hydraulic == snapshots[0].tube_side_hydraulic
+    assert rated.tube_side_pressure_drop == snapshots[0].tube_side_pressure_drop
+    assert rated.outside_tube_bank_hydraulic == replace(
+        banks[0], midpoint_method="arithmetic_temperature_and_water_ratio")
+    assert rated.outside_tube_bank_hydraulic.face_area == bundle.frontal_flow_area
+    check_equivalent(rated)
 
 
 def test_wet_rating_rejects_unspecified_outlet_and_incompatible_program():

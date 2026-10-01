@@ -33,15 +33,14 @@ def test_invalid_controls(field, value):
 
 def test_default_forward_and_inverse_controls():
     hx, a, b = context()
-    sim = hx.simulate(a, b)
+    sim = hx.simulate(a, b, surface_margin=0.1)
     options = sim.wet_coil_diagnostics["solver_options"]
     assert options == WetCoilSolverOptions()
     assert sim.outside_water_ratio_out <= sim.outside_phase_change.W_in
     assert sim.outside_condensate_mass_flow >= 0
     assert abs(sim.wet_coil_diagnostics["energy_residual"]) <= options.energy_tolerance_W
-    installed = integration.required_exchanger(hx, 2.2)
-    rating = installed.rate(*specs(a, b, sim.T_out_outside), wet_solver_options=options)
-    joint = installed.rate(*specs(a, b, sim.T_out_outside, sim.T_out_inside, False),
+    rating = hx.rate(*specs(a, b, sim.T_out_outside), wet_solver_options=options)
+    joint = hx.rate(*specs(a, b, sim.T_out_outside, sim.T_out_inside, False),
                            wet_solver_options=options)
     for result in (rating, joint):
         assert result.wet_coil_diagnostics["solver_options"] is options
@@ -75,7 +74,7 @@ def test_rating_timeout_does_not_reset_between_forward_trials(monkeypatch):
     assert d["elapsed_s"] == 4.0
     assert d["timeout_s"] == 3.0
     assert d["forward_evaluations"] == 2
-    assert d["required_effective_length"] > 0
+    assert d["required_area_scale"] > 0
     assert d["inside_mass_flow"] == a.m_dot
     assert d["last_regime"]
     assert controls._active_budget.get() is None
@@ -106,10 +105,12 @@ def test_reserve_and_rating_simulation_share_options_and_deadline(monkeypatch):
     hx, a, b = context(W=0.004)
     options = WetCoilSolverOptions(timeout_s=None)
     budgets = []
+    scales = []
     original = integration.forward_wet_process
 
     def forward(*args, **kwargs):
         budgets.append(kwargs["_budget"])
+        scales.append(kwargs.get("_area_scale", 1.0))
         assert kwargs["wet_solver_options"] is options
         return original(*args, **kwargs)
 
@@ -118,10 +119,13 @@ def test_reserve_and_rating_simulation_share_options_and_deadline(monkeypatch):
     assert len(budgets) == 2 and budgets[0] is budgets[1]
     assert sim.wet_coil_diagnostics["solver_statistics"]["forward_evaluations"] == 2
     budgets.clear()
-    target = original(hx, a, b, wet_solver_options=options)[0].air_out
+    scales.clear()
+    target = sim.T_out_outside
     rated = hx.rate(*specs(a, b, target), include_simulation=True, wet_solver_options=options)
     assert len(budgets) >= 2 and all(v is budgets[0] for v in budgets)
     assert rated.simulation.wet_coil_diagnostics["solver_options"] is options
+    assert rated.simulation.q == pytest.approx(sim.Q_full, abs=0.002)
+    assert sum(v == 1.0 for v in scales) == 1
 
 
 def test_reused_saturation_brackets_preserve_property_inverse_precision():
@@ -135,3 +139,19 @@ def test_reused_saturation_brackets_preserve_property_inverse_precision():
         recovered = thermo.saturation_temperature(enthalpy)
         assert recovered == pytest.approx(temperature, abs=5e-12, rel=0)
         assert thermo.saturation_enthalpy(recovered) == pytest.approx(enthalpy, abs=1e-6, rel=0)
+
+
+def test_rating_caloric_brackets_preserve_inverse_precision_and_humidity():
+    from core.tests.wet_coil_test import production_context
+    from core.heat_transfer.wet_coil_adapters import WetGasThermodynamics
+
+    _, reference, _ = production_context()
+    reused = WetGasThermodynamics(
+        reference.pressure, reference.capability, _reuse_inverse_state=True,
+    )
+    for humidity in (0.016, 0.004, 0.016):
+        for temperature in (310.0, 285.0, 320.0, 300.0, 310.0 + 1e-10, 310.0):
+            enthalpy = reference.enthalpy(temperature, humidity)
+            actual = reused.temperature(enthalpy, humidity)
+            assert actual == pytest.approx(reference.temperature(enthalpy, humidity), abs=5e-12, rel=0)
+            assert reused.enthalpy(actual, humidity) == pytest.approx(enthalpy, abs=1e-6, rel=0)
