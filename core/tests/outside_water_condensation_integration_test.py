@@ -20,6 +20,8 @@ import math
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
@@ -62,7 +64,11 @@ def result(hx: BareTubeHeatExchanger):
     inside = HXSideInput(
         provider=GasMixturePropertyProvider(dry_air), m_dot=15.0, T_in=290.0, p=101_325.0,
     )
-    return hx.simulate(inside, outside)
+    # Preserve micowatt regression checks independently of engineering defaults.
+    return hx.simulate(inside, outside, wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=1e-6, outlet_temperature_tolerance_K=1e-8,
+            timeout_s=None,
+        ))
 
 
 def test_solver_converged(result) -> None:

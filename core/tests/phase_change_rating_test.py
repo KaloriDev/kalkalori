@@ -13,6 +13,8 @@ import math
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
@@ -59,7 +61,11 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
         m_dot=6.0, T_in=420.0, T_out=333.0,
     )
 
-    result = hx.rate(inside, outside)
+    # Preserve the original independent energy/outlet regression precision.
+    result = hx.rate(inside, outside, wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
+        ))
     pc = result.outside_phase_change
 
     assert pc.active is True

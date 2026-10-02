@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
@@ -96,7 +98,11 @@ def test_wet_gas_capable_but_no_condensation_uses_production_dry_closure() -> No
     outside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.08)), m_dot=8.0, T_in=450.0, p=101325.0)
 
     expected = run_simulation(hx, inside, outside)
-    result = hx.simulate(inside, outside)
+    # Preserve the original enthalpy-closure accuracy.
+    result = hx.simulate(inside, outside, wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=1e-6, outlet_temperature_tolerance_K=1e-8,
+            timeout_s=None,
+        ))
 
     pc = result.outside_phase_change
     assert pc.capable is True

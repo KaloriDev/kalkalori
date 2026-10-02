@@ -14,6 +14,8 @@ from dataclasses import replace
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.tube import BareTube
@@ -81,6 +83,7 @@ def _wet_air_provider() -> GasMixturePropertyProvider:
 
 def _simulate_at_liquid_inlet(T_liquid_in_K: float):
     hx = _economizer_hx()
+    # Preserve micowatt regression checks independently of engineering defaults.
     return hx.simulate(
         HXSideInput(
             provider=_liquid_stub(),
@@ -95,6 +98,10 @@ def _simulate_at_liquid_inlet(T_liquid_in_K: float):
             T_in=335.15,
             p=P,
             phase_change_mode=PhaseChangeMode.AUTO,
+        ),
+        wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
         ),
     )
 

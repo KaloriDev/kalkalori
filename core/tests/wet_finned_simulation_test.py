@@ -8,6 +8,8 @@ import math
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.tube import BareTube
@@ -96,7 +98,14 @@ def _side_inputs(
 @pytest.fixture(scope="module")
 def active_result():
     inside, outside = _side_inputs()
-    return _wet_finned_hx().simulate(inside, outside, surface_margin=0.10)
+    # Preserve the original independent balance precision.
+    return _wet_finned_hx().simulate(
+        inside, outside, surface_margin=0.10,
+        wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
+        ),
+    )
 
 
 def test_active_wet_finned_simulation_reports_shared_surface_margin(
@@ -246,6 +255,10 @@ def test_endpoint_onset_uses_source_profile_with_native_radial_states() -> None:
             T_in=335.15,
             p=P,
             phase_change_mode=PhaseChangeMode.AUTO,
+        ),
+        wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
         ),
     )
 
