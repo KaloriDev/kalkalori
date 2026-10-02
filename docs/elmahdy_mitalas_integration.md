@@ -1,6 +1,6 @@
 # Elmahdy-Mitalas public forward/inverse integration
 
-The outside water-condensing gas route uses the accepted production engine
+The default outside water-condensing gas route uses the accepted production engine
 through `core.phase_change.wet_coil_integration.forward_wet_process`.
 Simulation and Rating both use installed geometry. Rating solves a positive
 thermal area scale, with `A_required=thermal_scale*A_o`. Tube lengths, fin
@@ -14,9 +14,15 @@ solving bounded positive area scale and flow together. Fully specified
 inconsistent processes are errors. Installed geometry never closes an unspecified active
 wet gas outlet. The same physical forward solve supplies all wet outputs.
 
+Selection is by direct `wet_coil_provider` object. Omission or `None` selects
+Elmahdy for Simulation and Rating. Explicit historical Legacy selection is
+Simulation-only; unsupported operations fail explicitly without fallback.
+See [the provider contract](wet_coil_providers.md) for external implementations.
+
 ## AUTO and DISABLED routing
 
-For an eligible outside wet-gas/water-condensation case, AUTO uses the same
+With the default Elmahdy provider, an eligible outside wet-gas/water-condensation
+case in AUTO uses the same
 accepted Elmahdy-Mitalas production engine in DRY, PARTIALLY_WET and FULLY_WET
 regimes. Its caloric and surface definitions remain continuous through onset.
 An AUTO result in DRY has zero condensate/drain and inactive phase change,

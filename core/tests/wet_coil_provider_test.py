@@ -151,9 +151,10 @@ def test_shared_deadline_is_enforced(dry_results, monkeypatch):
 @pytest.mark.parametrize("finned,W", [(False, 0.004), (False, 0.016), (True, 0.016)])
 def test_default_explicit_numerical_freeze(finned, W):
     hx, a, b = context(finned, W)
-    default = hx.simulate(a, b, surface_margin=0.1)
+    default = hx.simulate(a, b, surface_margin=0.1, wet_coil_provider=None)
     explicit = hx.simulate(a, b, surface_margin=0.1,
                            wet_coil_provider=ElmahdyMitalasWetCoilProvider())
+    assert default.wet_coil_diagnostics["provider"]["model_id"] == ElmahdyMitalasWetCoilProvider().model_id
     for name in ("q", "T_out_inside", "T_out_outside", "UA", "Q_full", "Q_derated"):
         assert getattr(default, name) == getattr(explicit, name)
     for name in ("W_out", "m_dot_condensate", "H_drain", "wet_surface_fraction"):
@@ -171,9 +172,10 @@ def test_default_explicit_numerical_freeze(finned, W):
         assert "fin_tip_temperature" not in surface
     if not finned:
         args = specs(a, b, default.T_out_outside)
-        r0 = hx.rate(*args, include_simulation=True)
+        r0 = hx.rate(*args, include_simulation=True, wet_coil_provider=None)
         r1 = hx.rate(*args, include_simulation=True,
                      wet_coil_provider=ElmahdyMitalasWetCoilProvider())
+        assert r0.wet_coil_diagnostics["provider"]["model_id"] == ElmahdyMitalasWetCoilProvider().model_id
         for name in ("A_required", "A_o", "UA_required", "UA_actual", "Q_required", "Q_achievable"):
             assert getattr(r0, name) == getattr(r1, name)
         assert r1.simulation.q == r0.simulation.q

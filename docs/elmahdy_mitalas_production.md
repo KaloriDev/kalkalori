@@ -1,7 +1,9 @@
 # Elmahdy-Mitalas production adaptation (internal engine)
 
 This stage implements the source-profile moisture closure selected for
-KalKalori. Rating and Simulation are not connected. Release remains HOLD.
+KalKalori. Simulation and area-based Rating are connected through
+`ElmahdyMitalasWetCoilProvider`, the public default for both operations.
+Release validation and authorization remain pending.
 The original reference kernel, native tooling, fixtures and pinned EnergyPlus
 v25.2.0 revision `cf7368216c73c43181e057fa33b479c4e0c86df0` are unchanged.
 See [source provenance and tolerances](elmahdy_mitalas.md).
@@ -11,7 +13,13 @@ See [source provenance and tolerances](elmahdy_mitalas.md).
 `wet_coil.py` contains one global dry/partial/full-wet process engine.
 `wet_coil_adapters.py` supplies configured gas properties, sensible liquid /
 inside-wall resistance, and BareTube or CircularFinnedTube surface quantities.
-There is no public model selector. The unvalidated profile candidate is an
+The public API accepts direct `wet_coil_provider` objects; `None` selects
+Elmahdy. The explicit historical `LegacyBulkMeanWetCoilProvider` supports
+Simulation only. Unsupported explicit operations raise
+`WetCoilProviderUnsupportedError`; there is no silent fallback, registry,
+discovery or string-based selection. External implementations may satisfy the
+[public provider contract](wet_coil_providers.md) without registration.
+The unvalidated profile candidate is an
 internal iterate of the property solve; only the final validated result can
 leave either solving entry point. This is also why intermediate coefficient
 iterations do not incorrectly terminate at a temporarily negative onset margin.
@@ -165,13 +173,15 @@ transport comparison and the fine integration of the approved source-profile
 constitutive equations. Neither is production code or a committed dependency.
 No project inputs or competitor targets are used in these checks.
 
-Before public integration: this is still a counterflow, mean-property/secant
+The integrated provider remains a counterflow, mean-property/secant
 model with the documented source outlet approximation and reduced annular
 surface mapping. Frost, two-phase inside flow and cocurrent flow are outside
-this implementation. Public result mapping, Rating sizing, Simulation wiring,
-notebooks and real-project acceptance remain a separate stage.
+this implementation. Public result mapping and Simulation/Rating routing are
+implemented; engineering case acceptance remains separate. Rating sizes
+`A_required` / thermal area scale only, while installed hydraulics always use
+installed geometry. See [the integration semantics](elmahdy_mitalas_integration.md).
 
-## Validation record for this stage
+## Historical production-engine validation record
 
 Focused coverage passed in both environments: 203 distinct tests per
 interpreter, across grouped runs. The initial 201-test run covered reference,
@@ -192,4 +202,4 @@ in both environments after the final numerical change. Maximum differences
 are 5.02e-6 J/kg for gas enthalpy, 1.53e-9 K for liquid temperature,
 6.46e-13 kg/s for integrated condensate and 2.91e-8 W for drain enthalpy.
 The local-transport oracle and its evidence are retained as historical
-comparison only. No public integration or project acceptance is claimed.
+comparison only. This historical record does not establish real-project acceptance.

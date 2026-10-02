@@ -13,7 +13,17 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added nested generic wet-surface diagnostics while preserving native
   interface and metal-wall temperatures. Physics, Rating area semantics,
   solver options and whole-operation deadlines are unchanged.
-- See `docs/wet_coil_providers.md` for the public provider contract.
+- Restored `LegacyBulkMeanWetCoilProvider` as an explicit historical
+  Simulation-only provider. Omission or `None` continues to select Elmahdy
+  for Simulation and area-based Rating. Rating sizes `A_required` / thermal
+  area scale only; hydraulics use installed geometry.
+- Proved separate-package provider injection through the public API without
+  registration, discovery, string selection or solver-routing changes.
+  Unsupported explicit operations raise `WetCoilProviderUnsupportedError`;
+  provider failures never fall back. Shared deadlines and diagnostics are
+  covered by focused contract tests.
+- Updated roadmap and production/integration documentation to reflect current
+  provider routing. See `docs/wet_coil_providers.md` for the public contract.
 
 ## [0.8.2] — Inaba1994 wire-coil release
 

@@ -1,7 +1,8 @@
 # Global wet-coil model providers
 
 `BareTubeHeatExchanger.simulate` and `.rate` accept a direct model object as
-`wet_coil_provider`. Omission selects `ElmahdyMitalasWetCoilProvider`:
+`wet_coil_provider`. Omission or explicit `None` selects
+`ElmahdyMitalasWetCoilProvider` for both operations:
 
 ```python
 from core import ElmahdyMitalasWetCoilProvider, WetCoilSolverOptions
@@ -19,6 +20,13 @@ and independent `supports_simulation` / `supports_rating` flags. A model can
 support just one operation. Unsupported operation methods can raise
 `WetCoilProviderUnsupportedError`; the dispatcher checks flags before calling
 them. There is no registry, discovery, or string-based model selection.
+`model_id` is diagnostic metadata, not a selection key. External provider
+implementations may be supplied through the public provider API and are
+outside the KalKalori distribution. They can implement the protocol
+structurally in a separate package, using the public input/result types;
+subclassing, registration and solver-routing changes are unnecessary.
+The separate-package fixture in `tests/fixtures/external_wet_provider` and
+`core/tests/external_wet_coil_provider_test.py` demonstrates this boundary.
 
 Provider `simulate` takes the existing `HXSideInput` objects and returns
 `HXSimulationResult`. Provider `rate` takes `BalanceSideSpec` objects and returns

@@ -215,13 +215,21 @@ finite-width clearance correlation remains future work.
   Özceyhan remains pending source-definition closure; Zimparov remains pending
   methodological closure.
 
-**Planned v0.8.x follow-ups:**
+**In development for v0.8.3: wet-coil providers:**
 
-- **v0.8.3 — source/legal/design decision point.** Do not define this patch in
-  detail until sources and supported APIs are known. Possible private work
-  includes an Al-Fahed/Chamra/Chakroun real-width model if a sufficient legal
-  source is obtained, and CALGAVIN.SP/hiTRAN integration only through an
-  official supported API, DLL or CLI. No reverse engineering.
+- Elmahdy-Mitalas is the public default for Simulation and area-based Rating.
+  Rating sizes `A_required` / thermal area scale only; installed hydraulics
+  always use installed geometry.
+- `LegacyBulkMeanWetCoilProvider` restores the historical bulk-mean model
+  through explicit Simulation-only selection; it does not support Rating.
+- Selection uses direct provider objects. `wet_coil_provider=None` retains
+  the Elmahdy default. Unsupported explicit selections raise a controlled
+  error; provider failures never trigger silent fallback.
+- External implementations may use the public contract without registration,
+  discovery or string-based selection and are outside the distribution.
+  See [the provider API](wet_coil_providers.md).
+
+Release validation and release authorization remain pending.
 
 ---
 
