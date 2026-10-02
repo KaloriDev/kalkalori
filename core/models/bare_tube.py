@@ -20,6 +20,9 @@
 
 from __future__ import annotations
 
+from core.heat_transfer.wet_coil_solver import WetCoilSolverOptions, _wet_operation
+from core.phase_change.wet_coil_provider import WetCoilModelProvider
+
 from core.enhancements.base import TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError
 from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
 
@@ -1185,6 +1188,7 @@ class BareTubeHeatExchanger:
 
 
 
+    @_wet_operation
     def simulate(
         self,
         inside: "HXSideInput",
@@ -1205,6 +1209,8 @@ class BareTubeHeatExchanger:
         relative_duty_tolerance: float = 1e-4,
         relaxation_factor: float = 0.5,
         relative_alfa_tolerance: float = 1e-3,
+        wet_solver_options: WetCoilSolverOptions | None = None,
+        wet_coil_provider: WetCoilModelProvider | None = None,
         phase_change_onset_tolerance_K: float = 0.0,
         phase_change_activation_band_K: float = 0.5,
         lewis_number: float = 1.0,
@@ -1219,6 +1225,12 @@ class BareTubeHeatExchanger:
     ) -> "HXSimulationResult":
         """Simulate this exchanger, converging the wall/length-corrected
         iterative thermal state by default (v0.5.3).
+
+        ``wet_coil_provider`` selects a global model object (default Elmahdy-
+        Mitalas). Unsupported selections raise; DISABLED bypasses the provider.
+
+        ``wet_solver_options`` controls outside wet-coil convergence and one
+        operation-wide timeout; omission uses ``WetCoilSolverOptions()``.
 
         This is the intended default entry point for Simulation: given
         geometry, both inlet temperatures, and both flow rates, compute the
@@ -1376,6 +1388,24 @@ class BareTubeHeatExchanger:
                 settings=settings,
             )
 
+        from core.phase_change.wet_coil_integration import route_outside_wet
+        wet_result = route_outside_wet(
+            self, inside, outside, mode="simulation", settings=settings,
+            wet_solver_options=wet_solver_options,
+            wet_coil_provider=wet_coil_provider,
+            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            max_iter=max_iter, temperature_tolerance_K=temperature_tolerance_K,
+            relative_duty_tolerance=relative_duty_tolerance,
+            relaxation_factor=relaxation_factor,
+            relative_alfa_tolerance=relative_alfa_tolerance,
+            surface_margin=surface_margin, iterate=iterate,
+            flow_arrangement=flow_arrangement, euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+        if wet_result is not None:
+            return wet_result
+
         guarded_inside_provider = guard_pure_water_single_phase_provider(
             inside.provider, T_in=inside.T_in, p=inside.p
         )
@@ -1439,6 +1469,7 @@ class BareTubeHeatExchanger:
             settings=settings,
         )
 
+    @_wet_operation
     def rate(
         self,
         inside: "BalanceSideSpec",
@@ -1460,6 +1491,8 @@ class BareTubeHeatExchanger:
         wall_temperature_tolerance_K: float = 0.05,
         relative_alfa_tolerance: float = 1e-3,
         relaxation_factor: float = 0.5,
+        wet_solver_options: WetCoilSolverOptions | None = None,
+        wet_coil_provider: WetCoilModelProvider | None = None,
         phase_change_onset_tolerance_K: float = 0.0,
         phase_change_activation_band_K: float = 0.5,
         lewis_number: float = 1.0,
@@ -1478,6 +1511,12 @@ class BareTubeHeatExchanger:
         as ``simulate``: omit to inherit, supply a configuration to override,
         or pass ``None`` for the legacy smooth path. This also governs the
         optional Rating-to-Simulation bridge.
+
+        ``wet_coil_provider`` selects a global model object (default Elmahdy-
+        Mitalas). Unsupported selections raise; DISABLED bypasses the provider.
+
+        ``wet_solver_options`` controls outside wet-coil convergence and one
+        deadline shared by all thermal-area/flow trials and optional Simulation.
 
         This is the Rating entry point (v0.5.1, thermal state wiring since
         v0.5.3): given geometry and a *closed* heat balance (duty, both
@@ -1563,6 +1602,21 @@ class BareTubeHeatExchanger:
         reject_outside_pure_water_evaporation_rating(
             outside, inside, Q=Q
         )
+        from core.phase_change.wet_coil_integration import route_outside_wet
+        wet_result = route_outside_wet(
+            self, inside, outside, mode="rating", settings=settings,
+            wet_solver_options=wet_solver_options,
+            wet_coil_provider=wet_coil_provider,
+            K_inlet=K_inlet, K_outlet=K_outlet, K_turn=K_turn,
+            Q=Q, effectiveness=effectiveness, include_simulation=include_simulation,
+            over_specified_tolerance=over_specified_tolerance,
+            flow_arrangement=flow_arrangement, euler_provider=euler_provider,
+            finned_heat_transfer_provider=finned_heat_transfer_provider,
+            finned_pressure_drop_provider=finned_pressure_drop_provider,
+        )
+        if wet_result is not None:
+            return wet_result
+
         if is_inside_water_evaporation_rating_case(
             inside,
             outside,

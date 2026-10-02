@@ -178,6 +178,7 @@ def solve_outside_condensation(
     wall_temperature_tolerance_K: float = 0.05,
     wet_fraction_tolerance: float = 1e-3,
     relaxation_factor: float = 0.5,
+    check=None,
 ) -> OutsideCondensationSolution:
     """Iteratively solve the coupled outside condensation state.
 
@@ -268,6 +269,8 @@ def solve_outside_condensation(
     finned_wet_zone_fallback_locked = False
 
     for iteration in range(1, max_iterations + 1):
+        if check is not None:
+            check()
         T_mean_inside = mean_temperature(T_in_inside, T_out_inside)
         T_mean_outside = mean_temperature(T_in_outside, T_out_outside)
         W_mean = 0.5 * (W_in + W_out)
@@ -313,6 +316,7 @@ def solve_outside_condensation(
                     return solve_wet_finned_surface(
                         hx.bundle,
                         local.resistance_network,
+                        check=check,
                         gas_bulk_temperature=T_mean_outside,
                         inside_bulk_temperature=T_mean_inside,
                         cp_gas=cp_gas_bulk,

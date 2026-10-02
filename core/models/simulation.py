@@ -403,6 +403,16 @@ class HXSimulationResult:
     inside_phase_change: "PhaseChangeResult | WaterSteamPhaseChangeResult | None" = None
     outside_phase_change: "PhaseChangeResult | None" = None
 
+    # Active outside-wet values use a post-solve common process reference.
+    ua_reporting_basis: str = "thermal_resistance"
+    ua_is_equivalent: bool = False
+    wet_coil_diagnostics: dict | None = None
+
+    @property
+    def ua_margin(self) -> float:
+        """Exact alias of the canonical result margin."""
+        return self.overdesign_factor
+
     @property
     def UA_actual(self) -> float:
         """Full UA of the real geometry at the reported working state [W/K]."""

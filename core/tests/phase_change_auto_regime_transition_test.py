@@ -1,33 +1,10 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
-"""Regression coverage for the v0.7.5 AUTO dry/near-onset/wet transition.
+"""AUTO uses one production caloric path through dry and wet regimes.
 
-A real closed-loop acceptance run on a circular-finned outside surface,
-operating close to its condensation onset, surfaced two related defects:
-
-1. ``PhaseChangeMode.AUTO`` legitimately resolves to a DRY or NEAR_ONSET
-   regime for some geometries/operating points -- ``active=False`` is a
-   valid converged result, not a calculation failure. Consuming code that
-   asserted ``outside_phase_change.active`` unconditionally was wrong.
-2. The non-active ``PhaseChangeResult`` built for that regime reported
-   ``Q_sensible == Q_latent == Q_total == 0.0`` even though the exchanger
-   had a finite, real dry duty (``HXSimulationResult.q``).
-
-This module locks in the fix for both: crossing the AUTO onset threshold
-changes the reported *regime* (dry / near_onset / condensing), never turns
-a physically valid exchanger result into an exception, and the non-active
-``PhaseChangeResult`` always exposes the real sensible duty.
-
-It also covers the companion hardening (spec section 8): if the dry-baseline
-onset screen activates AUTO but the converged nonlinear wet-fin field itself
-finds zero net condensate (a near-boundary collapse, not a solver
-contradiction), the call must still return a valid, diagnostic-rich dry
-result instead of raising.
-
-The fixture below is a synthetic finned economizer (no CoolProp/IAPWS
-required), unrelated to any specific project geometry; its liquid-inlet
-temperature sweep was chosen empirically to reproduce the same wet ->
-near_onset/dry -> dry transition class that originally exposed the bug.
+These existing economizer inputs exercise the physical source-profile onset;
+the retired global solver's activation band and collapse-to-legacy behavior
+are intentionally no longer the AUTO contract.
 """
 
 from __future__ import annotations
@@ -36,6 +13,8 @@ import math
 from dataclasses import replace
 
 import pytest
+
+from core import WetCoilSolverOptions
 
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
@@ -104,6 +83,7 @@ def _wet_air_provider() -> GasMixturePropertyProvider:
 
 def _simulate_at_liquid_inlet(T_liquid_in_K: float):
     hx = _economizer_hx()
+    # Preserve micowatt regression checks independently of engineering defaults.
     return hx.simulate(
         HXSideInput(
             provider=_liquid_stub(),
@@ -118,6 +98,10 @@ def _simulate_at_liquid_inlet(T_liquid_in_K: float):
             T_in=335.15,
             p=P,
             phase_change_mode=PhaseChangeMode.AUTO,
+        ),
+        wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
         ),
     )
 
@@ -147,150 +131,66 @@ def _assert_valid_hx_result(result) -> None:
         assert pc.possible is True
 
 
-@pytest.mark.parametrize(
-    "T_liquid_in_C, expect_active, expect_near_onset, expect_wet",
-    [
-        # A: comfortably past onset -> active wet condensation.
-        (20.0, True, False, True),
-        # A': still active, but close to the activation-band boundary.
-        (37.1, True, False, True),
-        # B: crossed the activation band -> near-onset, held dry.
-        (37.2, False, True, False),
-        # C: clearly dry, well past the near-onset band.
-        (45.0, False, False, False),
-    ],
-)
-def test_auto_regime_transition_always_returns_a_valid_result(
-    T_liquid_in_C, expect_active, expect_near_onset, expect_wet,
-) -> None:
-    result = _simulate_at_liquid_inlet(T_liquid_in_C + 273.15)
-    pc = result.outside_phase_change
+@pytest.fixture(scope="module")
+def transition_results():
+    return {c:_simulate_at_liquid_inlet(c+273.15) for c in (20.0,37.1,37.2,45.0)}
 
+
+@pytest.mark.parametrize("temperature",[20.0,37.1,37.2,45.0])
+def test_auto_regime_transition_always_returns_a_valid_result(transition_results,temperature):
+    result=transition_results[temperature]
+    pc=result.outside_phase_change
     _assert_valid_hx_result(result)
-    assert pc.active is expect_active
-    assert pc.near_onset is expect_near_onset
-    assert (result.wet_finned_surface is not None) is expect_wet
-    assert (pc.wet_finned_surface is not None) is expect_wet
-
-    if expect_active:
-        assert pc.m_dot_condensate > 0.0
-        assert pc.Q_latent > 0.0
+    assert pc.method == "elmahdy_mitalas_energyplus_v25_2_adapted"
+    assert pc.active == (pc.regime != "DRY")
+    assert pc.active == (pc.onset_margin_K > 0)
+    assert not pc.near_onset  # No artificial activation band in production AUTO.
+    assert result.ua_is_equivalent
+    assert result.q == pytest.approx(
+        31500/3600*3550*(result.T_out_inside-(temperature+273.15)),abs=1e-5)
+    if pc.active:
+        assert pc.m_dot_condensate > 0 and pc.Q_latent > 0
+        assert pc.wet_coil_diagnostics["surface_states"]
     else:
-        # Fix (spec section 5/6): active=False is a valid dry/near-onset
-        # AUTO result, not a failure, and must expose the real sensible
-        # duty rather than a hardcoded zero.
-        assert pc.m_dot_condensate == 0.0
-        assert pc.Q_latent == 0.0
+        assert pc.m_dot_condensate == pc.Q_latent == pc.H_drain == 0
         assert pc.Q_sensible == pytest.approx(result.q)
         assert pc.Q_total == pytest.approx(result.q)
 
 
-def test_crossing_onset_threshold_changes_regime_not_exception() -> None:
-    """The exact transition pair: one wet, its warmer neighbor dry."""
-    wet = _simulate_at_liquid_inlet(37.1 + 273.15)
-    dry = _simulate_at_liquid_inlet(37.2 + 273.15)
-
-    assert wet.outside_phase_change.active is True
-    assert dry.outside_phase_change.active is False
-    assert dry.outside_phase_change.near_onset is True
-    # Both sides of the boundary are equally valid, finite HX solutions.
-    assert math.isfinite(wet.q) and math.isfinite(dry.q)
-    assert wet.q > dry.q > 0.0
+def test_crossing_physical_onset_changes_regime_not_exception(transition_results):
+    ordered=list(transition_results.values())
+    assert ordered[0].outside_phase_change.active
+    assert ordered[-1].outside_phase_change.regime == "DRY"
+    for colder,warmer in zip(ordered,ordered[1:]):
+        assert colder.q > warmer.q > 0
+        assert colder.outside_condensate_mass_flow >= warmer.outside_condensate_mass_flow
 
 
-def test_dry_side_of_onset_reproduces_the_legacy_disabled_dry_result() -> None:
-    """Section 12: the inactive AUTO branch must not diverge from DISABLED."""
-    disabled = _economizer_hx().simulate(
-        HXSideInput(
-            provider=_liquid_stub(), m_dot=31_500.0 / 3600.0,
-            T_in=45.0 + 273.15, p=250_000.0,
-            phase_change_mode=PhaseChangeMode.DISABLED,
-        ),
-        HXSideInput(
-            provider=_wet_air_provider(), m_dot=142_800.0 / 3600.0,
-            T_in=335.15, p=P, phase_change_mode=PhaseChangeMode.DISABLED,
-        ),
-    )
-    auto = _simulate_at_liquid_inlet(45.0 + 273.15)
-
-    assert auto.outside_phase_change.active is False
-    assert auto.q == disabled.q
-    assert auto.T_out_inside == disabled.T_out_inside
-    assert auto.T_out_outside == disabled.T_out_outside
-    assert auto.UA == disabled.UA
+def test_auto_dry_and_disabled_are_explicit_different_model_paths(transition_results):
+    from core.models.simulation import run_simulation
+    inside=HXSideInput(_liquid_stub(),31500/3600,318.15,250000,
+                      phase_change_mode=PhaseChangeMode.DISABLED)
+    outside=HXSideInput(_wet_air_provider(),142800/3600,335.15,P,
+                       phase_change_mode=PhaseChangeMode.DISABLED)
+    hx=_economizer_hx()
+    disabled=hx.simulate(inside,outside)
+    legacy=run_simulation(hx,inside,outside)
+    assert (disabled.q,disabled.T_out_inside,disabled.T_out_outside,disabled.UA) == (
+        legacy.q,legacy.T_out_inside,legacy.T_out_outside,legacy.UA)
+    auto=transition_results[45.0]
+    assert not auto.outside_phase_change.active
+    assert auto.ua_is_equivalent and not disabled.ua_is_equivalent
+    assert auto.wet_coil_diagnostics["global_wet_model"] == "elmahdy_mitalas_energyplus_v25_2_adapted"
 
 
-def test_wet_finned_solver_collapse_to_dry_returns_valid_result(monkeypatch) -> None:
-    """Spec section 8: a converged-but-zero-condensate wet solve must not
-    raise. It must fall back to the exact dry AUTO result with a
-    diagnostic ``PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY`` warning,
-    rather than forcing an internally-contradictory active state or
-    failing an otherwise physically valid call."""
-    import core.phase_change.outside_condensation_solver as solver_module
-
-    real_solve = solver_module.solve_wet_finned_surface
-
-    def collapsing_solve(*args, **kwargs):
-        real_result = real_solve(*args, **kwargs)
-        # Simulate the nonlinear radial field converging with no point below
-        # local saturation: a self-consistent all-sensible result, not a
-        # broken/unconverged one.
-        return replace(
-            real_result,
-            fin_wet_state=WetFinState.DRY,
-            fin_wet_fraction=0.0,
-            wet_fin_area=0.0,
-            Q_fin_latent=0.0,
-            Q_fin_total=real_result.Q_fin_sensible,
-            m_dot_condensate_fin=0.0,
-            wet_dry_boundary_radius=None,
-            Q_primary_latent=0.0,
-            Q_primary_total=real_result.Q_primary_sensible,
-            m_dot_condensate_primary=0.0,
-            wet_primary_area=0.0,
-            Q_latent=0.0,
-            Q_total=real_result.Q_sensible,
-            m_dot_condensate=0.0,
-            condensate_enthalpy_rate=0.0,
-            wet_area=0.0,
-            wet_surface_fraction=0.0,
-            wall_temperature_wet_mean=None,
-            W_sat_wet_surface=None,
-        )
-
-    monkeypatch.setattr(solver_module, "solve_wet_finned_surface", collapsing_solve)
-
-    # Use a comfortably-active wet operating point, so the only reason this
-    # would fail to condense is the forced collapse above, not genuine onset
-    # ambiguity -- isolating the collapse-handling code path.
-    result = _simulate_at_liquid_inlet(20.0 + 273.15)
-    pc = result.outside_phase_change
-
-    _assert_valid_hx_result(result)
-    assert pc.active is False
-    assert result.wet_finned_surface is None
-    assert pc.wet_finned_surface is None
-    assert pc.m_dot_condensate == 0.0
-    assert pc.Q_latent == 0.0
-    assert pc.Q_sensible == pytest.approx(result.q)
-    assert pc.Q_total == pytest.approx(result.q)
-    assert PHASE_CHANGE_WET_SOLUTION_COLLAPSED_TO_DRY in {
-        w.code for w in pc.warnings
-    }
-
-    # And it must reproduce the exact legacy dry (DISABLED) result -- the
-    # collapse fallback must not leave a partially-wet residue behind.
-    disabled = _economizer_hx().simulate(
-        HXSideInput(
-            provider=_liquid_stub(), m_dot=31_500.0 / 3600.0,
-            T_in=20.0 + 273.15, p=250_000.0,
-            phase_change_mode=PhaseChangeMode.DISABLED,
-        ),
-        HXSideInput(
-            provider=_wet_air_provider(), m_dot=142_800.0 / 3600.0,
-            T_in=335.15, p=P, phase_change_mode=PhaseChangeMode.DISABLED,
-        ),
-    )
-    assert result.q == disabled.q
-    assert result.T_out_inside == disabled.T_out_inside
-    assert result.T_out_outside == disabled.T_out_outside
+def test_public_wet_route_never_calls_retired_global_closure(monkeypatch):
+    import core.phase_change.outside_condensation_solver as legacy
+    from core.tests.wet_coil_public_test import context
+    def forbidden(*args,**kwargs):
+        raise AssertionError("retired outside global wet closure was invoked")
+    monkeypatch.setattr(legacy,"solve_outside_condensation",forbidden)
+    monkeypatch.setattr(legacy,"solve_wet_finned_surface",forbidden)
+    hx,inside,outside=context(True)
+    result=hx.simulate(inside,outside)
+    assert result.outside_phase_change.active
+    assert result.outside_phase_change.regime == "FULLY_WET"

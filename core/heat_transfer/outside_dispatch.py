@@ -232,6 +232,12 @@ class FinnedTubeDiagnostics:
     wet_pressure_drop_supported: bool = False
     outside_dp_reference_only: bool = False
 
+    # In the production wet model, these resistance/efficiency fields describe
+    # its native dry constitutive operator at the solved fluid state. They
+    # are not a scalar reduction of latent transfer; public process U/UA are
+    # reported separately using the explicitly marked equivalent convention.
+    thermal_reporting_basis: str = "thermal_resistance"
+
     @property
     def alpha(self) -> float:
         """Compatibility alias for the physical outside-film coefficient."""

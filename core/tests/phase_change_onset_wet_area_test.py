@@ -399,12 +399,16 @@ def test_disabled_reports_onset_and_wall_diagnostics_without_running_solver() ->
 # ---------------------------------------------------------------------------
 # Section 23: integration test with a partially-wet surface
 # ---------------------------------------------------------------------------
-def test_partial_wet_surface_integration() -> None:
+@pytest.fixture(scope="module")
+def physical_wet_case():
     hx = _hx()
     inside = HXSideInput(provider=GasMixturePropertyProvider(_dry_spec()), m_dot=15.0, T_in=290.0, p=101325.0)
     outside = HXSideInput(provider=GasMixturePropertyProvider(_wet_spec()), m_dot=6.0, T_in=420.0, p=101325.0)
+    return hx, inside, outside, hx.simulate(inside, outside)
 
-    result = hx.simulate(inside, outside)
+
+def test_partial_wet_surface_integration(physical_wet_case) -> None:
+    hx, inside, outside, result = physical_wet_case
     pc = result.outside_phase_change
 
     assert result.converged is True
@@ -415,7 +419,7 @@ def test_partial_wet_surface_integration() -> None:
     assert pc.W_out < pc.W_in
     assert pc.Q_latent > 0.0
     assert pc.Q_total == pytest.approx(pc.Q_sensible + pc.Q_latent, rel=1e-9)
-    assert pc.wet_surface_fraction_method in (LINEAR_METHOD_NAME, DEGENERATE_METHOD_NAME)
+    assert pc.wet_surface_fraction_method == "elmahdy_mitalas_source_profile"
 
     for value in (
         pc.wet_surface_fraction, pc.wet_area, pc.outside_total_area,
@@ -425,14 +429,10 @@ def test_partial_wet_surface_integration() -> None:
         assert value is not None and math.isfinite(value)
 
 
-def test_thermal_state_consistent_with_wet_solution() -> None:
+def test_thermal_state_consistent_with_wet_solution(physical_wet_case) -> None:
     """Fix (spec section 16): thermal_state must not mix dry-baseline alfa/UA
     with a wet-solver-sourced wall_temperature_envelope/PhaseChangeResult."""
-    hx = _hx()
-    inside = HXSideInput(provider=GasMixturePropertyProvider(_dry_spec()), m_dot=15.0, T_in=290.0, p=101325.0)
-    outside = HXSideInput(provider=GasMixturePropertyProvider(_wet_spec()), m_dot=6.0, T_in=420.0, p=101325.0)
-
-    result = hx.simulate(inside, outside)
+    hx, inside, outside, result = physical_wet_case
     ts = result.thermal_state
     pc = result.outside_phase_change
 
@@ -443,13 +443,18 @@ def test_thermal_state_consistent_with_wet_solution() -> None:
     assert ts.converged == pc.converged
     assert ts.iterations == pc.iterations
     assert ts.outside_wall_temperature == pc.wall_temperature_mean
-    # UA must reconstruct from alfa_i/alfa_o/wall resistance exactly like
-    # the dry solver's own self-check in thermal_iteration.py.
-    A_i = hx.bundle.total_inner_area
-    A_o = hx.bundle.total_outer_area
-    R_w = hx.tube_wall_resistance()
-    UA_reconstructed = 1.0 / (1.0 / (ts.alfa_i * A_i) + R_w + 1.0 / (ts.alfa_o * A_o))
-    assert UA_reconstructed == pytest.approx(ts.UA, rel=1e-9)
+    # Approved equivalent UA is a reporting reduction, independent of the
+    # native temperature/enthalpy conductances driving the physical solve.
+    from core.phase_change.wet_coil_reporting import equivalent_wet_process
+    eq=equivalent_wet_process(heat=result.q,hot_in=outside.T_in,
+        hot_out=result.T_out_outside,cold_in=inside.T_in,
+        cold_out=result.T_out_inside,flow_arrangement="counterflow")
+    assert result.ua_is_equivalent and ts.ua_is_equivalent
+    assert ts.UA == pytest.approx(eq.ua,rel=1e-9)
+    native=result.wet_coil_diagnostics
+    assert native["dry_temperature_conductance"] == pytest.approx(
+        1/(native["inner_resistance"]+native["dry_air_resistance"]),rel=1e-12)
+
 
 
 def test_finned_outside_onset_uses_exposed_skin_not_colder_core_node() -> None:

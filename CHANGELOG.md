@@ -5,6 +5,38 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.3] — Wet-coil providers and thermal-area Rating
+
+- Added the production source-profile Elmahdy-Mitalas adaptation for bare and
+  circular-finned tubes. It is the public default for Simulation and area-based
+  Rating, with DRY / PARTIALLY_WET / FULLY_WET on one process-model path.
+  Native profile, radial surface, moisture and drained-condensate diagnostics
+  retain their declared applicability and equivalent-U/UA reporting basis.
+  See [model applicability](docs/elmahdy_mitalas_production.md).
+- Added the public direct wet-coil provider-object contract, with typed operation
+  support, applicability, provenance, generic surface diagnostics and shared
+  operation context. External implementations need no registration, discovery,
+  string selection, inheritance or solver-routing changes.
+- Restored `LegacyBulkMeanWetCoilProvider` as an explicit historical,
+  zero-surface-margin Simulation-only provider. Its historical physics is
+  preserved. Omission or `None` selects Elmahdy for both operations.
+  Unsupported explicit operations raise `WetCoilProviderUnsupportedError`;
+  selected-provider failures never trigger fallback.
+- Rating sizes `A_required` / thermal area scale, not a physical required tube
+  length. Installed geometry governs hydraulics, including surface-margin cases.
+  Wet-film pressure-drop correction remains unsupported; circular-finned wet
+  results identify the existing dry-bank reference correlation.
+- Added `WetCoilSolverOptions` for energy, mass and outlet accuracy and one
+  whole-operation deadline shared by nested trials, reserve evaluations and
+  optional Rating Simulation. Defaults remain 1 W, 5e-7 kg/s, 0.01 K and 300 s;
+  unlimited offline validation is available through `timeout_s=None`.
+- Final validation passed all 1487 public tests and 17 required engineering cases
+  in seven notebook representatives. Precision regressions request explicit
+  tighter controls while preserving all existing assertions and inputs.
+  Private validation datasets and outputs remain outside the distribution.
+  See the [provider API](docs/wet_coil_providers.md) and
+  [numerical controls](docs/wet_coil_solver_controls.md).
+
 ## [0.8.2] — Inaba1994 wire-coil release
 
 ### Added and changed
@@ -44,8 +76,7 @@ The project follows **Semantic Versioning (SemVer)**:
   with explicit extrapolation and unrepresented width/clearance diagnostics.
   Historical Agarwal attribution is not primary-source verification;
   pychemqt is not a backend. See `docs/twisted_tape_rossi2017.md`.
-  The private XSC workflow compares this nominal sensitivity with smooth,
-  public Yang2020 and private M&B paths; real-clearance physics remains unsupported.
+  Real width and clearance remain unsupported by these correlations.
 - Added optional provider-declared bulk/wall/film thermal property references.
   Film properties come from the existing fluid backend at the mean of bulk
   and iterated wall temperatures, never averaged transport values. Hydraulic
@@ -98,12 +129,12 @@ The project follows **Semantic Versioning (SemVer)**:
   signed acceleration keep their existing definitions. Enhanced phase
   change and unsupported operating states raise controlled errors.
 - Built-in correlation source policy now requires legally and freely
-  accessible material; M&B Part I/II remain future private-provider sources.
+  accessible material; paywalled correlations remain external-provider sources.
 - Verified external alpha-only providers through Rating and both Simulation
   modes, including native Fanning conversion, provider-owned hydraulic
   references, opaque typed metadata, provenance, applicability and warnings.
   Inconsistent thermal/hydraulic model identities and unsupported results
-  fail explicitly. No private M&B or manufacturer physics is included.
+  fail explicitly. No proprietary or manufacturer physics is included.
 - Documented the public/external provider contract and current open-model
   limits in `docs/tube_side_enhancements.md`. Preserved the positional order
   of existing `HXResult` fields when appending enhancement diagnostics.

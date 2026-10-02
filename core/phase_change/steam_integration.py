@@ -159,6 +159,9 @@ def water_evaporation_reaches_saturation(
     if state is None or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
         return True
     saturated_liquid = water_steam_props_iapws97(p=state.p, x=0.0)
+    if outside.T_in <= saturated_liquid.T:
+        # A sensible heating stream cannot bring water above its hot inlet.
+        return False
     if (
         getattr(hx.bundle.tube, "surface_type", None)
         is TubeSurfaceType.CIRCULAR_FINNED

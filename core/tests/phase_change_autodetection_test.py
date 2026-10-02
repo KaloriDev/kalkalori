@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
@@ -88,7 +90,7 @@ def test_dry_provider_has_no_capability_and_matches_sensible_only() -> None:
 # ---------------------------------------------------------------------------
 # Wet gas, capable, but the dry baseline never reaches the dew point.
 # ---------------------------------------------------------------------------
-def test_wet_gas_capable_but_no_condensation_matches_sensible_only() -> None:
+def test_wet_gas_capable_but_no_condensation_uses_production_dry_closure() -> None:
     from core.models.simulation import run_simulation
 
     hx = _hx()
@@ -96,16 +98,33 @@ def test_wet_gas_capable_but_no_condensation_matches_sensible_only() -> None:
     outside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.08)), m_dot=8.0, T_in=450.0, p=101325.0)
 
     expected = run_simulation(hx, inside, outside)
-    result = hx.simulate(inside, outside)
+    # Preserve the original enthalpy-closure accuracy.
+    result = hx.simulate(inside, outside, wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=1e-6, outlet_temperature_tolerance_K=1e-8,
+            timeout_s=None,
+        ))
 
     pc = result.outside_phase_change
     assert pc.capable is True
     assert pc.active is False
     assert pc.m_dot_condensate == 0.0
     assert pc.Q_latent == 0.0
-    assert result.q == expected.q
-    assert result.T_out_inside == expected.T_out_inside
-    assert result.T_out_outside == expected.T_out_outside
+    # Approved AUTO contract: capable dry gas retains the production caloric
+    # closure. DISABLED alone retains the legacy dry operating point.
+    from dataclasses import replace
+    from core.phase_change.wet_gas_enthalpy import h_wet_gas_dry_basis
+    disabled=hx.simulate(inside,replace(outside,phase_change_mode=PhaseChangeMode.DISABLED))
+    assert disabled.q == expected.q
+    assert disabled.T_out_inside == expected.T_out_inside
+    assert disabled.T_out_outside == expected.T_out_outside
+    assert pc.regime == "DRY"
+    assert result.ua_is_equivalent
+    assert result.q != expected.q
+    cap=detect_phase_change_capability(outside.provider)
+    gas=pc.m_dot_dry_carrier*(
+        h_wet_gas_dry_basis(outside.T_in,outside.p,pc.W_in,cap)
+        -h_wet_gas_dry_basis(result.T_out_outside,outside.p,pc.W_out,cap))
+    assert gas == pytest.approx(result.q,abs=1e-6)
 
     # Fix (v0.7.5 patch, spec section 6): capable-but-inactive AUTO must
     # still expose the real sensible duty on both sides.

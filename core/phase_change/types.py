@@ -49,9 +49,10 @@ class PhaseChangeMode(str, Enum):
     AUTO:
         Default. The solver detects phase-change capability and, if the
         current thermal operating point makes phase change possible, solves
-        it. A capable medium that never reaches its onset condition still
-        produces a plain sensible-only result under AUTO -- capability does
-        not imply activity.
+        it. Eligible outside wet-gas cases use the Elmahdy-Mitalas production
+        engine in all regimes, including DRY: capability does not imply
+        activity. AUTO-DRY can differ from the legacy DISABLED result because
+        it retains the same caloric/surface formulation as the wet regimes.
     DISABLED:
         Force a sensible-only ("dry") solve on this side, even if phase
         change would otherwise be possible. The solver still evaluates and
@@ -133,7 +134,13 @@ class PhaseChangeResult:
     per-solve diagnostics that are meaningless without an active solve
     (``iterations``, ``residuals``) which default to ``0``/an empty mapping.
 
-    For active wet-gas condensation, ``wall_temperature_mean`` is the
+    For the outside Elmahdy-Mitalas path, wall means and wet areas come from
+    the native process/radial profile; condensate enthalpy is integrated
+    locally and exposed through ``H_drain``. Q_total is liquid duty, while
+    Q_sensible/Q_latent use the documented fixed-inlet-W cooling path and
+    subtract integrated drainage. Other paths retain the conventions below.
+
+    For legacy active wet-gas condensation, ``wall_temperature_mean`` is the
     exposed-area mean implied by the physical sensible film heat transfer.
     For a circular-finned surface this is distinct from the core-wall
     temperature used by the resistance network; that core temperature is
@@ -225,6 +232,27 @@ class PhaseChangeResult:
     # this shared object adds primary/fin area and duty detail without a
     # separately recomputed diagnostic approximation.
     wet_finned_surface: "WetFinnedSurfaceResult | None" = None
+
+    # Model-specific state is nested; existing constructors remain unchanged.
+    wet_coil_diagnostics: dict | None = None
+
+    @property
+    def H_drain(self) -> float:
+        """Integrated source-profile drainage [W], when that model is active."""
+        return (self.wet_coil_diagnostics or {}).get("H_drain", 0.0)
+
+    @property
+    def regime(self) -> str | None:
+        return (self.wet_coil_diagnostics or {}).get("regime")
+
+    @property
+    def wet_fraction(self) -> float | None:
+        """Native process fraction, distinct from wetted fin area."""
+        return (self.wet_coil_diagnostics or {}).get("wet_fraction")
+
+    @property
+    def global_wet_model(self) -> str | None:
+        return (self.wet_coil_diagnostics or {}).get("global_wet_model")
 
     @property
     def total_area(self) -> float | None:

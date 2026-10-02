@@ -76,3 +76,12 @@ def test_inversion_raises_when_not_bracketed() -> None:
     h_absurd = -1.0e12
     with pytest.raises(ValueError):
         temperature_from_h_wet_gas_dry_basis(h_absurd, 101325.0, cap.W_in, cap)
+
+@pytest.mark.parametrize("T", [280.123, 300., 350.345, 500.123, 620.])
+def test_solve_local_backend_state_preserves_configured_enthalpy(T):
+    from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
+    cap=_capability()
+    original=WetGasEnthalpyEvaluator(101325.,cap)
+    reused=WetGasEnthalpyEvaluator(101325.,cap,reuse_dry_backend_state=True)
+    for W in (0.,.006,.016):
+        assert reused.enthalpy(T,W)==pytest.approx(original.enthalpy(T,W),rel=2e-12,abs=1e-7)

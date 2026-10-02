@@ -91,12 +91,28 @@ class WetGasEnthalpyEvaluator:
     and water-vapor evaluations across successive bounded inversions.
     """
 
-    def __init__(self, p: float, capability: PhaseChangeCapability) -> None:
+    def __init__(
+        self, p: float, capability: PhaseChangeCapability, *,
+        reuse_dry_backend_state: bool = False,
+    ) -> None:
         if not math.isfinite(p) or p <= 0.0:
             raise ValueError("p must be a positive finite value [Pa].")
         self.p = p
         self.capability = capability
         self._dry_provider = GasMixturePropertyProvider(dry_gas_spec(capability))
+        self._dry_state = None
+        if reuse_dry_backend_state:
+            # A solve-local state reuses the SAME configured EOS, composition,
+            # gas phase and PT update as the high-level provider. No enthalpy
+            # table, temperature rounding or alternate dry-gas model is used.
+            import CoolProp.CoolProp as CP
+            composition = self._dry_provider.mole_fractions
+            self._dry_state = CP.AbstractState(
+                capability.backend, "&".join(composition)
+            )
+            self._dry_state.set_mole_fractions(list(composition.values()))
+            self._dry_state.specify_phase(CP.iphase_gas)
+            self._dry_pt_inputs = CP.PT_INPUTS
         self._dry_enthalpy_by_temperature: dict[float, float] = {}
         self._water_vapor_enthalpy_by_temperature: dict[float, float] = {}
 
@@ -107,9 +123,12 @@ class WetGasEnthalpyEvaluator:
                 f"W must be a non-negative finite value [kg/kg], got {W!r}."
             )
         if T not in self._dry_enthalpy_by_temperature:
-            self._dry_enthalpy_by_temperature[T] = (
-                self._dry_provider.specific_enthalpy(T=T, p=self.p)
-            )
+            if self._dry_state is None:
+                dry_h = self._dry_provider.specific_enthalpy(T=T, p=self.p)
+            else:
+                self._dry_state.update(self._dry_pt_inputs, self.p, T)
+                dry_h = self._dry_state.hmass()
+            self._dry_enthalpy_by_temperature[T] = dry_h
         if T not in self._water_vapor_enthalpy_by_temperature:
             self._water_vapor_enthalpy_by_temperature[T] = (
                 water_saturation_vapor_enthalpy(T=T)

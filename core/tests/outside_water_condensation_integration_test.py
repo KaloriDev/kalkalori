@@ -20,6 +20,8 @@ import math
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import BareTube
 from core.models.bare_tube import BareTubeHeatExchanger
@@ -62,7 +64,11 @@ def result(hx: BareTubeHeatExchanger):
     inside = HXSideInput(
         provider=GasMixturePropertyProvider(dry_air), m_dot=15.0, T_in=290.0, p=101_325.0,
     )
-    return hx.simulate(inside, outside)
+    # Preserve micowatt regression checks independently of engineering defaults.
+    return hx.simulate(inside, outside, wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=1e-6, outlet_temperature_tolerance_K=1e-8,
+            timeout_s=None,
+        ))
 
 
 def test_solver_converged(result) -> None:
@@ -207,10 +213,9 @@ def test_surface_below_dew_point_for_part_of_the_envelope(result) -> None:
     assert pc.wall_temperature_min <= pc.wall_temperature_wet_mean
     assert pc.wall_temperature_wet_mean <= pc.wall_temperature_max
     assert pc.wall_temperature_min <= pc.wall_temperature_mean <= pc.wall_temperature_max
-    assert pc.wall_temperature_mean == pytest.approx(
-        0.5 * (pc.wall_temperature_min + pc.wall_temperature_max),
-        abs=0.05,
-    )
+    # The source-profile mean is quadrature-weighted, not the midpoint of
+    # the former linearly shifted dry envelope.
+    assert result.wall_temperature_envelope.method == "elmahdy_mitalas_source_profile"
 
 
 def test_wet_zone_saturation_drives_positive_condensation(result) -> None:
@@ -235,12 +240,12 @@ def test_wet_zone_saturation_drives_positive_condensation(result) -> None:
 
     assert pc.wall_temperature_wet_mean is not None
     assert pc.W_sat_wet_surface is not None
-    assert (
-        pc.wall_temperature_min
-        < dew_point_bulk
-        < pc.wall_temperature_mean
-        < pc.wall_temperature_max
-    )
+    assert pc.wall_temperature_min < pc.dew_point_in
+    profile=result.wet_coil_diagnostics["process_profile"]
+    from core.heat_transfer.wet_coil_adapters import WetGasThermodynamics
+    thermo=WetGasThermodynamics(101325.0,capability)
+    assert all(p.humidity >= thermo.saturation_humidity(p.surface_temperature)-1e-9
+               for p in profile)
     assert pc.wall_temperature_wet_mean < dew_point_bulk
     assert pc.W_sat_wet_surface < W_bulk
     assert pc.m_dot_condensate > 0.0
@@ -249,7 +254,11 @@ def test_wet_zone_saturation_drives_positive_condensation(result) -> None:
         pc.outside_total_area * pc.wet_surface_fraction,
         rel=1e-9,
     )
-    assert pc.alfa_effective > pc.alfa_dry
+    # HTC retains the physical sensible film basis. Native wet enthalpy
+    # conductance and process-equivalent UA have explicit separate bases.
+    assert pc.alfa_effective == pytest.approx(pc.alfa_dry,rel=1e-12)
+    assert result.wet_coil_diagnostics["wet_enthalpy_conductance"] > 0
+    assert result.ua_is_equivalent
 
 
 def test_wet_surface_fraction_bounded(result) -> None:

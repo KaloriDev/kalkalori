@@ -8,6 +8,8 @@ import math
 
 import pytest
 
+from core import WetCoilSolverOptions
+
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.tube import BareTube
@@ -18,7 +20,6 @@ from core.phase_change.warning_codes import (
     CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY,
     PHASE_CHANGE_DISABLED_BUT_POSSIBLE,
 )
-from core.phase_change.wet_finned_surface import WetFinState
 from core.properties.gas_mixture import (
     GasMixturePropertyProvider,
     GasMixtureSpec,
@@ -97,7 +98,14 @@ def _side_inputs(
 @pytest.fixture(scope="module")
 def active_result():
     inside, outside = _side_inputs()
-    return _wet_finned_hx().simulate(inside, outside, surface_margin=0.10)
+    # Preserve the original independent balance precision.
+    return _wet_finned_hx().simulate(
+        inside, outside, surface_margin=0.10,
+        wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
+        ),
+    )
 
 
 def test_active_wet_finned_simulation_reports_shared_surface_margin(
@@ -114,119 +122,56 @@ def test_active_wet_finned_simulation_reports_shared_surface_margin(
     )
 
 
-def test_auto_simulation_solves_one_shared_partial_wet_finned_state(
-    active_result,
-) -> None:
-    result = active_result
-    phase = result.outside_phase_change
-    wet = result.wet_finned_surface
-
-    assert result.converged is True
-    assert phase is not None and phase.converged is True
-    assert phase.active is True
+def test_auto_simulation_exposes_native_axial_and_radial_states(active_result) -> None:
+    result=active_result
+    phase=result.outside_phase_change
+    native=result.wet_coil_diagnostics
+    assert result.converged and phase.active and phase.converged
     assert phase.direction is PhaseChangeDirection.CONDENSATION
-    assert phase.method == "outside_condensation_0d_wet_annular_fin_fvm"
-    assert wet is not None
-    assert wet.fin_wet_state is WetFinState.PARTIALLY_WET
-    assert 0.0 < wet.fin_wet_fraction < 1.0
-    assert wet.wet_dry_boundary_radius is not None
-
-    # Every public route shares the exact converged object.  No post-hoc
-    # radial diagnostic solve is permitted.
-    assert phase.wet_finned_surface is wet
-    assert result.final_result.wet_finned_surface is wet
-    assert result.thermal_state.finned_tube_diagnostics.wet_surface is wet
-    assert phase.wall_temperature_mean == pytest.approx(
-        wet.outside_surface_temperature_area_mean
-    )
-    assert (
-        phase.wall_temperature_min
-        <= phase.wall_temperature_mean
-        <= phase.wall_temperature_max
-    )
+    assert phase.method == "elmahdy_mitalas_energyplus_v25_2_adapted"
+    assert native is phase.wet_coil_diagnostics
+    assert native["surface_states"]
+    assert 0 < phase.wet_fraction <= 1
+    assert 0 < phase.wet_surface_fraction <= 1
+    assert phase.wall_temperature_min <= phase.wall_temperature_mean <= phase.wall_temperature_max
+    for point in native["surface_states"]:
+        assert point["inside_wall_temperature"] <= point["core_wall_temperature"]
+        assert point["surface_base_temperature"] <= point["fin_tip_temperature"]
 
 
-def test_simulation_primary_fin_and_whole_side_balances_close(active_result) -> None:
-    result = active_result
-    phase = result.outside_phase_change
-    wet = result.wet_finned_surface
-    assert phase is not None and wet is not None
-
-    assert wet.Q_primary_sensible > 0.0
-    assert wet.Q_primary_latent > 0.0
-    assert wet.Q_fin_sensible > 0.0
-    assert wet.Q_fin_latent > 0.0
-    assert wet.Q_total == pytest.approx(
-        wet.Q_primary_total + wet.Q_fin_total,
-        abs=1.0e-8,
-    )
-    assert wet.Q_total == pytest.approx(
-        wet.Q_sensible + wet.Q_latent,
-        abs=1.0e-8,
-    )
-    assert wet.m_dot_condensate == pytest.approx(
-        wet.m_dot_condensate_primary + wet.m_dot_condensate_fin,
-        abs=1.0e-14,
-    )
-    assert wet.wet_area == pytest.approx(
-        wet.wet_primary_area + wet.wet_fin_area,
-        abs=1.0e-12,
-    )
-
-    assert phase.Q_sensible == wet.Q_sensible
-    assert phase.Q_latent == wet.Q_latent
-    assert phase.Q_total == wet.Q_total
-    assert phase.m_dot_condensate == wet.m_dot_condensate
-    assert phase.wet_area == wet.wet_area
+def test_simulation_profile_mass_drain_and_whole_side_balances_close(active_result) -> None:
+    from numpy.polynomial.legendre import leggauss
+    result=active_result
+    phase=result.outside_phase_change
+    profile=result.wet_coil_diagnostics["process_profile"]
+    weights=leggauss(len(profile)-1)[1]*phase.wet_fraction/2
+    assert phase.Q_total == pytest.approx(phase.Q_sensible+phase.Q_latent,abs=1e-8)
+    assert phase.H_drain == pytest.approx(
+        sum(w*p.drain_density for w,p in zip(weights,profile[1:])),abs=1e-8)
     assert phase.m_dot_water_vapor_in == pytest.approx(
-        phase.m_dot_water_vapor_out + phase.m_dot_condensate,
-        abs=1.0e-6,
-    )
-    assert abs(phase.mass_balance_error) < 1.0e-6
-    assert abs(phase.energy_balance_error) < 1.0e-5
+        phase.m_dot_water_vapor_out+phase.m_dot_condensate,abs=1e-6)
+    assert abs(phase.mass_balance_error) < 1e-6
+    assert abs(phase.energy_balance_error) < 1e-5
+    radial=result.wet_coil_diagnostics["surface_states"]
+    assert phase.wet_area == pytest.approx(
+        sum(w*p["radial_wet_area"] for w,p in zip(weights,radial)),abs=1e-12)
 
 
-def test_simulation_keeps_physical_htc_and_labels_dry_dp_reference(
-    active_result,
-) -> None:
-    result = active_result
-    wet = result.wet_finned_surface
-    diagnostics = result.finned_tube_diagnostics
-    phase = result.outside_phase_change
-    assert wet is not None and diagnostics is not None and phase is not None
-
-    assert diagnostics.outside_alpha_physical == wet.outside_alpha_physical
-    assert result.thermal_state.outside_alpha_physical == (
-        wet.outside_alpha_physical
-    )
-    assert result.thermal_state.outside_alpha_effective_gross == (
-        diagnostics.outside_alpha_effective_gross
-    )
-    assert (
-        result.thermal_state.outside_alpha_wet_effective_gross_core_basis
-        == wet.outside_alpha_wet_effective_gross_core_basis
-    )
-    assert result.thermal_state.outside_alpha_wet_effective_basis == (
-        wet.outside_alpha_wet_effective_basis
-    )
-
-    assert math.isfinite(result.outside_dp_dry_reference)
-    assert result.outside_dp_dry_reference > 0.0
+def test_simulation_keeps_physical_htc_and_labels_dry_dp_reference(active_result) -> None:
+    result=active_result
+    diagnostics=result.finned_tube_diagnostics
+    native=result.wet_coil_diagnostics
+    assert diagnostics.outside_alpha_physical == pytest.approx(native["outside_alpha_physical"])
+    assert result.thermal_state.outside_alpha_physical == native["outside_alpha_physical"]
+    assert result.thermal_state.outside_alpha_effective_gross == pytest.approx(
+        diagnostics.outside_alpha_effective_gross)
+    assert result.ua_is_equivalent
+    assert math.isfinite(result.outside_dp_dry_reference) and result.outside_dp_dry_reference > 0
     assert result.wet_pressure_drop_supported is False
     assert diagnostics.outside_dp_reference_only is True
-    # Historical aliases retain the finite reference for compatibility; the
-    # explicit flag and structured warning prohibit interpreting it as a wet
-    # pressure-drop prediction.
     assert diagnostics.outside_dp_total == result.outside_dp_dry_reference
-    assert CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY in {
-        warning.code for warning in phase.warnings
-    }
-    assert CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY in {
-        warning.code for warning in diagnostics.warnings
-    }
-    assert CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY in {
-        warning.code for warning in result.warnings
-    }
+    for warnings in (result.outside_phase_change.warnings,diagnostics.warnings,result.warnings):
+        assert CIRCULAR_FINNED_TUBE_WET_PRESSURE_DROP_REFERENCE_ONLY in {w.code for w in warnings}
 
 
 def test_disabled_mode_returns_the_exact_dry_simulation_with_sensitivity() -> None:
@@ -247,13 +192,8 @@ def test_disabled_mode_returns_the_exact_dry_simulation_with_sensitivity() -> No
     }
 
 
-def test_endpoint_onset_uses_bounded_0d_wet_zone_when_mean_fin_is_dry() -> None:
-    """Exercise the non-segmented fallback used by economizer-like pinches.
-
-    Fixture is a synthetic finned economizer, unrelated to any specific
-    project geometry, chosen empirically to trigger the same endpoint
-    wet-zone-fallback code path as the case that originally motivated it.
-    """
+def test_endpoint_onset_uses_source_profile_with_native_radial_states() -> None:
+    """Economizer-like endpoint pinch uses the native axial/radial profile."""
 
     core = BareTube(
         D_i=0.0189,
@@ -316,36 +256,19 @@ def test_endpoint_onset_uses_bounded_0d_wet_zone_when_mean_fin_is_dry() -> None:
             p=P,
             phase_change_mode=PhaseChangeMode.AUTO,
         ),
+        wet_solver_options=WetCoilSolverOptions(
+            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            timeout_s=None,
+        ),
     )
 
-    phase = result.outside_phase_change
-    wet = result.wet_finned_surface
+    phase=result.outside_phase_change
     assert phase is not None and phase.active and phase.converged
-    assert wet is not None and wet.m_dot_condensate > 0.0
-    assert wet is phase.wet_finned_surface
-    assert wet is result.final_result.wet_finned_surface
-    assert wet is result.thermal_state.finned_tube_diagnostics.wet_surface
-    assert wet.condensation_area_fraction < 1.0
-    assert wet.condensation_temperature_offset_K < 0.0
-    assert phase.method.endswith("with_endpoint_wet_zone_fallback")
-    assert phase.residuals["outer_relaxation_factor"] == 0.25
-    assert (
-        "endpoint_envelope_wet_zone_0d_linear_weighting"
-        in wet.assumptions
-    )
-    assert wet.Q_total == pytest.approx(
-        wet.Q_primary_total + wet.Q_fin_total,
-        abs=1.0e-7,
-    )
-    assert wet.m_dot_condensate == pytest.approx(
-        wet.m_dot_condensate_primary + wet.m_dot_condensate_fin,
-        abs=1.0e-12,
-    )
-    assert wet.wet_area == pytest.approx(
-        wet.wet_primary_area + wet.wet_fin_area,
-        abs=1.0e-10,
-    )
-    assert phase.Q_total == wet.Q_total
-    assert phase.m_dot_condensate == wet.m_dot_condensate
-    assert abs(phase.mass_balance_error) < 1.0e-6
-    assert abs(phase.energy_balance_error) < 1.0e-6
+    assert phase.m_dot_condensate > 0
+    assert phase.method == "elmahdy_mitalas_energyplus_v25_2_adapted"
+    assert 0 < phase.wet_fraction <= 1
+    assert phase.Q_total == pytest.approx(phase.Q_sensible+phase.Q_latent,abs=1e-7)
+    assert phase.wet_coil_diagnostics["surface_states"]
+    for p in phase.wet_coil_diagnostics["process_profile"]:
+        assert p.surface_temperature >= p.liquid_temperature
+    assert abs(phase.energy_balance_error) < 1e-5

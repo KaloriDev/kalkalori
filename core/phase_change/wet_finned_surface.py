@@ -282,6 +282,7 @@ def solve_wet_annular_fin(
     relative_heat_tolerance: float = 1.0e-9,
     condensate_tolerance_kg_s: float = 1.0e-12,
     relaxation_factor: float = 1.0,
+    check=None,
 ) -> WetAnnularFinResult:
     """Solve one wet annular fin with a prescribed physical base temperature."""
 
@@ -323,6 +324,7 @@ def solve_wet_annular_fin(
         relative_heat_tolerance=relative_heat_tolerance,
         condensate_tolerance_kg_s=condensate_tolerance_kg_s,
         relaxation_factor=relaxation_factor,
+        check=check,
         temperature_bounds=sorted((fin_base_temperature, gas_bulk_temperature)),
     )
 
@@ -366,6 +368,7 @@ def solve_wet_finned_surface(
     relative_heat_tolerance: float = 1.0e-9,
     condensate_tolerance_kg_s: float = 1.0e-10,
     relaxation_factor: float = 1.0,
+    check=None,
 ) -> WetFinnedSurfaceResult:
     """Solve the whole circular-finned outside surface at one bulk state.
 
@@ -460,6 +463,7 @@ def solve_wet_finned_surface(
         relative_heat_tolerance=relative_heat_tolerance,
         condensate_tolerance_kg_s=condensate_tolerance_kg_s,
         relaxation_factor=relaxation_factor,
+        check=check,
         temperature_bounds=(inside_bulk_temperature, gas_bulk_temperature),
     )
 
@@ -863,6 +867,7 @@ def _solve_nonlinear_chain(
     condensate_tolerance_kg_s: float,
     relaxation_factor: float,
     temperature_bounds: list[float] | tuple[float, float],
+    check=None,
 ) -> tuple[list[float], _ChainEvaluation, int, dict[str, float]]:
     del tube  # geometry is fully represented by ``chain`` at this layer.
     low_temperature, high_temperature = temperature_bounds
@@ -918,6 +923,8 @@ def _solve_nonlinear_chain(
     )
 
     for iteration in range(1, max_iterations + 1):
+        if check is not None:
+            check()
         current = _evaluate_chain(
             chain,
             temperatures,
