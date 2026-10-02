@@ -3,7 +3,8 @@
 This stage implements the source-profile moisture closure selected for
 KalKalori. Simulation and area-based Rating are connected through
 `ElmahdyMitalasWetCoilProvider`, the public default for both operations.
-Release validation and authorization remain pending.
+The v0.8.3 release candidate has completed public and engineering validation;
+publication awaits user release review.
 The original reference kernel, native tooling, fixtures and pinned EnergyPlus
 v25.2.0 revision `cf7368216c73c43181e057fa33b479c4e0c86df0` are unchanged.
 See [source provenance and tolerances](elmahdy_mitalas.md).
@@ -11,7 +12,7 @@ See [source provenance and tolerances](elmahdy_mitalas.md).
 ## Internal boundary and units
 
 `wet_coil.py` contains one global dry/partial/full-wet process engine.
-`wet_coil_adapters.py` supplies configured gas properties, sensible liquid /
+`wet_coil_adapters.py` supplies configured gas properties, sensible inside-fluid capacity /
 inside-wall resistance, and BareTube or CircularFinnedTube surface quantities.
 The public API accepts direct `wet_coil_provider` objects; `None` selects
 Elmahdy. The explicit historical `LegacyBulkMeanWetCoilProvider` supports
@@ -153,12 +154,16 @@ independently consistent energy/mass integrals. If the dry criterion fails and
 the wet candidate is invalid, `WetCoilModelError` reports the reason, onset
 margin, f and condensate. An invalid wet candidate is never clipped to dry.
 
-Numerical gates: energy/drain integral 2e-4 W; mass integral 2e-10 kg/s;
-liquid-provider balance 2e-3 W; W admissibility 1e-9 kg/kg (roundoff allowance,
-not output clipping); radial enthalpy iteration .002 J/kg. Synthetic cases
-cover dry, both sides of onset, partial, full, exactly equal enthalpy capacities,
+Numerical acceptance uses `WetCoilSolverOptions`: defaults are 1 W energy,
+5e-7 kg/s mass, 0.01 K outlet accuracy and a 300 s whole-operation deadline.
+Profile and independent drain integrals and the inside-provider energy balance
+use the configured tolerances. Strict regressions request tighter controls;
+see [the numerical-control guide](wet_coil_solver_controls.md).
+W admissibility remains 1e-9 kg/kg (roundoff allowance, not output clipping);
+radial specific-enthalpy stability remains .002 J/kg. Synthetic cases cover
+dry, both sides of onset, partial, full, exactly equal enthalpy capacities,
 vanishing dry region, configured gas/water/glycol and both surface adapters.
-These are numerical acceptance tolerances, not physical model uncertainty.
+These numerical controls do not represent physical model uncertainty.
 The predeclared native source tolerances remain unchanged.
 
 Source-limit tests exercise the actual production region equations with source
@@ -168,10 +173,8 @@ the source kernel accepts their endpoints. There is no source-only/test-only
 branch in the production equations. Reference mode still reproduces the pinned
 native procedure and retains its documented near-onset limitations.
 
-Two PRIVATE synthetic oracles remain ignored under `.kon`: the earlier local
-transport comparison and the fine integration of the approved source-profile
-constitutive equations. Neither is production code or a committed dependency.
-No project inputs or competitor targets are used in these checks.
+Supplemental validation data remains outside the public distribution and is
+not a production dependency. Public reference fixtures use synthetic inputs.
 
 The integrated provider remains a counterflow, mean-property/secant
 model with the documented source outlet approximation and reduced annular
@@ -180,6 +183,16 @@ this implementation. Public result mapping and Simulation/Rating routing are
 implemented; engineering case acceptance remains separate. Rating sizes
 `A_required` / thermal area scale only, while installed hydraulics always use
 installed geometry. See [the integration semantics](elmahdy_mitalas_integration.md).
+
+## v0.8.3 release-candidate validation
+
+All 1487 public tests passed on Python 3.11.9. Seven engineering notebook
+representatives (17 required cases) passed with their original physical checks,
+covering dry operation, both public wet providers, thermal-area Rating,
+zero/nonzero margins and partial/full wet regimes. Existing tube-side
+enhancement regressions passed in the full suite. Numerical acceptance does
+not establish experimental accuracy. Engineering inputs and outputs remain
+outside the public distribution.
 
 ## Historical production-engine validation record
 
@@ -196,10 +209,5 @@ IAPWS/NumPy scalar-array deprecation warnings; there are no failed tests.
 
 All eight pinned source-limit cases pass the existing comparison tolerances.
 This is equation parity, with physical acceptance still enforced separately.
-The frozen native source was not rebuilt in this stage. Private oracle checks
-cover two full-wet states and one partial-wet state at quadrature orders 8/12
-in both environments after the final numerical change. Maximum differences
-are 5.02e-6 J/kg for gas enthalpy, 1.53e-9 K for liquid temperature,
-6.46e-13 kg/s for integrated condensate and 2.91e-8 W for drain enthalpy.
-The local-transport oracle and its evidence are retained as historical
-comparison only. This historical record does not establish real-project acceptance.
+The frozen native source was not rebuilt in this stage. This historical
+record does not establish engineering-case or experimental acceptance.

@@ -105,3 +105,9 @@ The finned inverse-area and joint inverse regressions retain their original
 energy/outlet assertions with explicit validation controls. Separate tests
 run both closures with the unchanged default controls and 300-second deadline,
 including optional installed Simulation for the known-flow Rating.
+
+A wall-time deadline is a work budget, not a throughput guarantee. Large
+finned inverse cases and competing calculation jobs can exceed it. Offline
+precision validation can explicitly request a larger deadline or `None`;
+production defaults and controlled timeout behavior remain unchanged.
+Release checks of the default deadline run without competing wet-solver jobs.

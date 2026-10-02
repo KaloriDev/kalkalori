@@ -125,10 +125,10 @@ Hydraulic length and flow-area diagnostics describe installed geometry.
 Required tube lengths and required geometry are not Rating outputs. The
 surface margin and reported wet UA margin share the same process reference.
 
-Before the required-area correction, integration acceptance gates passed:
-the complete public test collection, private project checks and four strict
-notebook executions. Those runs do not validate the corrected Rating contract.
-Release remains HOLD; numerical acceptance does not authorize a release.
+Historical integration checks preceded the required-area correction. Final
+v0.8.3 validation passed all 1487 public tests and 17 required cases in seven
+engineering notebook representatives with the current thermal-area Rating
+contract and installed hydraulics. Publication awaits user release review.
 
 
 ## Numerical onset evaluation
@@ -276,8 +276,9 @@ final-grid property solve, as before.
 At the maximum axial order, the independent physical radial drain and the
 profile drain use identical nodes. Any remaining discrepancy is therefore a
 coupled constitutive iteration residual. The solver continues updating that
-field until the original 0.0002 W whole-coil gate passes, within its existing
-80-iteration bound; it does not increase the tolerance or alter condensate.
+field until the configured independent drain-energy gate passes, within its
+existing 80-iteration bound; it does not relax the selected tolerance or alter
+condensate. See [numerical controls](wet_coil_solver_controls.md).
 
 The Rating regime-pair fixture uses a common 360 K gas outlet target and
 varies only coolant inlet temperature (20/60 C), retaining installed hydraulic
@@ -299,4 +300,5 @@ local correlation ranges.
 Circular-finned pressure drop remains the existing dry-bank reference;
 condensate-film hydraulics are not added. Large finned inverse cases require
 repeated coupled profile and radial solves and can take substantial time.
-VDI, Jeong and the future wet-model selector remain outside this integration.
+External implementations use the direct [public provider contract](wet_coil_providers.md);
+there is no registry, discovery or string-selection mechanism.

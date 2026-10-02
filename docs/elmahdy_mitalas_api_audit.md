@@ -4,19 +4,20 @@ Compared field declarations, defaults, properties and positional constructor
 prefixes against both `v0.8.2` and starting HEAD
 `c80e779fc61b35c3bc77751e5d6809a31129c0f0`. All existing fields retain their
 names, types, defaults and positional order. No existing numeric field became
-Optional. This audit describes the integration working tree, not a release.
+Optional. The historical field comparison below applies to the current
+v0.8.3 release candidate; publication awaits user review.
 
 | Public class / fields | v0.8.2 type and meaning | Integration type and meaning | Compatibility |
 |---|---|---|---|
 | HXRatingResult: 20 existing fields | Existing declarations | Same declarations and constructor prefix | Preserved |
 | HXRatingResult: U_mean, UA_required/UA_process, UA_actual, EMTD | float, conventional thermal reduction | float, approved process-equivalent reduction for eligible outside AUTO | Explicit wet-path basis |
-| HXRatingResult: A_o, A_required, overdesign_factor, ua_margin | float, installed/required area and reserve | float, installed/required physical area; equivalent UA and area ratios agree | Approved physical sizing contract |
-| HXRatingResult: alfa_i, alfa_o, Q_required and pressure-drop accessors | Numeric corrected HTC, duty, physical hydraulics | Numeric native HTC, liquid duty, real-geometry hydraulics | No Optional substitution |
+| HXRatingResult: A_o, A_required, overdesign_factor, ua_margin | float, installed/required area and reserve | float, installed physical area / required thermal area; equivalent UA and thermal-area ratios agree | Preserved fields; corrected thermal sizing |
+| HXRatingResult: alfa_i, alfa_o, Q_required and pressure-drop accessors | Numeric corrected HTC, duty, physical hydraulics | Numeric native HTC, duty to the inside fluid, hydraulics from installed geometry | No Optional substitution |
 | HXSimulationResult: 33 existing fields | Existing declarations | Same declarations and constructor prefix | Preserved |
 | HXSimulationResult: U_mean, UA/UA_actual/UA_process, EMTD | float, conventional thermal reduction | float, approved equivalent reduction of reserved-area wet process | Explicit wet-path basis |
-| HXSimulationResult: q, Q_full, Q_derated, overdesign_factor | float, duty and reserve | float, direct wet forward solves at reserved/full area; numeric reserve | Physical area scaling, real hydraulics |
+| HXSimulationResult: q, Q_full, Q_derated, overdesign_factor | float, duty and reserve | float, direct wet forward solves at reserved/full area; numeric reserve | Thermal area scaling, installed hydraulics |
 | PhaseChangeResult: 47 existing fields | Existing declarations | Same declarations and constructor prefix | Preserved |
-| PhaseChangeResult: Q_total, Q_sensible, Q_latent, wall and wet-area diagnostics | Liquid duty and declared sensible/latent/surface approximations | Liquid duty; fixed-inlet-W cooling plus isothermal removal minus integrated drain; native profile/radial surfaces | Active outside-wet semantics documented |
+| PhaseChangeResult: Q_total, Q_sensible, Q_latent, wall and wet-area diagnostics | Liquid duty and declared sensible/latent/surface approximations | Duty to the inside fluid; fixed-inlet-W cooling plus isothermal removal minus integrated drain; native profile/radial surfaces | Active outside-wet semantics documented |
 | IterativeThermalState: 25 existing fields | Existing declarations, converged mean thermal state | Same declarations; native film/correction data and profile walls, equivalent U/UA | No fabricated legacy state |
 | WallTemperatureEnvelope and probes | Existing types, four-point legacy approximation | Same types; native wet/dry profile and radial sampling under explicit method | Active AUTO path only |
 | FinnedTubeDiagnostics: 49 existing fields | Dry constitutive network and physical hydraulics | Same types; native dry constitutive operator at solved wet fluid states, explicitly labelled | Wet process U/UA remain on main result/state |
@@ -73,10 +74,12 @@ reports must carry the basis of fin efficiencies/resistances alongside the
 process-equivalent U/UA to avoid identifying them as one scalar wet network.
 No structural fallback to fabricated IterativeThermalState data is required.
 
-Validation status: focused integration gates, all 1404 public tests, seven
-private project cases and four strict notebook executions passed. Existing
-public field declarations and constructor prefixes retain the audited
-compatibility described above. Release remains HOLD.
+Historical integration gates passed 1404 public tests and supplemental
+engineering checks before the required-area correction. Final v0.8.3 gates
+passed all 1487 public tests and 17 required cases in seven notebook
+representatives with the current Rating contract. Existing field declarations
+and constructor prefixes retain the audited compatibility described above.
+The release candidate is prepared for user review.
 
 
 Simulation temperature residuals are the actual last native outlet changes

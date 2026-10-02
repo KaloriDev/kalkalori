@@ -35,10 +35,11 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.2`
+**Current version:** `v0.8.3`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
-0D sensible/phase-change thermal balance, tube-bank hydraulic balance,
+0D sensible/phase-change balance and source-profile wet-coil approximation,
+tube-bank hydraulic balance,
 local nozzle/chamber/tube-sheet/return losses, unified surface-margin reporting,
 alternating staggered-row tube counts, tube-side enhancement providers and
 smooth laminar thermal development. Active wet-finned pressure drop
@@ -181,7 +182,7 @@ The [provider guide](tube_side_enhancements.md) describes usage, external
 integration and the narrow geometry/operating limits of the public model.
 Transition, turbulent, gas and liquid-cooling support are outside this
 selected model.
-Paywalled literature (including M&B Part I / II), manufacturer data,
+Paywalled literature, manufacturer data,
 proprietary correlations and licensed software belong in external/private
 providers, supported by the open generic interface.
 Insert-specific local losses, phase change inside enhanced tubes, and
@@ -202,7 +203,7 @@ finite-width clearance correlation remains future work.
   iterated wall temperatures; hydraulic states retain local bulk properties.
   See [provider semantics](twisted_tape_rossi2017.md).
   Selection is explicit, with source and extrapolation diagnostics and
-  no AUTO activation. The XSC use is a nominal-tape sensitivity;
+  no AUTO activation. The correlations represent nominal-tape sensitivity;
   real width and clearance are not represented by these correlations.
 
 **Included in v0.8.2:**
@@ -215,7 +216,7 @@ finite-width clearance correlation remains future work.
   Özceyhan remains pending source-definition closure; Zimparov remains pending
   methodological closure.
 
-**In development for v0.8.3: wet-coil providers:**
+**Included in v0.8.3: wet-coil providers:**
 
 - Elmahdy-Mitalas is the public default for Simulation and area-based Rating.
   Rating sizes `A_required` / thermal area scale only; installed hydraulics
@@ -229,7 +230,10 @@ finite-width clearance correlation remains future work.
   discovery or string-based selection and are outside the distribution.
   See [the provider API](wet_coil_providers.md).
 
-Release validation and release authorization remain pending.
+Release-candidate validation passed all 1487 public tests and 17 required
+engineering cases in seven notebook representatives. Publication awaits
+user release review; model applicability and wet pressure-drop limits remain
+as documented.
 
 ---
 

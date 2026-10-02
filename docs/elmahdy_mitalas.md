@@ -136,9 +136,10 @@ routines, retains upstream notices, compiles and runs them independently,
 and writes `native_results.json`. It never imports the Python kernel.
 The generated native files are validation-only, outside the distribution.
 
-Current verification: 17 focused tests in both Python 3.11 and 3.12. These
-include expected rejection of source-limit violations, NOT physical acceptance
-of those conditions. Geometry adapters, shared Rating/Simulation, process
-acceptance and full public regression remain pending. No prior experimental
-wet orchestration has been recovered. Candidate property/transport patches
-remain deferred until the accepted adaptation specifies their dependencies.
+Historical reference-kernel verification passed 17 focused tests in both
+Python 3.11 and 3.12. These include expected rejection of source-limit
+violations, not physical acceptance of those conditions. The production
+adapters, shared Simulation/thermal-area Rating and final public regression
+are documented in [the production guide](elmahdy_mitalas_production.md) and
+[integration semantics](elmahdy_mitalas_integration.md). The v0.8.3 release
+candidate passed all 1487 public tests; the pinned reference kernel is unchanged.
