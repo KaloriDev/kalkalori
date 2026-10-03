@@ -61,7 +61,7 @@ from core import LegacyBulkMeanWetCoilProvider
 
 result = hx.simulate(
     inside, outside,
-    surface_margin=0,
+    surface_margin=0.10,
     wet_coil_provider=LegacyBulkMeanWetCoilProvider(),
 )
 ```
@@ -77,11 +77,33 @@ The supported outside phase change is H2O condensation from a carrier gas on
 BareTube or CircularFinnedTube, with a sensible inside fluid (liquid or the
 historically tested dry gas). Installed bundle flow semantics and existing
 geometry/correlation guards apply; a conflicting per-call flow override is
-rejected. Tube-side enhancement, nonzero surface margin, inside condensation,
+rejected. Tube-side enhancement, inside condensation,
 and Rating are unsupported. Simultaneously active phase-change sides retain
 the existing guard. Frost retains the historical warning/dry behavior; no ice
 physics is added. Unsupported condensables are not routed to another model.
 There is **no automatic fallback** between providers.
+
+The v0.8.4 patch extends this historical bulk-mean Simulation provider to
+nonnegative thermal `surface_margin`. Active inside/outside thermal areas are
+`A_process = A_actual / (1 + surface_margin)`; the corresponding absolute
+inside-film, wall, fin/root and contact resistances scale inversely with active
+area. Physical HTC correlations still use the installed geometry. Sensible and
+latent duty, condensate and outlet/wall states are solved together on this
+process surface. Zero-margin behavior remains numerically compatible with
+v0.8.3. Legacy remains Simulation-only; Rating raises the existing controlled
+provider error. Omission or `None` continues to select Elmahdy.
+
+`final_result.A_i` / `A_o` retain installed physical areas. Legacy diagnostics
+`actual_outside_area`, `thermal_outside_area`, `thermal_inside_area` and
+`thermal_area_scale` distinguish installed and process surfaces. Native
+`outside_phase_change.outside_total_area` / `wet_area` and the wet-fin
+whole-surface areas describe the active thermal surface; wet fractions retain
+their native definitions. `UA_actual` and `U_mean` use installed area at the
+solved working state, while `UA_process = UA_actual / (1 + surface_margin)`
+reports active conductance and `EMTD = abs(q) / UA_process`. This reporting
+division does not derate duty again. Legacy's historical `Q_full` alias still
+equals the achieved wet duty; it does not represent a separate zero-margin
+simulation.
 
 Legacy uses the existing `phase_change_*` convergence settings. Generic wet
 energy/mass/outlet-temperature tolerances are not reinterpreted as legacy
@@ -94,6 +116,9 @@ without changing convergence tolerances or the operation deadline.
 Hydraulics use installed geometry and the historical solved gas states. Wet
 pressure-drop correction is not implemented; active circular-fin results
 explicitly label outside dp as a dry/reference bank correlation.
+Thermal margin does not change tube count, lengths, flow/frontal/free areas or
+hydraulic diameter. Velocity, Reynolds number and calculated pressure drop can
+change as solved temperatures, gas composition and transport properties change.
 
 Results retain native diagnostics. `wet_coil_diagnostics["provider"]` contains
 the selected model's identity, source, applicability and support flags; the
