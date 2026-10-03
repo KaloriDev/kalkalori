@@ -5,6 +5,26 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.4] — Legacy thermal surface margin
+
+- Extended the explicitly selected historical/bulk-mean
+  `LegacyBulkMeanWetCoilProvider` Simulation path to nonnegative thermal
+  `surface_margin`. Active thermal areas and parallel conductance are scaled
+  by `1 / (1 + surface_margin)` inside the coupled wet solve, including
+  sensible/latent duty, condensation and outlet/surface states.
+- Installed tube and bundle geometry continue to govern HTC correlations and
+  hydraulics; physical lengths, flow areas and installed outside area are
+  unchanged. Pressure drop can respond to the changed solved fluid properties.
+- Preserved v0.8.3 zero-margin Legacy numerics, Simulation-only support and all
+  unrelated applicability limits. `None` still selects Elmahdy for Simulation
+  and Rating. Added focused margin/freeze/hydraulic and radial-network checks.
+- Distinguished installed/process thermal areas in Legacy diagnostics and
+  documented installed `UA_actual` versus active `UA_process`, with no second
+  duty derating.
+- Release validation: all 1,502 public tests passed, together with Legacy
+  0/5/10% margin and coupled-loop regressions, explicit Elmahdy wet Simulation
+  and Rating, and dry/provider-boundary checks.
+
 ## [0.8.3] — Wet-coil providers and thermal-area Rating
 
 - Added the production source-profile Elmahdy-Mitalas adaptation for bare and

@@ -114,7 +114,7 @@ class LegacyBulkMeanWetCoilProvider:
     applicability: str = (
         "Outside H2O in a carrier gas; sensible inside fluid; BareTube or "
         "CircularFinnedTube; installed bundle flow; no tube-side enhancement; "
-        "surface_margin=0; no frost or simultaneous active phase-change sides."
+        "non-negative thermal surface_margin; no frost or simultaneous active phase-change sides."
     )
     supports_simulation: bool = True
     supports_rating: bool = False
@@ -129,7 +129,6 @@ class LegacyBulkMeanWetCoilProvider:
             cap.capable and cap.component == "H2O" and cap.provider_kind == "gas_mixture"
             and hx.bundle.tube.surface_type in (TubeSurfaceType.PLAIN, TubeSurfaceType.CIRCULAR_FINNED)
             and hx.tube_side_enhancement is None
-            and options.get("surface_margin", 0.0) == 0.0
             and flow == hx.bundle.flow_arrangement_resolved
         )
 

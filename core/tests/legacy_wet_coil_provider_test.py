@@ -29,14 +29,116 @@ def active(request):
     return hx, a, b, hx.simulate(a, b, wet_coil_provider=LEGACY)
 
 
-def test_contract_rating_margin_and_no_fallback(monkeypatch):
+@pytest.fixture(scope="module")
+def margin_sweep(active):
+    hx, a, b, zero = active
+    return hx, a, b, [zero, *(hx.simulate(a, b, wet_coil_provider=LEGACY,
+        surface_margin=margin) for margin in (0.05, 0.10))]
+
+
+def test_v083_zero_margin_numerical_freeze(active):
+    """Captured on the merged a8673ca base, before thermal-margin edits."""
+    hx, _, _, r = active
+    expected = (
+        (702644.68440337, 336.21383345649315, 336.5149577934638,
+         0.06982196451578865, 0.32591996755281527, 10784.936645928527)
+        if hx.bundle.tube.surface_type.value == "plain" else
+        (452361.78009796015, 309.77365212847946, 336.40912837496386,
+         0.04443248677919755, 0.442604902596629, 6621.439654955228)
+    )
+    # Ordinary pytest numerical tolerance, rather than exact equality.
+    assert (r.q, r.T_out_inside, r.T_out_outside,
+            r.outside_phase_change.m_dot_condensate,
+            r.outside_phase_change.wet_surface_fraction, r.UA) == pytest.approx(expected)
+
+
+def test_positive_margin_reduces_coupled_wet_capability(margin_sweep):
+    hx, a, b, results = margin_sweep
+    zero, five, ten = results
+    assert ten.q < five.q < zero.q
+    # For these fixed-inlet heating/cooling cases less duty means less inside
+    # heating and gas cooling. The observed moisture trend is case-specific:
+    # less active mass-transfer surface leaves more vapor in this wet gas.
+    assert a.T_in < ten.T_out_inside < five.T_out_inside < zero.T_out_inside
+    assert b.T_in > ten.T_out_outside > five.T_out_outside > zero.T_out_outside
+    assert 0 < ten.outside_phase_change.m_dot_condensate < five.outside_phase_change.m_dot_condensate < zero.outside_phase_change.m_dot_condensate
+    assert ten.outside_phase_change.W_out > five.outside_phase_change.W_out > zero.outside_phase_change.W_out
+    # No monotonic assertion on wet fraction or wall/fin temperatures: the
+    # reduced duty changes both bulk state and the dew-point/surface balance.
+    for margin, r in zip((0.0, 0.05, 0.10), results):
+        assert r.converged and r.outside_phase_change.converged
+        test_active_balances_and_native_surface((hx, a, b, r))
+        test_native_whole_stream_energy_closure((hx, a, b, r))
+        pc = r.outside_phase_change
+        assert pc.outside_total_area == pytest.approx(hx.bundle.total_outer_area / (1 + margin))
+        assert pc.wet_area == pytest.approx(pc.outside_total_area * pc.wet_surface_fraction)
+        assert r.UA_process == pytest.approx(r.UA_actual / (1 + margin))
+        assert r.U_mean * hx.bundle.total_outer_area == pytest.approx(r.UA_actual)
+        assert r.overdesign_factor == pytest.approx(margin, abs=1e-12)
+        assert r.q == r.Q_derated == pc.Q_total
+        # Reconstruct active conductance independently from physical films,
+        # active areas and wall resistance: catches a second UA derating.
+        active_R = (1 / (r.inside_alfa_mean * hx.bundle.total_inner_area)
+                    + hx.tube_wall_resistance()
+                    + 1 / (r.outside_alfa_mean * hx.bundle.total_outer_area)) * (1 + margin)
+        assert r.UA_process == pytest.approx(1 / active_R)
+        if r.wet_finned_surface is not None:
+            wet = r.wet_finned_surface
+            assert wet.outside_total_area == pytest.approx(pc.outside_total_area)
+            assert wet.primary_area + wet.fin_area == pytest.approx(pc.outside_total_area)
+            assert wet.Q_total == pytest.approx(r.q)
+            assert wet.m_dot_condensate == pytest.approx(pc.m_dot_condensate)
+            assert abs(wet.energy_balance_error) < 0.01
+
+
+def test_positive_margin_keeps_installed_hydraulics(margin_sweep):
+    hx, a, b, results = margin_sweep
+    baseline = results[0].final_result.tube_bundle_hydraulic
+    for r in results:
+        # Re-evaluate dp on the installed bank at each solved wet state;
+        # identical dp/Re/velocity are not expected at different properties.
+        test_installed_hydraulics((hx, a, b, r))
+        assert r.final_result.A_i == hx.bundle.total_inner_area
+        hydraulic = r.final_result.tube_bundle_hydraulic
+        assert hydraulic.flow_area_per_pass == hx.bundle.internal_flow_area_per_pass
+        assert hydraulic.hydraulic_diameter == hx.bundle.internal_hydraulic_diameter
+        assert hydraulic.hydraulic_length_total == hx.bundle.internal_length_total
+        for field in ('flow_area_per_pass', 'hydraulic_diameter', 'hydraulic_length_total',
+                      'entrance_count', 'exit_count'):
+            assert getattr(hydraulic, field) == getattr(baseline, field)
+        # Inlet state is fixed, so its velocity/Re must remain fixed too.
+        assert hydraulic.inlet.velocity == baseline.inlet.velocity
+        assert hydraulic.inlet.reynolds == baseline.inlet.reynolds
+        props = r.inside_props_mean
+        v = a.m_dot / (props.rho * hx.bundle.internal_flow_area_per_pass)
+        assert r.inside_velocity_mean == pytest.approx(v)
+        assert r.inside_Re_mean == pytest.approx(
+            props.rho * v * hx.bundle.internal_hydraulic_diameter / props.mu)
+        assert r.wet_coil_diagnostics['actual_outside_area'] == hx.bundle.total_outer_area
+
+
+@pytest.mark.parametrize("margin", [0.05, 0.10])
+def test_positive_margin_applicability_preserves_other_guards(margin):
+    from types import SimpleNamespace
+    from core.phase_change.integration import PhaseChangeSettings
+    hx, a, b = historical_case(False)
+    settings = PhaseChangeSettings()
+    assert LEGACY.is_applicable(hx, a, b, settings=settings, surface_margin=margin)
+    assert not LEGACY.is_applicable(hx, a, b, settings=settings,
+        surface_margin=margin, flow_arrangement="cocurrentflow")
+    assert not LEGACY.is_applicable(hx, a, replace(b, provider=a.provider),
+        settings=settings, surface_margin=margin)
+    assert not LEGACY.is_applicable(SimpleNamespace(bundle=hx.bundle,
+        tube_side_enhancement=object()), a, b, settings=settings, surface_margin=margin)
+
+
+def test_contract_rating_and_no_fallback(monkeypatch):
     from core.phase_change import wet_coil_integration as engine
     monkeypatch.setattr(engine, "_run_elmahdy", lambda *a, **k: pytest.fail("fallback"))
     hx, a, b = context()
     assert LEGACY.supports_simulation and not LEGACY.supports_rating
-    for margin in (0.1, -0.1):
-        with pytest.raises(WetCoilProviderUnsupportedError, match="surface_margin"):
-            hx.simulate(a, b, wet_coil_provider=LEGACY, surface_margin=margin)
+    with pytest.raises(ValueError, match="surface_margin"):
+        hx.simulate(a, b, wet_coil_provider=LEGACY, surface_margin=-0.1)
     with pytest.raises(WetCoilProviderUnsupportedError, match="rating"):
         hx.rate(*specs(a, b, 294.0), wet_coil_provider=LEGACY)
     with pytest.raises(WetCoilProviderUnsupportedError, match="not applicable"):
@@ -163,9 +265,10 @@ def test_shared_deadline_interrupts_legacy_iterations(monkeypatch, radial):
     assert controls._active_budget.get() is None
 
 
-def test_default_remains_elmahdy_simulation():
-    hx, a, b = context(W=0.004)
-    default = hx.simulate(a, b)
+@pytest.mark.parametrize("finned,W", [(False, 0.004), (False, 0.016), (True, 0.016)])
+def test_default_remains_elmahdy_simulation(finned, W):
+    hx, a, b = context(finned=finned, W=W)
+    default = hx.simulate(a, b, wet_coil_provider=None)
     explicit = hx.simulate(a, b, wet_coil_provider=ElmahdyMitalasWetCoilProvider())
     for field in ('q', 'T_out_inside', 'T_out_outside', 'UA'):
         assert getattr(default, field) == getattr(explicit, field)

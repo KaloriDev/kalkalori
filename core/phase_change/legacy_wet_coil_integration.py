@@ -119,6 +119,10 @@ def _attach_legacy_diagnostics(result, *, settings):
     # separate condensate-film interface temperature absent from the model.
     return replace(result, wet_coil_diagnostics=dict(
         native_method=phase.method,
+        actual_outside_area=result.final_result.A_o,
+        thermal_outside_area=result.final_result.A_o / (1.0 + result.surface_margin),
+        thermal_inside_area=result.final_result.A_i / (1.0 + result.surface_margin),
+        thermal_area_scale=1.0 / (1.0 + result.surface_margin),
         surface=surface,
         H_drain=drainage,
         wet_pressure_drop_supported=False,
@@ -332,6 +336,7 @@ def _apply_legacy_outside(
     try:
         solution = solve_outside_condensation(
             hx,
+            surface_margin=dry_result.surface_margin,
             check=check,
             inside_provider=inside.provider,
             m_dot_inside=inside.m_dot,
@@ -849,9 +854,10 @@ def _apply_legacy_outside(
         inside_result, Q_sensible=solution.Q_total, Q_total=solution.Q_total,
     )
 
-    # Keep the phase solver and its achieved duty unchanged. The result-level
-    # process UA applies the same Simulation derating contract to the final
-    # wet working-state UA, then reconstructs EMTD and the canonical margin.
+    # Margin already acted on active areas/resistances in the wet solve.
+    # solution.UA_effective is reconstructed on installed geometry at that
+    # working state; dividing here reports the active conductance, not a second
+    # duty derating. Legacy Q_full retains its historical achieved-duty alias.
     UA_actual = wet_thermal_state.UA
     UA_process = UA_actual / (1.0 + dry_result.surface_margin)
     surface_margin_factor = calculate_surface_margin_factor(
