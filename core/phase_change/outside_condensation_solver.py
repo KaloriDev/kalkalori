@@ -168,6 +168,7 @@ def solve_outside_condensation(
     finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
     finned_condensation_area_fraction: float | None = None,
     finned_condensation_temperature_offset_K: float = 0.0,
+    surface_margin: float = 0.0,
     lewis_number: float = 1.0,
     activation_band_K: float = 0.5,
     max_iterations: int = 50,
@@ -187,8 +188,16 @@ def solve_outside_condensation(
     The first wet fraction comes from the dry sensible envelope rather than
     an arbitrary zero/full-area guess; subsequent updates retain the
     configured relaxation.
+
+    ``surface_margin`` reserves installed thermal surface: active areas are
+    divided by ``1 + surface_margin`` and absolute thermal resistances are
+    multiplied by that factor. HTC and hydraulic geometry remain installed.
+    Returned U/UA are reconstructed on the installed-area basis; native wet
+    areas describe the active process surface.
     """
     _validate_positive(lewis_number, "lewis_number")
+    if not math.isfinite(surface_margin) or surface_margin < 0.0:
+        raise ValueError("surface_margin must be a non-negative finite value.")
     if max_iterations <= 0:
         raise ValueError("max_iterations must be > 0.")
     for name, value in (
@@ -223,9 +232,11 @@ def solve_outside_condensation(
         )
 
     bundle = hx.bundle
-    A_i = bundle.total_inner_area
-    A_o = bundle.total_outer_area
-    R_w = hx.tube_wall_resistance()
+    margin_factor = 1.0 + surface_margin
+    thermal_area_scale = 1.0 / margin_factor
+    A_i = bundle.total_inner_area / margin_factor
+    A_o = bundle.total_outer_area / margin_factor
+    R_w = hx.tube_wall_resistance() * margin_factor
     is_circular_finned = (
         getattr(getattr(bundle.tube, "surface_type", None), "value", None)
         == "circular_finned"
@@ -325,6 +336,7 @@ def solve_outside_condensation(
                         M_dry=outside_capability.M_dry,
                         M_h2o=outside_capability.M_condensable,
                         m_dot_water_vapor_available=m_dot_dry_carrier * W_mean,
+                        thermal_area_scale=thermal_area_scale,
                         lewis_number=lewis_number,
                         condensation_area_fraction=condensation_area_fraction,
                         condensation_temperature_offset_K=(
@@ -858,10 +870,13 @@ def solve_outside_condensation(
                 solution_state["Q_total"] / (A_o_local * delta_T_film)
             )
 
-    R_i_final = 1.0 / (solution_state["alfa_i"] * A_i)
-    R_o_effective = 1.0 / (alfa_o_effective * A_o_local)
-    UA_effective = 1.0 / (R_i_final + R_w + R_o_effective)
-    U_effective = UA_effective / A_o_local if A_o_local > 0.0 else math.nan
+    # The active areas above already derated the coupled wet duty. Reconstruct
+    # installed conductance at that working state for result-level UA_actual;
+    # Legacy reports UA_process = UA_actual / margin_factor, without rescaling Q.
+    R_i_final = 1.0 / (solution_state["alfa_i"] * bundle.total_inner_area)
+    R_o_effective = 1.0 / (alfa_o_effective * bundle.total_outer_area)
+    UA_effective = 1.0 / (R_i_final + hx.tube_wall_resistance() + R_o_effective)
+    U_effective = UA_effective / bundle.total_outer_area
 
     internal_diag = solution_state["internal_diagnostics"]
     diagnostics = ThermalIterationDiagnostics(

@@ -111,6 +111,50 @@ def _solve_fin(
     )
 
 
+@pytest.mark.parametrize("D_root", [0.025, 0.029], ids=["fin_branch", "continuous_root"])
+@pytest.mark.parametrize("margin", [0.05, 0.10])
+def test_thermal_reserve_scales_parallel_paths_at_fixed_bulk_state(D_root, margin):
+    """Uniform reserve scales total transfer, preserving each local fin path."""
+    tube = _tube(D_root=D_root, fin_contact_resistance=2e-4)
+    bundle, network = _bundle(tube), _network(tube)
+    options = dict(gas_bulk_temperature=334.0, inside_bulk_temperature=288.0,
+        cp_gas=CP_GAS, W_bulk=_W_at_dew_point(330.0), p_total=P,
+        M_dry=M_DRY, m_dot_water_vapor_available=1.0, radial_cells=80)
+    full = solve_wet_finned_surface(bundle, network, **options)
+    assert full.Q_latent > 0 and full.m_dot_condensate > 0
+    scale = 1 / (1 + margin)
+    process = solve_wet_finned_surface(bundle, network, thermal_area_scale=scale, **options)
+    assert network.area_outside_gross == bundle.total_outer_area
+    for field in ("Q_sensible", "Q_latent", "Q_total", "m_dot_condensate",
+                  "condensate_enthalpy_rate", "wet_area", "outside_total_area",
+                  "primary_area", "fin_area", "equivalent_fin_count"):
+        assert getattr(process, field) == pytest.approx(getattr(full, field) * scale)
+    for field in ("core_wall_temperature", "inside_wall_temperature",
+                  "fin_base_temperature", "fin_tip_temperature",
+                  "wet_surface_fraction", "outside_alpha_physical",
+                  "outside_alpha_wet_effective_gross_core_basis", "contact_resistance_used"):
+        assert getattr(process, field) == pytest.approx(getattr(full, field))
+    assert process.resistance_contact == pytest.approx(full.resistance_contact / scale)
+    assert process.resistance_root == pytest.approx(full.resistance_root / scale)
+    # Fin count is a thermal parallel-path weight; no physical fin is shortened.
+    assert process.annular_fin.radial_cell_side_areas == full.annular_fin.radial_cell_side_areas
+    assert process.annular_fin.Q_fin_total == pytest.approx(full.annular_fin.Q_fin_total)
+    assert abs(process.energy_balance_error) < 0.01
+
+
+def test_thermal_reserve_retains_actual_vapor_availability():
+    tube = _tube(D_root=0.029, fin_contact_resistance=2e-4)
+    available = 1e-3
+    result = solve_wet_finned_surface(_bundle(tube), _network(tube),
+        thermal_area_scale=1 / 1.1, gas_bulk_temperature=334.0,
+        inside_bulk_temperature=288.0, cp_gas=CP_GAS,
+        W_bulk=_W_at_dew_point(330.0), p_total=P, M_dry=M_DRY,
+        m_dot_water_vapor_available=available, radial_cells=80)
+    assert result.water_availability_scale < 1
+    assert result.m_dot_condensate == pytest.approx(available)
+    assert abs(result.energy_balance_error) < 0.01
+
+
 def test_zero_humidity_reproduces_the_existing_dry_fvm() -> None:
     tube = _tube()
     radial_cells = 120

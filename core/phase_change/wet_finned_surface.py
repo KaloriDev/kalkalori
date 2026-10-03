@@ -26,7 +26,7 @@ Wet extended-surface formulation references (SI units throughout):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import lru_cache
 import math
@@ -358,6 +358,7 @@ def solve_wet_finned_surface(
     p_total: float,
     M_dry: float,
     m_dot_water_vapor_available: float,
+    thermal_area_scale: float = 1.0,
     M_h2o: float = WATER_MOLAR_MASS_KG_PER_MOL,
     lewis_number: float = 1.0,
     condensation_area_fraction: float = 1.0,
@@ -376,6 +377,10 @@ def solve_wet_finned_surface(
     the same physical outside HTC.  It supplies the already-resolved contact
     precedence/equivalent resistance and the downstream inside-film plus core-
     wall terms.  The nonlinear chain then applies these topology terms once.
+    ``thermal_area_scale`` reserves a uniform fraction of thermal surface and
+    parallel conductance, keeping the installed bundle and single-fin mesh.
+    Whole-surface rates/areas and absolute resistances use the process basis;
+    physical HTC, areal contact resistance and per-fin quantities retain theirs.
     """
 
     if not isinstance(bundle, TubeBundle):
@@ -433,6 +438,26 @@ def solve_wet_finned_surface(
         relaxation_factor=relaxation_factor,
     )
     _validate_network_areas(bundle, network)
+    if not math.isfinite(thermal_area_scale) or not 0.0 < thermal_area_scale <= 1.0:
+        raise ValueError("thermal_area_scale must be finite and in (0, 1].")
+    if thermal_area_scale != 1.0:
+        # Project surface-margin invariant: reserve thermal parallel paths,
+        # without shortening tubes or changing hydraulic/correlation geometry.
+        # Scale root/contact and inside/wall terms along with the fin count so
+        # local conduction-to-film ratios remain those of the installed surface.
+        network = replace(network, **{
+            **{name: getattr(network, name) * thermal_area_scale for name in (
+                "area_inside", "area_primary_outside", "area_fin",
+                "area_outside_gross", "area_outside_geometric",
+                "area_outside_effective", "contact_area",
+                "conductance_primary_outside", "conductance_fin_outside", "UA",
+            )},
+            **{name: getattr(network, name) / thermal_area_scale for name in (
+                "resistance_inside", "resistance_core_wall", "resistance_root",
+                "resistance_contact", "resistance_outside_branches",
+                "resistance_outside", "resistance_total",
+            )},
+        })
 
     mesh = _build_fin_mesh(tube, radial_cells)
     equivalent_fin_count = network.area_fin / tube.fin_area_per_fin
