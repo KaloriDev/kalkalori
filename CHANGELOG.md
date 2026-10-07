@@ -5,6 +5,27 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.5] — Wet-gas process phase fractions
+
+- Added derived gas/liquid phase mass fractions at inlet, mean and outlet
+  to `PhaseChangeResult`. All states use the total inlet process mass,
+  including subsequently drained condensate: `(1 + W) / (1 + W_in)` for
+  gas and `(W_in - W) / (1 + W_in)` for liquid.
+- Mean phase fractions use the solver's stored `W_mid`. Missing humidity
+  returns `None`; fractions are not clipped to conceal accounting errors.
+  Humidity ratio and remaining-gas component composition retain their
+  separate meanings. Pure-water vapor quality is unchanged.
+- Preserved wet-gas thermodynamics, provider selection, Simulation/Rating
+  behavior, condensate, duty, outlet temperatures and pressure drop.
+- Added focused dry/condensing, complementary-fraction, mean-state and
+  solved-process mass-conservation regressions.
+- Release preparation: 18 focused phase-fraction/reporting checks passed,
+  including one Elmahdy and one Legacy integration case with unchanged
+  pre-patch duty, outlet temperatures, humidity and condensate. Pure-water
+  vapor quality and exported inlet/mean/outlet fractions remain consistent.
+  The full public pytest suite is intentionally deferred to final release
+  validation according to project policy.
+
 ## [0.8.4] — Legacy thermal surface margin
 
 - Extended the explicitly selected historical/bulk-mean

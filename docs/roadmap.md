@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.4`
+**Current version:** `v0.8.5`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change balance and source-profile wet-coil approximation,

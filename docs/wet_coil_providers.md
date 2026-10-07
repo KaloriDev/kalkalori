@@ -159,3 +159,34 @@ condensate-film interface temperature is not synthesized.
 Finned extrema retain their radial exposed-surface meaning, including any
 native cold-zone offset; the onset envelope remains identified as a 0D estimate.
 `H_drain` retains the model's drained-condensate enthalpy rate (W).
+
+## Wet-gas process phase fractions
+
+Since v0.8.5, the side-scoped `PhaseChangeResult` exposes
+`gas_phase_mass_fraction_in`, `gas_phase_mass_fraction_mid` and
+`gas_phase_mass_fraction_out`, together with complementary
+`liquid_phase_mass_fraction_in`, `liquid_phase_mass_fraction_mid` and
+`liquid_phase_mass_fraction_out`.
+
+The reference mass is the total inlet process stream, including water that
+later drains as condensate. For conserved dry-carrier mass `md` and humidity
+ratio `W` in kg water vapor / kg dry carrier:
+
+```text
+m_reference = md * (1 + W_in)
+x_gas = (1 + W) / (1 + W_in)
+x_liquid = (W_in - W) / (1 + W_in)
+x_gas + x_liquid = 1
+```
+
+An inlet flow of 1000 kg/h with 100 kg/h cumulatively condensed therefore has
+an outlet gas fraction of 0.9 and liquid fraction of 0.1. Without condensation,
+the fractions are 1 and 0. The liquid fraction includes drained condensate;
+it does not imply suspended liquid in the gas-property or hydraulic state.
+
+The mean fraction uses the stored `W_mid`, preserving the solver's existing
+mean-state convention. Missing humidity/reference data returns `None`.
+Supported wet-gas models prohibit re-evaporation, and these derived fractions
+are not clipped to conceal an inconsistent result. Component composition and
+humidity ratio are unchanged. Pure-water/steam uses its existing whole-stream
+vapor quality instead of the dry-carrier humidity basis.
