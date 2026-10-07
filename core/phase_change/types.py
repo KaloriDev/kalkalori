@@ -149,6 +149,17 @@ class PhaseChangeResult:
     active wet zone. ``W_sat_wet_surface`` is saturation at that wet-zone
     temperature; latent heat and the drained saturated-liquid condensate
     enthalpy use the same temperature.
+
+    Wet-gas ``gas_phase_mass_fraction_{in,mid,out}`` and complementary
+    ``liquid_phase_mass_fraction_{in,mid,out}`` use the total inlet process
+    mass, including subsequently drained liquid, as their reference:
+    ``md * (1 + W_in)``. At the stored state humidity ``W``, the fractions
+    are ``(1 + W) / (1 + W_in)`` and ``(W_in - W) / (1 + W_in)``.
+    Like pure-water vapor quality, these describe whole-stream phase mass,
+    rather than water composition within the remaining gas. The mean uses
+    ``W_mid`` as supplied by the solver. Missing humidity gives ``None``.
+    Fractions are not clipped: supported wet-gas solvers prohibit
+    re-evaporation, and an inconsistent result must remain visible.
     """
 
     side: str  # "inside" | "outside"
@@ -235,6 +246,42 @@ class PhaseChangeResult:
 
     # Model-specific state is nested; existing constructors remain unchanged.
     wet_coil_diagnostics: dict | None = None
+
+    def _phase_mass_fraction(self, W: float | None, *, liquid: bool) -> float | None:
+        if self.W_in is None or W is None:
+            return None
+        numerator = self.W_in - W if liquid else 1.0 + W
+        return numerator / (1.0 + self.W_in)
+
+    @property
+    def gas_phase_mass_fraction_in(self) -> float | None:
+        """Inlet gas mass / total inlet process mass [-]."""
+        return self._phase_mass_fraction(self.W_in, liquid=False)
+
+    @property
+    def gas_phase_mass_fraction_mid(self) -> float | None:
+        """Gas mass at W_mid / total inlet process mass [-]."""
+        return self._phase_mass_fraction(self.W_mid, liquid=False)
+
+    @property
+    def gas_phase_mass_fraction_out(self) -> float | None:
+        """Outlet gas mass / total inlet process mass [-]."""
+        return self._phase_mass_fraction(self.W_out, liquid=False)
+
+    @property
+    def liquid_phase_mass_fraction_in(self) -> float | None:
+        """Cumulative inlet condensate / total inlet process mass [-]."""
+        return self._phase_mass_fraction(self.W_in, liquid=True)
+
+    @property
+    def liquid_phase_mass_fraction_mid(self) -> float | None:
+        """Cumulative condensate at W_mid / total inlet process mass [-]."""
+        return self._phase_mass_fraction(self.W_mid, liquid=True)
+
+    @property
+    def liquid_phase_mass_fraction_out(self) -> float | None:
+        """Cumulative outlet condensate / total inlet process mass [-]."""
+        return self._phase_mass_fraction(self.W_out, liquid=True)
 
     @property
     def H_drain(self) -> float:
