@@ -49,8 +49,10 @@ dry and non-wet routing remains in effect.
 Simulation uses installed physical geometry and hydraulics with existing
 thermal surface-margin semantics. Rating solves required thermal area / area
 scale with installed hydraulics; it does not infer required physical tube
-length. The Elmahdy adapter calls the existing engine without moving equations
-or altering solver options.
+length. The Elmahdy adapter retains the same equations and solver options. Its
+BareTube numerical implementation uses exact property reuse and staged Rating
+with a strict final solve; finned and Legacy behavior remain unchanged. See
+[numerical performance](wet_numerical_performance.md).
 
 `ElmahdyMitalasWetCoilProvider` remains the default for Simulation and Rating.
 `LegacyBulkMeanWetCoilProvider` is available only by explicit selection and
