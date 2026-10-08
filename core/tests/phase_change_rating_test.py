@@ -61,9 +61,10 @@ def test_rate_with_active_outside_condensation(hx: BareTubeHeatExchanger) -> Non
         m_dot=6.0, T_in=420.0, T_out=333.0,
     )
 
-    # Preserve the original independent energy/outlet regression precision.
+    # Request the micowatt precision asserted below; the production defaults
+    # and the looser engineering controls do not promise this extra accuracy.
     result = hx.rate(inside, outside, wet_solver_options=WetCoilSolverOptions(
-            energy_tolerance_W=2e-4, outlet_temperature_tolerance_K=2e-7,
+            energy_tolerance_W=1e-6, outlet_temperature_tolerance_K=2e-7,
             timeout_s=None,
         ))
     pc = result.outside_phase_change

@@ -725,7 +725,7 @@ def _run_elmahdy(hx, inside, outside, *, mode, settings, _budget=None, **options
     return _public_simulation(hx, inside, outside, physical, Q_full=full, **options)
 
 
-def _rate(
+def _rate_native(
     hx,
     inside,
     outside,
@@ -745,22 +745,7 @@ def _rate(
     budget = _solve_budget(wet_solver_options, _budget)
     controls = budget.options
     outlet_tolerance = controls.outlet_temperature_tolerance_K
-    if outside.T_out is None:
-        raise WetRatingIncompatibilityError(
-            "Active outside-wet Rating requires outside.T_out; installed geometry cannot close an unspecified process"
-        )
-    if outside.m_dot is None or outside.m_dot <= 0:
-        raise WetRatingIncompatibilityError(
-            "Active outside-wet Rating requires outside.m_dot"
-        )
-    if inside.m_dot is None and inside.T_out is None:
-        raise WetRatingIncompatibilityError(
-            "Specify inside.m_dot or inside.T_out for wet Rating"
-        )
-    if not inside.T_in < outside.T_out < outside.T_in:
-        raise WetRatingIncompatibilityError(
-            "Outside outlet target must lie between the two inlet temperatures"
-        )
+    _validate_rating_inputs(inside, outside)
     base = 1.0
     cache = {}
     thermodynamics = WetGasThermodynamics(
@@ -983,6 +968,19 @@ def _rate(
             area_scale, mass = exp(fit.x[0]), exp(fit.x[1])
         except TargetsMet as solved:
             area_scale, mass = exp(solved.z[0]), exp(solved.z[1])
+    return _assemble_rating(hx, inside, outside, area_scale=area_scale, mass=mass,
+        trial=trial, cache=cache, budget=budget, Q=Q, effectiveness=effectiveness,
+        include_simulation=include_simulation, over_specified_tolerance=over_specified_tolerance, **options)
+
+
+def _assemble_rating(hx, inside, outside, *, area_scale, mass, trial, cache, budget,
+                     Q=None, effectiveness=None, include_simulation=False,
+                     over_specified_tolerance=1e-3, **options):
+    """Common strict-only report mapping for reference and staged Rating."""
+    from core.models.rating import HXRatingResult
+    from core.models.heat_balance import ClosedBalance, ClosedBalanceSide
+    controls = budget.options
+    outlet_tolerance = controls.outlet_temperature_tolerance_K
     side, physical = trial(area_scale, mass)
     r = physical[0]
     if abs(r.air_out - outside.T_out) > outlet_tolerance:
@@ -1105,3 +1103,34 @@ def _rate(
         ua_is_equivalent=True,
         wet_coil_diagnostics=d,
     )
+
+
+def _validate_rating_inputs(inside, outside):
+    if outside.T_out is None:
+        raise WetRatingIncompatibilityError(
+            "Active outside-wet Rating requires outside.T_out; installed geometry cannot close an unspecified process"
+        )
+    if outside.m_dot is None or outside.m_dot <= 0:
+        raise WetRatingIncompatibilityError(
+            "Active outside-wet Rating requires outside.m_dot"
+        )
+    if inside.m_dot is None and inside.T_out is None:
+        raise WetRatingIncompatibilityError(
+            "Specify inside.m_dot or inside.T_out for wet Rating"
+        )
+    if not inside.T_in < outside.T_out < outside.T_in:
+        raise WetRatingIncompatibilityError(
+            "Outside outlet target must lie between the two inlet temperatures"
+        )
+    if inside.m_dot is None and not inside.T_in < inside.T_out < outside.T_in:
+        raise WetRatingIncompatibilityError("Inside outlet target must lie between the inlet temperatures")
+
+
+def _rate(hx, inside, outside, *, settings, wet_solver_options=None, _budget=None, **options):
+    """Private numerical dispatch; the public Elmahdy provider remains unchanged."""
+    if isinstance(hx.bundle.tube, CircularFinnedTube):
+        return _rate_native(hx, inside, outside, settings=settings,
+            wet_solver_options=wet_solver_options, _budget=_budget, **options)
+    from core.phase_change._wet_rating import _rate_optimized
+    return _rate_optimized(hx, inside, outside,
+        budget=_solve_budget(wet_solver_options, _budget), **options)

@@ -50,30 +50,32 @@ def test_default_forward_and_inverse_controls():
 
 
 def test_rating_timeout_does_not_reset_between_forward_trials(monkeypatch):
+    from core.phase_change import _wet_rating
     hx, a, b = context()
     now = [0.0]
     monkeypatch.setattr(controls, "monotonic", lambda: now[0])
     options = WetCoilSolverOptions(timeout_s=3.0)
-    original = integration.forward_wet_process
+    original = _wet_rating._Operation.approximate
     budgets = []
 
-    def forward(*args, **kwargs):
-        budget = kwargs["_budget"]
+    def forward(operation, *args, **kwargs):
+        budget = operation.budget
         budgets.append(budget)
-        assert kwargs["wet_solver_options"] is options
-        result = original(*args, **kwargs)
+        assert budget.options is options
+        assert budget.started == 0.0 and budget.deadline == 3.0
+        result = original(operation, *args, **kwargs)
         now[0] += 2.0
         return result
 
-    monkeypatch.setattr(integration, "forward_wet_process", forward)
+    monkeypatch.setattr(_wet_rating._Operation, "approximate", forward)
     with pytest.raises(WetCoilTimeoutError) as caught:
         hx.rate(*specs(a, b, 294.0), wet_solver_options=options)
-    assert len(budgets) == 2
-    assert budgets[0] is budgets[1]
+    assert len(budgets) >= 2
+    assert all(b is budgets[0] for b in budgets)
     d = caught.value.diagnostics
     assert d["elapsed_s"] == 4.0
     assert d["timeout_s"] == 3.0
-    assert d["forward_evaluations"] == 2
+    assert d["coarse_forward_solves"] + d["medium_forward_solves"] >= 2
     assert d["required_area_scale"] > 0
     assert d["inside_mass_flow"] == a.m_dot
     assert d["last_regime"]
