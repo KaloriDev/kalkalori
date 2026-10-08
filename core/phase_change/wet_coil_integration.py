@@ -120,7 +120,13 @@ def forward_wet_process(
     flow = flow_arrangement or hx.bundle.flow_arrangement_resolved
     bundle = replace(hx.bundle, flow_arrangement=flow)
     cap = detect_phase_change_capability(outside.provider)
-    thermo = _thermodynamics or WetGasThermodynamics(outside.p, cap)
+    if _thermodynamics is not None:
+        thermo = _thermodynamics
+    elif isinstance(bundle.tube, CircularFinnedTube):
+        thermo = WetGasThermodynamics(outside.p, cap)
+    else:
+        from core.heat_transfer._wet_thermodynamics import _OptimizedWetThermodynamics
+        thermo = _OptimizedWetThermodynamics(outside.p, cap)
     if thermo.pressure != outside.p or thermo.capability != cap:
         raise ValueError("Wet thermodynamics must match the configured outside state")
     adapter = InsideWallAdapter(
@@ -145,7 +151,27 @@ def forward_wet_process(
         dry_mass_flow=outside.m_dot / (1 + cap.W_in),
         finned_heat_transfer_provider=finned_heat_transfer_provider,
     )
+    if getattr(thermo, 'options', None) is None:
+        r.diagnostics['numerical_path'] = 'native'
+    else:
+        objects = [thermo, *thermo.children]
+        native_properties = sum(t.statistics.get('native_water_fallbacks', 0)
+                                + t.statistics.get('native_equilibrium_fallbacks', 0) for t in objects)
+        initializer_rejected = budget.diagnostics.get('cold_predictor_fallbacks', 0)
+        r.diagnostics['numerical_path'] = ('optimized_with_native_subpath'
+            if native_properties or initializer_rejected else 'optimized')
+        r.diagnostics['numerical_subpaths'] = dict(
+            native_property_evaluations=native_properties,
+            initializer_rejections=initializer_rejected,
+            numerical_derivative_evaluations=budget.diagnostics.get('native_derivative_fallbacks', 0))
     return r, thermo, adapter
+
+
+def _forward_wet_process_native(hx, inside, outside, **options):
+    """Internal fixed-state oracle using the shared equations and native numerics."""
+    thermo = WetGasThermodynamics(outside.p, detect_phase_change_capability(outside.provider),
+                                 _reuse_inverse_state=True)
+    return forward_wet_process(hx, inside, outside, _thermodynamics=thermo, **options)
 
 
 def _envelope(r, thermo, adapter, inside, outside, alpha):

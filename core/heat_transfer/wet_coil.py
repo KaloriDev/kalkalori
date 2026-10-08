@@ -13,7 +13,7 @@ from typing import Callable
 
 import numpy as np
 from numpy.polynomial import chebyshev as cheb
-from numpy.polynomial.legendre import leggauss
+from core.heat_transfer._wet_numerics import gauss as leggauss
 from scipy.optimize import brentq
 
 from core.heat_transfer.wet_coil_solver import _solve_budget
@@ -107,10 +107,17 @@ class _Region:
     ):
         budget = _solve_budget(wet_solver_options, _budget)
         options = budget.options
+        self._budget = budget
+        _count(budget, 'kernel_region_solves')
         self.x, self.f = x, f
         self.surface_enthalpy = surface_enthalpy
         self.sensible_coordinate = sensible_coordinate
         self.temperature_from_coordinate = temperature_from_coordinate
+        thermo = getattr(x.saturation_enthalpy, '__self__', None)
+        continuation = getattr(getattr(thermo, 'options', None), 'region_continuation', False)
+        accelerate = getattr(getattr(thermo, 'options', None), 'region_acceleration', False)
+        defer_outlet = (getattr(getattr(thermo,'options',None),'defer_outlet',False)
+                        and surface_enthalpy is None)
         md, cw = x.dry_mass_flow, x.liquid_capacity
         cp, rw, tw, ta = x.gas_cp, x.wet_air_resistance, x.liquid_in, x.air_in
         nodes, weights = leggauss(order)
@@ -129,8 +136,16 @@ class _Region:
             density = cheb.chebval(nodes, _initial_region.poly)
             tintw, outw = _initial_region.tintw, _initial_region.outw
         previous = None
+        previous_fixed = previous_residual = None
+        previous_residual_norm = None
+        if continuation and _initial_region is not None:
+            # Previous converged *full* vector is a predictor. The new region
+            # must evaluate its own coefficients, drain and residual gates.
+            previous = getattr(_initial_region, '_convergence_vector', None)
         for iteration in range(250):
+            _count(budget, 'kernel_region_iterations')
             budget.check(wet_fraction=f)
+            fixed = np.r_[a, b, tintw, outw, density]
             ri = x.inner_resistance((tw + tintw) / 2)
             rid = x.inner_resistance((tintw + outw) / 2)
             if not all(isfinite(v) and v > 0 for v in (ri, rid, b)):
@@ -170,6 +185,8 @@ class _Region:
             self.tint = self.temperature_from_coordinate(
                 self.sensible_coordinate(ta) - (x.gas_h_in - self.hint) / cp
             )
+            self._sensible_interface = (self.sensible_coordinate(self.tint)
+                if getattr(getattr(thermo,'options',None),'point_reuse',False) else None)
             outw = tintw + transfer * (ta - tintw) / cw
             self.interface_surface = tintw + (self.tint - tintw) * rid / (
                 rid + x.dry_air_resistance
@@ -193,7 +210,10 @@ class _Region:
             na = x.saturation_enthalpy(cold) - nb * cold
             points = [self.point(float(z), liquid_enthalpy, drain) for z in self.z]
             nd = np.array([p.drain_density for p in points])
-            hout = self.point(0.0, liquid_enthalpy, drain)
+            # The outlet moisture/removal does not enter the fixed-point
+            # vector or quadrature drain density. Evaluate it only for the
+            # converged region; all final closure/admissibility checks remain.
+            hout = None if defer_outlet else self.point(0.0, liquid_enthalpy, drain)
             current = np.array(
                 [
                     self.h0 * md / 1000,
@@ -214,7 +234,9 @@ class _Region:
             # Retain the surface/secant stability ceiling near the wet front;
             # loosening it can violate the unchanged driving-force guard.
             delta = None if previous is None else np.abs(current - previous)
-            temperature_gate = min(2e-8, options.outlet_temperature_tolerance_K / 10,
+            fidelity = getattr(budget, 'fidelity', None)
+            ceiling = 2e-8 if fidelity is None or f < 1 else fidelity.region_temperature_K
+            temperature_gate = min(ceiling, options.outlet_temperature_tolerance_K / 10,
                                    options.energy_tolerance_W / (10 * max(cw, md * cp)))
             converged = (delta is not None
                          and delta[0] * 1000 < options.energy_tolerance_W / 10
@@ -222,6 +244,9 @@ class _Region:
                          and delta[5] < options.energy_tolerance_W / 10
                          and derr < options.energy_tolerance_W / 10)
             if converged:
+                if hout is None:
+                    hout = self.point(0.0,liquid_enthalpy,drain)
+                self._convergence_vector = np.array(current, copy=True)
                 self.cold, self.hot, self.tintw, self.outw = cold, hot, tintw, outw
                 self.points, self.outlet, self.iterations = (
                     tuple(points),
@@ -235,7 +260,36 @@ class _Region:
                 self.heat_liquid = cw * (outw - tw)
                 self.heat_gas = md * (x.gas_h_in - self.h0)
                 return
+            if defer_outlet:
+                _count(budget,'outlet_point_evaluations_deferred')
             previous = current
+            target = np.r_[na, nb, tintw, outw, nd]
+            if accelerate:
+                # One-step Anderson continuation of the SAME fixed point.
+                # Only new physical iterates can satisfy the unchanged gates.
+                scale = np.r_[max(abs(x.gas_h_in), 1.), max(abs(b), 1.),
+                              max(abs(ta), 1.), max(abs(ta), 1.),
+                              np.full(order, max(abs(x.gas_h_in*md), 1.))]
+                residual = target-fixed
+                norm = np.linalg.norm(residual/scale)
+                candidate = None
+                if (previous_residual is not None and previous_residual_norm is not None
+                        and norm <= 2*previous_residual_norm):
+                    difference = (residual-previous_residual)/scale
+                    denominator = np.dot(difference,difference)
+                    if denominator > 1e-30:
+                        coefficient = np.dot(difference,residual/scale)/denominator
+                        if abs(coefficient) <= 2:
+                            candidate = target-coefficient*(target-previous_fixed)
+                previous_fixed, previous_residual = target, residual
+                previous_residual_norm = norm
+                if (candidate is not None and np.all(np.isfinite(candidate)) and candidate[1] > 0
+                        and np.max(np.abs(candidate[2:4]-target[2:4])) < 10
+                        and np.min(candidate[4:]) >= 0):
+                    a, b, tintw, outw = candidate[:4]
+                    density = candidate[4:]
+                    _count(budget, 'kernel_region_accelerations')
+                    continue
             a, b = na, nb
             density = 0.4 * density + 0.6 * nd
         raise WetCoilModelError(
@@ -283,7 +337,9 @@ class _Region:
         return h, tl, ts, hp
 
     def point(self, z, hl, drain):
+        _count(self._budget, 'kernel_profile_points')
         x = self.x
+        thermo = getattr(x.saturation_enthalpy, '__self__', None)
         h, tl, ts, hp = self.thermal(z)
         rate = 1 / (x.wet_air_resistance * x.dry_mass_flow)
         length = self.f - z
@@ -306,8 +362,34 @@ class _Region:
         heff = self.hint - dh / fraction
         teff = x.temperature_at_saturation_enthalpy(heff)
         seff = self.sensible_coordinate(teff)
-        sint = self.sensible_coordinate(self.tint)
+        sint = (self._sensible_interface if self._sensible_interface is not None
+                else self.sensible_coordinate(self.tint))
         gas = self.temperature_from_coordinate(seff + (sint - seff) * bypass)
+        if getattr(getattr(thermo,'options',None),'point_reuse',False):
+            from core.heat_transfer._wet_if97 import supported
+            if supported(teff) and supported(gas):
+                effective,carrier = thermo.derivative_bundle(teff),thermo.derivative_bundle(gas)
+                ws = (effective.saturation_humidity if effective.saturation_humidity is not None
+                      else thermo.saturation_humidity(teff))
+                # Keep the native affine inverse's floating-point arithmetic.
+                weff = (effective.enthalpy(ws)-effective.dry_enthalpy)/effective.vapor_enthalpy
+                wh,wh_eff = 1/carrier.vapor_enthalpy,1/effective.vapor_enthalpy
+                W = x.humidity_in-fraction*(x.humidity_in-weff)*wh/wh_eff
+                p,dp = effective.pressure_slope
+                c = thermo.capability
+                dw = c.M_condensable/c.M_dry*thermo.pressure*dp/(thermo.pressure-p)**2
+                hsprime = effective.dry_cp+ws*effective.vapor_slope+dw*effective.vapor_enthalpy
+                effprime = (hp/fraction-rate*bypass*dh/fraction**2)/hsprime
+                sp_eff = (effective.dry_cp+x.humidity_in*effective.vapor_slope)/x.gas_cp
+                sp_gas = (carrier.dry_cp+x.humidity_in*carrier.vapor_slope)/x.gas_cp
+                gasprime = (fraction*sp_eff*effprime+rate*bypass*(sint-seff))/sp_gas
+                base = (h-carrier.dry_enthalpy)/carrier.vapor_enthalpy
+                wt = -(carrier.dry_cp+base*carrier.vapor_slope)/carrier.vapor_enthalpy
+                j = x.dry_mass_flow*(wh*hp+wt*gasprime)
+                hcond = (hl(ts) if self.surface_enthalpy is None
+                         else self.surface_enthalpy(z/self.f,ts,gas,W))
+                _count(self._budget,'point_bundle_reuses')
+                return ProfilePoint(z,h,gas,W,tl,ts,j,hcond*j if drain else 0.)
         # Algebraic source-profile moisture construction, anchored at Win.
         # h(T,W) is affine in W for both supported property formulations.
         # With F=1-bypass and h_eff=h_sat(T_eff), the unchanged source law is
@@ -329,16 +411,34 @@ class _Region:
             x.humidity_at_temperature_enthalpy(teff, hs + enthalpy_span) - weff
         ) / enthalpy_span
         W = x.humidity_in - fraction * (x.humidity_in - weff) * wh / wh_eff
-        hsprime = _profile_derivative(x.saturation_enthalpy, teff)
+        thermo = getattr(x.saturation_enthalpy, '__self__', None)
+        analytic = (getattr(getattr(thermo, 'options', None), 'analytic_derivatives', False)
+                    and max(teff, gas) <= 623.15)
+        if analytic and getattr(thermo.options,'shared_water',False):
+            from core.heat_transfer._wet_if97 import supported
+            analytic = supported(teff) and supported(gas)
+        if analytic:
+            # h(T,W) is affine in W: these partial derivatives are exact.
+            wh = 1/thermo.state(gas).vapor_enthalpy
+            wh_eff = 1/thermo.state(teff).vapor_enthalpy
+            W = x.humidity_in - fraction * (x.humidity_in - weff) * wh / wh_eff
+            hsprime = thermo.saturation_enthalpy_slope(teff)
+        else:
+            if getattr(thermo, 'options', None) is not None:
+                _count(self._budget, 'native_derivative_fallbacks')
+            hsprime = _profile_derivative(x.saturation_enthalpy, teff)
         effprime = (hp / fraction - rate * bypass * dh / fraction**2) / hsprime
-        sp_eff = _profile_derivative(self.sensible_coordinate, teff)
-        sp_gas = _profile_derivative(self.sensible_coordinate, gas)
+        if analytic:
+            sp_eff = thermo.enthalpy_slope(teff, x.humidity_in)/x.gas_cp
+            sp_gas = thermo.enthalpy_slope(gas, x.humidity_in)/x.gas_cp
+        else:
+            sp_eff = _profile_derivative(self.sensible_coordinate, teff)
+            sp_gas = _profile_derivative(self.sensible_coordinate, gas)
         gasprime = (
             fraction * sp_eff * effprime + rate * bypass * (sint - seff)
         ) / sp_gas
-        wt = _profile_derivative(
-            lambda T: x.humidity_at_temperature_enthalpy(T, h), gas
-        )
+        wt = (thermo.humidity_temperature_slope(gas, h) if analytic else
+              _profile_derivative(lambda T: x.humidity_at_temperature_enthalpy(T, h), gas))
         j = x.dry_mass_flow * (wh * hp + wt * gasprime)
         hcond = (
             hl(ts)
@@ -372,6 +472,7 @@ def _solve_profile_candidate(
     """
     budget = _solve_budget(wet_solver_options, _budget)
     options = budget.options
+    _count(budget, 'kernel_profile_solves')
     budget.check()
     md, cw, cp = x.dry_mass_flow, x.liquid_capacity, x.gas_cp
     values = (
@@ -388,7 +489,9 @@ def _solve_profile_candidate(
     )
     if not all(isfinite(v) for v in values) or x.humidity_in < 0:
         raise ValueError("Coil states must be finite with nonnegative humidity")
-    if not isinstance(quadrature_order, int) or not 6 <= quadrature_order <= 32:
+    predictor = getattr(getattr(budget, 'fidelity', None), 'name', None) == 'initial'
+    minimum_order = 3 if predictor else 6
+    if not isinstance(quadrature_order, int) or not minimum_order <= quadrature_order <= 32:
         raise ValueError("Wet profile quadrature order must be an integer from 6 to 32")
     if x.humidity_in > saturation_humidity(x.air_in) + 1e-9:
         raise WetCoilModelError("supersaturated inlet vapor")
@@ -480,6 +583,7 @@ def _solve_profile_candidate(
         candidates = {1.0: wet} if _reuse_interface_bracket else {}
 
         def boundary(f):
+            _count(budget, 'kernel_wet_fraction_evaluations')
             if f == 0:
                 return margin
             if _reuse_interface_bracket and f in candidates:
@@ -493,8 +597,37 @@ def _solve_profile_candidate(
         fraction_scale = -margin / (full_interface_margin - margin)
         root_tolerance = max(np.nextafter(0.0, 1.0), min(2e-10, 1e-6 * fraction_scale))
         lower, upper = 0.0, 1.0
+        predicted_root = None
+        thermo = getattr(x.saturation_enthalpy, '__self__', None)
+        front_enabled = getattr(getattr(thermo, 'options', None), 'front_continuation', False)
+        slope = getattr(_initial_region, '_front_slope', None)
+        if (front_enabled and _initial_region is not None and slope is not None
+                and isfinite(slope) and slope > 0 and 0 < _initial_region.f < 1):
+            probe = _initial_region.f
+            region_seed = _initial_region
+            previous_probe = previous_value = None
+            for correction in range(4):
+                value = boundary(probe)
+                _count(budget, 'kernel_front_corrections')
+                if value <= 0:
+                    lower = probe
+                else:
+                    upper = probe
+                if (abs(value) <= 2e-10 and abs(value/slope) <= root_tolerance/20):
+                    predicted_root = probe
+                    _count(budget, 'kernel_front_predictor_successes')
+                    break
+                if previous_probe is not None and probe != previous_probe:
+                    new_slope = (value-previous_value)/(probe-previous_probe)
+                    if not isfinite(new_slope) or new_slope <= 0:
+                        break
+                    slope = new_slope
+                new_probe = probe-value/slope
+                if not lower < new_probe < upper:
+                    break
+                previous_probe, previous_value, probe = probe, value, new_probe
         if (_reuse_interface_bracket and _initial_region is not None
-                and 0.0 < _initial_region.f < 1.0):
+                and 0.0 < _initial_region.f < 1.0 and predicted_root is None):
             # Rebracket the unchanged interface equation near the accepted
             # prior root. Every sample solves the new coefficients; no old
             # residual or physical gate is accepted as a new result.
@@ -515,9 +648,19 @@ def _solve_profile_candidate(
                 step *= 2
             if value == 0:
                 lower = upper = seed
-        f = (lower if lower == upper else
+        if front_enabled and predicted_root is None:
+            _count(budget, 'kernel_front_brent_fallbacks')
+        f = (predicted_root if predicted_root is not None else lower if lower == upper else
              brentq(boundary, lower, upper, xtol=root_tolerance))
         wet = candidates[f] if f in candidates else region(f, True)
+        if front_enabled:
+            neighbors = sorted((abs(v-f), v, r.interface_surface-x.dewpoint)
+                               for v, r in candidates.items() if abs(v-f) >= 1e-5)
+            if neighbors and abs(neighbors[0][1]-f) > 1e-12:
+                _, other_f, other_r = neighbors[0]
+                wet._front_slope = ((wet.interface_surface-x.dewpoint)-other_r)/(f-other_f)
+            elif slope is not None:
+                wet._front_slope = slope
     check_nodes, check_weights = leggauss(min(32, 2 * quadrature_order))
     checked = [
         wet.point(float((v + 1) * f / 2), liquid_enthalpy, drain_enabled)
@@ -612,3 +755,7 @@ def validate_wet_coil(result):
 def solve_wet_coil(x: CoilInput, **kwargs) -> WetCoilResult:
     """Solve and validate a coil with already fixed constitutive coefficients."""
     return validate_wet_coil(_solve_profile_candidate(x, **kwargs))
+
+
+def _count(budget, key):
+    budget.diagnostics[key] = budget.diagnostics.get(key, 0) + 1

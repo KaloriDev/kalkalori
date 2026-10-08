@@ -10,7 +10,7 @@ from functools import lru_cache
 import logging
 from math import isfinite, log, pi
 
-from numpy.polynomial.legendre import leggauss
+from core.heat_transfer._wet_numerics import gauss as leggauss
 from numpy.polynomial import chebyshev as cheb
 import numpy as np
 from scipy.optimize import brentq
@@ -321,6 +321,45 @@ def solve_production_coil(
             bundle, thermodynamics, inside.thermal_scale, finned_heat_transfer_provider
         )
     )
+    if (_initial_state is None and not finned and not _refinement
+            and getattr(getattr(thermodynamics, 'options', None), 'cold_start', False)):
+        # An isolated low-order solve predicts only the initial iterate. Its
+        # relaxed inverse cache and quadrature never supply the final result.
+        from time import perf_counter
+        from core.heat_transfer._wet_numerics import INITIAL
+        from core.heat_transfer._wet_thermodynamics import _OptimizedWetThermodynamics
+        predictor_fidelity = INITIAL
+        predictor_budget = predictor_fidelity.budget(budget)
+        predictor_thermo = _OptimizedWetThermodynamics(thermodynamics.pressure,thermodynamics.capability,
+            fidelity=predictor_fidelity,options=replace(thermodynamics.options,cold_start=False))
+        thermodynamics.children.append(predictor_thermo)
+        _count(budget,'cold_predictor_attempts')
+        phase_keys = ('forward_evaluations','property_iterations','kernel_profile_solves',
+            'kernel_region_solves','kernel_region_iterations','kernel_profile_points',
+            'kernel_wet_fraction_evaluations','kernel_front_corrections','kernel_front_brent_fallbacks')
+        before = {key:budget.diagnostics.get(key,0) for key in phase_keys}
+        started = perf_counter()
+        try:
+            guess = solve_production_coil(bundle=bundle,thermodynamics=predictor_thermo,
+                inside=inside,air_in=air_in,liquid_in=liquid_in,humidity_in=humidity_in,
+                dry_mass_flow=dry_mass_flow,drain_enabled=drain_enabled,quadrature_order=3,
+                finned_heat_transfer_provider=finned_heat_transfer_provider,
+                wet_solver_options=predictor_budget.options,_budget=predictor_budget)
+            _initial_state = (guess,np.asarray([0.]))
+            _count(budget,'cold_predictor_successes')
+            budget.diagnostics['cold_predictor_wet_fraction'] = guess.wet_fraction
+            budget.diagnostics['cold_predictor_quadrature'] = guess.diagnostics.get('quadrature_order',0)
+        except (WetCoilModelError,ValueError) as exc:
+            _count(budget,'cold_predictor_fallbacks')
+            budget.diagnostics['cold_predictor_failure'] = str(exc)
+            budget.diagnostics['cold_predictor_failure_diagnostics'] = getattr(exc,'diagnostics',None)
+        budget.diagnostics['cold_predictor_runtime_s'] = perf_counter()-started
+        budget.diagnostics['cold_predictor_counts'] = {key:budget.diagnostics.get(key,0)-before[key]
+            for key in phase_keys}
+        # Keep the existing top-level forward counter's operation semantics.
+        predictor_forwards = budget.diagnostics['cold_predictor_counts']['forward_evaluations']
+        budget.diagnostics['forward_evaluations'] -= predictor_forwards
+        _count(budget, 'cold_predictor_forward_evaluations')
     if _initial_state is None:
         previous = None
         drain_correction = np.array([0.0])
@@ -724,3 +763,7 @@ class CircularFinnedTubeAdapter:
             / (primary + count * tube.fin_area_per_fin),
             local_sensible_heat=alpha * primary * (Tg - Ts) + count * fr.heat_sensible,
         )
+
+
+def _count(budget, key):
+    budget.diagnostics[key] = budget.diagnostics.get(key, 0) + 1
