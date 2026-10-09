@@ -192,3 +192,13 @@ Supported wet-gas models prohibit re-evaporation, and these derived fractions
 are not clipped to conceal an inconsistent result. Component composition and
 humidity ratio are unchanged. Pure-water/steam uses its existing whole-stream
 vapor quality instead of the dry-carrier humidity basis.
+
+## Thermal fouling in v0.8.7
+
+Inside/outside exchanger fouling [m² K/W] defaults to zero for omitted or
+`None` inputs. Elmahdy includes both terms between the exposed condensing
+surface and the inside fluid, including optimized BareTube Rating trials and
+the strict final solve. Legacy includes both in its existing bulk-mean and
+radial-finned Simulation networks; its Simulation-only scope remains unchanged.
+See [thermal fouling](thermal_fouling.md) for the distinct area bases and the
+lumped finned approximation. Installed hydraulics remain geometry-driven.
