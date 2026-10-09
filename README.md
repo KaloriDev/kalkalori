@@ -218,7 +218,9 @@ For the tube-side enhancement API, including public Yang2020 and Rossi2017
 twisted-tape models, the released Inaba1994 wire-coil model, and external
 providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version is v0.8.5. Smooth laminar flow with a supplied
+The current package version is v0.8.6. Its principal change is the
+[BareTube wet numerical performance improvement](docs/wet_numerical_performance.md).
+Smooth laminar flow with a supplied
 heated length now includes [thermal development](docs/internal_laminar_thermal_development.md).
 
 For wet coils, Elmahdy-Mitalas is the default for Simulation and thermal-area

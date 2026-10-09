@@ -1,7 +1,9 @@
 # BareTube wet numerical performance
 
-`ElmahdyMitalasWetCoilProvider` uses optimized BareTube wet Simulation/Rating
-numerics with unchanged physical equations and public provider selection.
+Introduced in **v0.8.6**, the optimized production implementation uses the
+accepted E3 checkpoint as its basis. `ElmahdyMitalasWetCoilProvider` uses
+optimized BareTube wet Simulation/Rating numerics with unchanged physical
+equations and public provider selection.
 CircularFinnedTube wet calculations retain their existing native path; Legacy
 is unchanged. Numerical equivalence is not empirical model validation: faster
 convergence does not improve correlation accuracy or extend model applicability.
@@ -12,18 +14,18 @@ Wet Rating nests area/flow trials, property iterations, wet-region fixed points,
 wet-front roots, quadrature points and exact property inversions. Difficult
 cases repeatedly paid for all those calculations.
 
-Three private experiments established the design:
+Three private experiments (E1/E2/E3) established the design:
 
-1. **Staged Rating:** COARSE/MEDIUM/STRICT search, property snapshots, refreshes
+1. **E1 — Staged Rating:** COARSE/MEDIUM/STRICT search, property snapshots, refreshes
    and boundary promotions greatly improved difficult joint Rating, but kernel
    costs still caused inconsistent performance.
-2. **Exact kernel reuse:** shared states, direct derivatives, exact property
+2. **E2 — Exact kernel reuse:** shared states, direct derivatives, exact property
    reuse, region/front continuation and safeguarded fixed-point acceleration
    reduced strict-forward and Rating work.
-3. **Cold initialization and fused properties:** low-order initialization,
+3. **E3 — Cold initialization and fused properties:** low-order initialization,
    fused exact IF97 values/derivatives, structural reuse and deferred outlet
-   work produced the production design. An additional initial front estimator
-   did not reduce total work and was rejected.
+   work produced the accepted basis for the v0.8.6 production implementation.
+   An additional initial front estimator did not reduce total work and was rejected.
 
 ## Illustrative benchmark history
 

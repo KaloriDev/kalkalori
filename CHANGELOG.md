@@ -5,14 +5,16 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [0.8.6] — BareTube wet numerical performance
 
-- Substantially improved BareTube Elmahdy wet Simulation/Rating numerical
-  performance through exact property reuse, fused IF97 derivatives, cold-start
-  initialization and safeguarded region/front continuation.
+- Substantially improved Elmahdy BareTube wet Simulation/Rating performance
+  through an optimized exact wet numerical kernel with property reuse, fused
+  IF97 derivatives, cold-start initialization and safeguarded region/front
+  continuation.
 - Wet BareTube Rating now locates solutions with staged approximate search
-  followed by a full strict solve. Final physical equations, closure, requested
-  solver tolerances, provider selection and installed hydraulics are unchanged.
+  followed by a full strict solve. Final physical equations, closure criteria,
+  requested solver tolerances, provider selection and installed hydraulics are
+  unchanged.
 - Retained internal native/reference numerical paths and domain/safeguard
   fallbacks with the same operation deadline. Circular-finned wet optimization
   is outside this change; finned and Legacy routes retain their accepted behavior.
