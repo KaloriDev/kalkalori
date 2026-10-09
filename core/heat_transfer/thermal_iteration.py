@@ -379,7 +379,8 @@ def fin_surface_temperatures(
             "fin_surface_temperatures requires a finned resistance network "
             "(network.fin_efficiency_result is None for a plain tube)."
         )
-    T_core = outside_wall_temperature
+    # Gas-facing lumped fouling node feeds the unchanged fin/contact circuit.
+    T_core = outside_wall_temperature - heat_rate * network.resistance_fouling_outside
     T_bulk = outside_bulk_temperature
     if network.contact_topology == "fin_branch_only":
         q_fin = network.conductance_fin_outside * (T_core - T_bulk)
@@ -529,6 +530,8 @@ def _evaluate_local_wall_state(
         alpha_inside=alfa_i,
         outside_alpha_physical=alfa_o_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     alfa_o_effective_gross = network.outside_alpha_effective_gross
     heat_rate = (

@@ -1327,6 +1327,8 @@ def _evaluate_zone(
         alpha_inside=alpha_inside,
         outside_alpha_physical=alpha_outside_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     U = network.U_gross_outside
 
@@ -1503,10 +1505,13 @@ def _build_solution(
         alpha_inside=1.0,
         outside_alpha_physical=trial.outside_alpha_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     equivalent_inside_resistance = (
         1.0 / (U_equivalent * hx.bundle.total_outer_area)
         - hx.tube_wall_resistance()
+        - hx.resistance_fouling_inside
         - reference_network.resistance_outside
     )
     if (

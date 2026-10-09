@@ -123,6 +123,12 @@ def _attach_legacy_diagnostics(result, *, settings):
         thermal_outside_area=result.final_result.A_o / (1.0 + result.surface_margin),
         thermal_inside_area=result.final_result.A_i / (1.0 + result.surface_margin),
         thermal_area_scale=1.0 / (1.0 + result.surface_margin),
+        fouling_resistance_inside=result.final_result.fouling_resistance_inside,
+        fouling_resistance_outside=result.final_result.fouling_resistance_outside,
+        resistance_fouling_inside=(result.final_result.resistance_fouling_inside
+                                  * (1.0 + result.surface_margin)),
+        resistance_fouling_outside=(result.final_result.resistance_fouling_outside
+                                   * (1.0 + result.surface_margin)),
         surface=surface,
         H_drain=drainage,
         wet_pressure_drop_supported=False,
@@ -822,7 +828,11 @@ def _apply_legacy_outside(
         inside_bulk_temperature=T_mean_inside,
         outside_bulk_temperature=T_mean_outside,
         inside_wall_temperature=solution.T_wall_inside,
-        outside_wall_temperature=solution.T_wall_outside,
+        outside_wall_temperature=(
+            solution.T_wall_outside if solution.wet_finned_surface is not None
+            else solution.T_wall_outside - solution.Q_total
+            * hx.resistance_fouling_outside * (1.0 + dry_result.surface_margin)
+        ),
         inside_bulk_props=solution.inside_bulk_props,
         inside_wall_props=solution.inside_wall_props,
         outside_bulk_props=solution.outside_bulk_props,

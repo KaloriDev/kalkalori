@@ -26,6 +26,7 @@ from core.heat_transfer.outside_dispatch import (
     evaluate_outside_thermal,
 )
 from core.heat_transfer.wet_coil_solver import _solve_budget
+from core.heat_transfer.fouling import normalize_fouling_resistance
 from core.heat_transfer.wet_coil import (
     _solve_profile_candidate,
     validate_wet_coil,
@@ -157,6 +158,12 @@ class InsideWallAdapter:
     mass_flow: float
     pressure: float
     thermal_scale: float = 1.0
+    fouling_resistance_inside: float | None = None
+    fouling_resistance_outside: float | None = None
+
+    def __post_init__(self):
+        for name in ("fouling_resistance_inside", "fouling_resistance_outside"):
+            object.__setattr__(self, name, normalize_fouling_resistance(getattr(self, name), name))
 
     def enthalpy_difference(self, T1, T2):
         """Sensible liquid enthalpy rise; native h where provided, cp integral otherwise."""
@@ -224,10 +231,19 @@ class InsideWallAdapter:
             raise ValueError("thermal_scale must be positive and finite")
         film /= self.thermal_scale
         wall /= self.thermal_scale
-        return film + wall, dict(
+        fouling_i = self.fouling_resistance_inside / (b.total_inner_area * self.thermal_scale)
+        fouling_o = self.fouling_resistance_outside / (b.total_outer_area * self.thermal_scale)
+        # Saturation and condensation use the exposed surface after BOTH
+        # fouling layers. Do not fold outside fouling into the air film/mass
+        # transfer coefficient: it belongs in the surface-to-liquid operator.
+        return film + wall + fouling_i + fouling_o, dict(
             film_resistance=film,
             wall_resistance=wall,
-            fouling_resistance=0.0,
+            fouling_resistance=fouling_i + fouling_o,
+            fouling_resistance_inside=self.fouling_resistance_inside,
+            fouling_resistance_outside=self.fouling_resistance_outside,
+            resistance_fouling_inside=fouling_i,
+            resistance_fouling_outside=fouling_o,
             htc=inside.alfa_corrected,
             inside_correlation=inside,
             reynolds=inside.Re,
@@ -469,10 +485,10 @@ def solve_production_coil(
                     dict(
                         coordinate=point.coordinate,
                         inside_wall_temperature=point.liquid_temperature
-                        + qlocal * idiag["film_resistance"],
+                        + qlocal * (idiag["film_resistance"] + idiag["resistance_fouling_inside"]),
                         core_wall_temperature=point.liquid_temperature
                         + qlocal
-                        * (idiag["film_resistance"] + idiag["wall_resistance"]),
+                        * (idiag["film_resistance"] + idiag["resistance_fouling_inside"] + idiag["wall_resistance"]),
                         surface_base_temperature=point.surface_temperature,
                         fin_base_temperature=response["fin_base"],
                         fin_tip_temperature=response["fin_tip"],
@@ -648,6 +664,8 @@ class CircularFinnedTubeAdapter:
             alpha_inside=idiag["htc"],
             outside_alpha_physical=outside.alpha_physical,
             resistance_core_wall=idiag["wall_resistance"] * self.thermal_scale,
+            fouling_resistance_inside=idiag["fouling_resistance_inside"],
+            fouling_resistance_outside=idiag["fouling_resistance_outside"],
         )
         tube = self.bundle.tube
         common = (
@@ -655,13 +673,16 @@ class CircularFinnedTubeAdapter:
             if tube.D_root > tube.D_o
             else 0.0
         )
-        return (network.resistance_outside - common) / self.thermal_scale, dict(
+        # Outside fouling already lives in InsideWallAdapter's downstream
+        # operator; keep the radial sensible/latent response purely exposed.
+        air_resistance = network.resistance_outside - network.resistance_fouling_outside - common
+        return air_resistance / self.thermal_scale, dict(
             geometry_adapter="CircularFinnedTube",
             outside_htc_model=outside.finned_result.metadata.method,
             outside_alpha_physical=outside.alpha_physical,
             outside_correlation=outside,
             dry_effective_area=self.thermal_scale
-            / (outside.alpha_physical * (network.resistance_outside - common)),
+            / (outside.alpha_physical * air_resistance),
             physical_area=network.area_outside_gross,
             thermal_area=network.area_outside_gross * self.thermal_scale,
             common_root_contact_resistance=common / self.thermal_scale,

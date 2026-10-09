@@ -78,6 +78,7 @@ from core.heat_transfer.ntu import (
 )
 
 from core.heat_transfer.streams import EnergyStream
+from core.heat_transfer.fouling import normalize_fouling_resistance
 
 from core.common.warnings import (
     ModelWarning,
@@ -412,6 +413,10 @@ class HXResult:
     # dedicated Briggs-Young/Robinson-Briggs basis and provenance.
     finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
     tube_side_enhancement: EnhancementResult | None = None
+    fouling_resistance_inside: float = 0.0  # [m² K/W], inner area
+    fouling_resistance_outside: float = 0.0  # [m² K/W], gross outer area
+    resistance_fouling_inside: float = 0.0  # [K/W], installed geometry
+    resistance_fouling_outside: float = 0.0  # [K/W], installed geometry
 
     @property
     def tube_surface_type(self) -> TubeSurfaceType:
@@ -645,12 +650,44 @@ class BareTubeHeatExchanger:
     - Darcyâ€“Weisbach & K-loss decomposition: White; Idelchik; Crane TP-410
     """
 
-    def __init__(self, bundle: TubeBundle, *, tube_side_enhancement: TubeSideEnhancement | None = None):
+    def __init__(
+        self, bundle: TubeBundle, *,
+        tube_side_enhancement: TubeSideEnhancement | None = None,
+        fouling_resistance_inside: float | None = None,
+        fouling_resistance_outside: float | None = None,
+    ):
+        """Configure thermal fouling [m² K/W] on inner/gross outer areas.
+
+        Missing or None resolves to zero. Fouling changes only the thermal
+        circuit, including solved wet surfaces, never installed hydraulics.
+        """
         # One configuration is shared by all thermal and hydraulic paths.
         if tube_side_enhancement is not None and not isinstance(tube_side_enhancement, TubeSideEnhancement):
             raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
         self.bundle = bundle
         self._tube_side_enhancement = tube_side_enhancement
+        self._fouling_resistance_inside = normalize_fouling_resistance(
+            fouling_resistance_inside, "fouling_resistance_inside")
+        self._fouling_resistance_outside = normalize_fouling_resistance(
+            fouling_resistance_outside, "fouling_resistance_outside")
+
+    @property
+    def fouling_resistance_inside(self) -> float:
+        return self._fouling_resistance_inside
+
+    @property
+    def fouling_resistance_outside(self) -> float:
+        return self._fouling_resistance_outside
+
+    @property
+    def resistance_fouling_inside(self) -> float:
+        """Installed inner-area fouling contribution [K/W]."""
+        return self.fouling_resistance_inside / self.bundle.total_inner_area
+
+    @property
+    def resistance_fouling_outside(self) -> float:
+        """Installed gross outer-area fouling contribution [K/W]."""
+        return self.fouling_resistance_outside / self.bundle.total_outer_area
 
     @property
     def tube_side_enhancement(self) -> TubeSideEnhancement | None:
@@ -981,6 +1018,8 @@ class BareTubeHeatExchanger:
             alpha_inside=alfa_i,
             outside_alpha_physical=alfa_o_physical,
             resistance_core_wall=R_w,
+            fouling_resistance_inside=self.fouling_resistance_inside,
+            fouling_resistance_outside=self.fouling_resistance_outside,
         )
         # Generic exchanger-facing alfa is referenced to authoritative gross
         # outside area and reconstructs the complete outside resistance.  For
@@ -1184,6 +1223,10 @@ class BareTubeHeatExchanger:
             outside_side_pressure_drop=outside_side_pressure_drop,
             warnings=warnings_list if warnings_list else None,
             finned_tube_diagnostics=finned_diagnostics,
+            fouling_resistance_inside=self.fouling_resistance_inside,
+            fouling_resistance_outside=self.fouling_resistance_outside,
+            resistance_fouling_inside=self.resistance_fouling_inside,
+            resistance_fouling_outside=self.resistance_fouling_outside,
         )
 
 

@@ -183,7 +183,7 @@ def solve_inside_condensation(
         alfa_o = local.alfa_o
         R_i_film = 1.0 / (alfa_i_dry * A_i)
         R_o = 1.0 / (alfa_o * A_o)
-        R_downstream = R_w + R_o
+        R_downstream = R_w + R_o + hx.resistance_fouling_inside
 
         T_wall_inlet_raw = sensible_only_wall_temperature(
             T_bulk_wet_gas=T_in_inside,
@@ -470,7 +470,7 @@ def solve_inside_condensation(
 
     R_i_effective = 1.0 / (alfa_i_effective * A_i)
     R_o_final = 1.0 / (state["alfa_o"] * A_o)
-    UA_effective = 1.0 / (R_i_effective + R_w + R_o_final)
+    UA_effective = 1.0 / (R_i_effective + hx.resistance_fouling_inside + R_w + R_o_final)
     U_effective = UA_effective / A_o
     internal = state["internal_diagnostics"]
     diagnostics = ThermalIterationDiagnostics(

@@ -135,6 +135,8 @@ def forward_wet_process(
         inside.m_dot,
         inside.p,
         thermal_scale=_area_scale / (1 + surface_margin),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     r = solve_production_coil(
         wet_solver_options=budget.options, _budget=budget,
@@ -181,7 +183,7 @@ def _envelope(r, thermo, adapter, inside, outside, alpha):
 
     d = r.diagnostics
     ri = d["inner_resistance"]
-    film, wall = d["film_resistance"], d["wall_resistance"]
+    film, wall = d["film_resistance"] + d["resistance_fouling_inside"], d["wall_resistance"]
     radial = {p["coordinate"]: p for p in d.get("surface_states", ())}
     finned = isinstance(adapter.bundle.tube, CircularFinnedTube)
     surface = (
@@ -338,7 +340,8 @@ def _public_simulation(
     # Generic outside HTC includes root/contact on its historical gross-area
     # basis; the process keeps common root/contact in the inside operator.
     alpha = 1 / ((d["dry_air_resistance"]
-                  + d.get("common_root_contact_resistance", 0.0)) * thermal_area)
+                  + d.get("common_root_contact_resistance", 0.0)
+                  + d["resistance_fouling_outside"]) * thermal_area)
     # A snapshot after the wet solve supplies existing hydraulic models only.
     # Its independent dry heat calculation never feeds the accepted process.
     snapshot = hx.solve(

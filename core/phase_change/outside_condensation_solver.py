@@ -308,8 +308,8 @@ def solve_outside_condensation(
 
         alfa_i = local.alfa_i
         cp_gas_bulk = local.outside_bulk_props.cp
-        R_i = 1.0 / (alfa_i * A_i)
-        R_downstream = R_i + R_w
+        R_i = 1.0 / (alfa_i * A_i) + hx.resistance_fouling_inside * margin_factor
+        R_downstream = R_i + R_w + hx.resistance_fouling_outside * margin_factor
         wet_finned_surface = None
 
         if is_circular_finned:
@@ -458,7 +458,7 @@ def solve_outside_condensation(
         else:
             # Preserve the established bare-tube wet-interface equations and
             # convergence path: only circular-finned surfaces branch above.
-            alfa_o_dry = local.alfa_o
+            alfa_o_dry = local.alfa_o_physical
             R_o_film = 1.0 / (alfa_o_dry * A_o)
             T_wall_inlet_est = sensible_only_wall_temperature(
                 T_bulk_wet_gas=T_in_outside,
@@ -874,6 +874,12 @@ def solve_outside_condensation(
     # installed conductance at that working state for result-level UA_actual;
     # Legacy reports UA_process = UA_actual / margin_factor, without rescaling Q.
     R_i_final = 1.0 / (solution_state["alfa_i"] * bundle.total_inner_area)
+    R_i_final += hx.resistance_fouling_inside
+    if final_wet_finned_surface is None and hx.resistance_fouling_outside:
+        # The wet solve's coefficient is bulk-to-exposed-surface; reporting
+        # uses the complete outside path to the metal core wall.
+        alfa_o_effective = 1.0 / (
+            1.0 / alfa_o_effective + hx.fouling_resistance_outside)
     R_o_effective = 1.0 / (alfa_o_effective * bundle.total_outer_area)
     UA_effective = 1.0 / (R_i_final + hx.tube_wall_resistance() + R_o_effective)
     U_effective = UA_effective / bundle.total_outer_area

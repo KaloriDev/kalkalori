@@ -98,7 +98,9 @@ class _Operation:
             tg, ti = (b.T_in + seed.air_out) / 2, (a.T_in + seed.liquid_out) / 2
             wm, tint = (wi + seed.humidity_out) / 2, seed.interface_air
             twout, regime = seed.liquid_out, seed.regime
-        ia = InsideWallAdapter(self.bundle, a.provider, mass, a.p)
+        ia = InsideWallAdapter(self.bundle, a.provider, mass, a.p,
+            fouling_resistance_inside=self.hx.fouling_resistance_inside,
+            fouling_resistance_outside=self.hx.fouling_resistance_outside)
         oa = BareTubeAdapter(self.bundle, th, heat_transfer_provider=self.options.get("finned_heat_transfer_provider", DEFAULT_FINNED_HT_PROVIDER))
         cp = th.secant_cp(b.T_in, tint, wi)
         capacity = ia.capacity(a.T_in, twout)

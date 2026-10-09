@@ -638,6 +638,8 @@ def _evaluate_zone(
             alpha_inside=alpha_inside,
             outside_alpha_physical=alpha_outside_physical,
             resistance_core_wall=hx.tube_wall_resistance(),
+            fouling_resistance_inside=hx.fouling_resistance_inside,
+            fouling_resistance_outside=hx.fouling_resistance_outside,
         )
         U = network.U_gross_outside
         delta_T = T_mean_outside - 0.5 * (T_in + T_out)
@@ -651,6 +653,8 @@ def _evaluate_zone(
         alpha_inside=alpha_inside,
         outside_alpha_physical=alpha_outside_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     UA = U * area if math.isfinite(area) else math.inf
     return WaterEvaporatorZoneResult(
@@ -704,6 +708,8 @@ def _solve_boiling_heat_flux(
         alpha_inside=1.0e15,
         outside_alpha_physical=alpha_outside_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     area_ratio = hx.bundle.total_outer_area / hx.bundle.total_inner_area
     q_high = delta_T * limiting_network.U_gross_outside * area_ratio
@@ -730,6 +736,8 @@ def _solve_boiling_heat_flux(
             alpha_inside=evaporation.zone_alpha_evaporation,
             outside_alpha_physical=alpha_outside_physical,
             resistance_core_wall=hx.tube_wall_resistance(),
+            fouling_resistance_inside=hx.fouling_resistance_inside,
+            fouling_resistance_outside=hx.fouling_resistance_outside,
         )
         U = network.U_gross_outside
         target = U * delta_T * area_ratio
@@ -858,10 +866,13 @@ def _build_solution(
         alpha_inside=1.0,
         outside_alpha_physical=trial.outside.alpha_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     equivalent_inside_resistance = (
         1.0 / (U_equivalent * hx.bundle.total_outer_area)
         - hx.tube_wall_resistance()
+        - hx.resistance_fouling_inside
         - reference_network.resistance_outside
     )
     if (
