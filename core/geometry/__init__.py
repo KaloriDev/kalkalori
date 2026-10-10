@@ -17,6 +17,8 @@ from .finned_tube import (
     CircularFinnedTube,
     EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD,
 )
+from .elliptical_tube import EllipticalTube
+from .applicability import TubeGeometryApplicabilityError
 from .bundle import TubeBundle, TubePathType
 
 from .pressure_drop_stages import (
@@ -50,6 +52,8 @@ from .outside_pressure_drop_path import (
 __all__ = [
     "BaseTube",
     "BareTube",
+    "EllipticalTube",
+    "TubeGeometryApplicabilityError",
     "CircularFinnedTube",
     "TubeOrientation",
     "TubeSurfaceType",
