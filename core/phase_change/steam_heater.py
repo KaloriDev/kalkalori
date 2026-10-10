@@ -315,6 +315,8 @@ def solve_steam_heater(
     relative_area_tolerance: float = 1.0e-8,
 ) -> SteamHeaterSolution:
     """Simulation: solve outlet enthalpy whose zone areas fill the geometry."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Steam condensation')
     started = perf_counter()
     _validate_common_inputs(
         inlet_state=inlet_state, mass_flow_steam=mass_flow_steam,
@@ -440,6 +442,8 @@ def rate_steam_heater(
     finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
 ) -> SteamHeaterSolution:
     """Rating: calculate required zone areas for a specified outlet or duty."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Steam condensation')
     started = perf_counter()
     _validate_common_inputs(
         inlet_state=inlet_state, mass_flow_steam=mass_flow_steam,

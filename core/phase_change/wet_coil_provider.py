@@ -145,6 +145,8 @@ class LegacyBulkMeanWetCoilProvider:
 def dispatch_wet_coil(hx, inside, outside, *, mode, settings,
                       wet_coil_provider=None, force_candidate=False, **options):
     """Select once; unsupported selections and provider failures never fall back."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Wet-coil condensation')
     if outside.phase_change_mode is PhaseChangeMode.DISABLED:
         return None
     if mode not in ("simulation", "rating"):

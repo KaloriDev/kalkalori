@@ -33,6 +33,7 @@ from core.geometry.tube import (
     BareTube,
     TubeOrientation,
     TubeSurfaceType,
+    TubeCrossSectionFamily,
 )
 
 
@@ -82,6 +83,7 @@ class CircularFinnedTube(BaseTube):
     external_area_per_length: float | None = None
 
     surface_type: ClassVar[TubeSurfaceType] = TubeSurfaceType.CIRCULAR_FINNED
+    cross_section_family: ClassVar[TubeCrossSectionFamily] = TubeCrossSectionFamily.CIRCULAR
 
     def __post_init__(self) -> None:
         if not isinstance(self.core_tube, BareTube):

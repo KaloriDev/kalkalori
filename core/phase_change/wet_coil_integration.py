@@ -105,6 +105,8 @@ def forward_wet_process(
     finned_heat_transfer_provider=DEFAULT_FINNED_HT_PROVIDER,
 ):
     """Sole physical wet dispatch used by Simulation and every Rating trial."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Wet-coil condensation')
     budget = _solve_budget(wet_solver_options, _budget)
     budget.check()
     if not isfinite(surface_margin) or surface_margin < 0:

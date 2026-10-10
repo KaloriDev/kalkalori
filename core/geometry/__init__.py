@@ -10,6 +10,8 @@ from .tube import (
     BareTube,
     TubeOrientation,
     TubeSurfaceType,
+    TubeCrossSectionFamily,
+    TubeGeometry,
 )
 from .finned_tube import (
     CircularFinnedTube,
@@ -51,6 +53,8 @@ __all__ = [
     "CircularFinnedTube",
     "TubeOrientation",
     "TubeSurfaceType",
+    "TubeCrossSectionFamily",
+    "TubeGeometry",
     "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
     "TubeBundle",
     "TubePathType",

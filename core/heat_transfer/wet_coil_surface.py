@@ -48,6 +48,8 @@ def annular_response(
     radial_cells=64,
     _initial_temperatures=None,
 ):
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(tube, "Wet radial annular-fin solver")
     if gas_temperature <= base_temperature or min(alpha, cp_dry, pressure) <= 0:
         raise ValueError("Invalid annular surface boundary")
     chain = _build_prescribed_base_chain(

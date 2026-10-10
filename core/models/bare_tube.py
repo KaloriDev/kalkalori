@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 from core.geometry.bundle import TubeBundle
 from core.geometry.tube import TubeSurfaceType
 
+from core.heat_transfer.internal_dispatch import internal_heat_transfer_coefficient, straight_friction_evaluator
 from core.heat_transfer.internal_flow import (
     FluidProps as InternalFlowFluidProps,
     heat_transfer_coefficient_internal,
@@ -736,26 +737,8 @@ class BareTubeHeatExchanger:
 
         Ref: standard conduction through cylindrical wall (heat transfer textbooks).
         """
-        # conductivity should be defined on the tube object; if absent we
-        # assume a negligible wall resistance.
-        tube = self.bundle.tube
-        k = getattr(tube, "wall_k", None)
-        if k is None:
-            return 0.0
-        if k <= 0.0:
-            raise ValueError("wall_k must be positive.")
-
-        # tube geometry validation is handled by the BareTube class, but we
-        # keep a couple of defensive checks in case a different implementation
-        # is used.
-        Di = float(getattr(tube, "D_i"))
-        Do = float(getattr(tube, "D_o"))
-        L_eff = float(getattr(tube, "length_effective"))
-        if Do <= Di:
-            raise ValueError("Tube outer diameter must exceed inner diameter.")
-
-        N = self.bundle.n_tubes_total
-        return math.log(Do / Di) / (2.0 * math.pi * k * L_eff * N)
+        from core.heat_transfer.wall_conduction import tube_wall_resistance
+        return tube_wall_resistance(self.bundle.tube, n_tubes=self.bundle.n_tubes_total)
 
     def solve(
         self,
@@ -801,6 +784,8 @@ class BareTubeHeatExchanger:
 
     ) -> HXResult:
         # Use the arrangement resolved from bundle circuiting if not provided.
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         uses_bundle_flow_arrangement = flow_arrangement is None
         topology_warnings = (
             self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -867,9 +852,9 @@ class BareTubeHeatExchanger:
             operation_context=self.enhancement_operation_context,
         )
         if enhancement is None:
-            v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
+            v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = internal_heat_transfer_coefficient(
                 m_dot=m_dot_tube_side,
-                tube_inner_diameter=D_h,
+                tube=self.bundle.tube,
                 flow_area=flow_area_pass,
                 props=tube_side_props,
                 # Thermal-entry laminar model also applies without wall
@@ -903,6 +888,7 @@ class BareTubeHeatExchanger:
                 cp=tube_side_props.cp,
             )
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
+                straight_friction_evaluator=straight_friction_evaluator(self.bundle.tube),
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
                 enhancement_evaluator=enhancement_evaluator,
@@ -921,6 +907,7 @@ class BareTubeHeatExchanger:
             T_out_hyd = T_in_hyd if tube_side_temperature_out is None else tube_side_temperature_out
             p_hyd = 101325.0 if tube_side_pressure is None else tube_side_pressure
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
+                straight_friction_evaluator=straight_friction_evaluator(self.bundle.tube),
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
                 enhancement_evaluator=enhancement_evaluator,
@@ -1356,6 +1343,8 @@ class BareTubeHeatExchanger:
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
         self = self._for_enhancement_call(tube_side_enhancement, enhancement_operation_context)
@@ -1637,6 +1626,8 @@ class BareTubeHeatExchanger:
         ``m_dot = Q_required / (h_in - h_out_target)``. See
         ``core.phase_change.steam_integration.apply_water_steam_rating``.
         """
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
@@ -1784,6 +1775,8 @@ class BareTubeHeatExchanger:
         See ``core.heat_transfer.thermal_iteration.solve_iterative_thermal_state``
         for the full algorithm, convergence controls and result fields.
         """
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.heat_transfer.thermal_iteration import solve_iterative_thermal_state
 
         return solve_iterative_thermal_state(
