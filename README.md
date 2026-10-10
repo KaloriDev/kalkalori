@@ -35,7 +35,13 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.8.8)
+## Current Capabilities (v0.9.0)
+
+- Smooth mathematical `EllipticalTube` geometry with exact perimeter and
+  hydraulic diameter, explicit fully developed laminar Darcy friction and H1
+  internal heat transfer, and an explicitly selected exact confocal wall model.
+  These are standalone foundation calculations; automatic elliptical-bank
+  Rating/Simulation remains unsupported. See [elliptical tubes](docs/elliptical_tubes.md).
 
 - Independent inside/outside thermal fouling resistances [m² K/W] on the
   exchanger, with omitted/`None` values resolving to zero. Rating and
