@@ -5,7 +5,7 @@ from dataclasses import replace
 from core.common.warnings import make_warning
 from .base import (
     EnhancementInput, EnhancementState, EnhancementUnsupportedError,
-    evaluate_enhancement,
+    evaluate_enhancement, requires_wall_state,
 )
 
 
@@ -89,12 +89,16 @@ def guard_side(configuration, side):
 def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
                         temperature=None, pressure=None, wall_props=None,
                         wall_temperature=None, property_provider=None, position="thermal",
-                        heat_flow_direction="unknown"):
+                        heat_flow_direction="unknown", operation_context=None):
     if configuration is None:
         return None
     guard_phase(configuration, property_provider, temperature, pressure)
     if wall_temperature is not None:
         guard_phase(configuration, property_provider, wall_temperature, pressure)
+        if wall_props is None and property_provider is not None and pressure is not None:
+            wall_props = property_provider.at(T=wall_temperature, p=pressure)
+    if requires_wall_state(configuration) and (wall_props is None or wall_temperature is None):
+        raise EnhancementUnsupportedError("enhancement_wall_state_required")
     thermal = None
     reference = thermal_property_reference(configuration)
     if position == "thermal" and reference != "bulk":
@@ -134,6 +138,7 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
         hydraulic_length_total=bundle.internal_length_total,
         thermal=thermal,
         hydraulic=hydraulic,
+        operation_context=operation_context,
     )
     result = evaluate_enhancement(configuration, state)
     return replace(result, warnings=result.warnings + (make_warning(
@@ -163,7 +168,7 @@ def internal_diagnostics(result, bulk_k):
 
 
 def hydraulic_evaluator(configuration, bundle, property_provider, *, wall_temperature=None,
-                        heat_flow_direction="unknown"):
+                        heat_flow_direction="unknown", operation_context=None):
     """Build the same dispatcher for snapshots and refreshed hydraulic paths."""
     if configuration is None:
         return None
@@ -175,6 +180,7 @@ def hydraulic_evaluator(configuration, bundle, property_provider, *, wall_temper
             property_provider=property_provider, position=point.position,
             wall_temperature=wall_temperature,
             heat_flow_direction=heat_flow_direction,
+            operation_context=operation_context,
         )
     return evaluate
 

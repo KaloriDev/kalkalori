@@ -129,7 +129,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from core.enhancements.base import EnhancementResult
+from core.enhancements.base import EnhancementResult, EnhancementProviderError
 from core.enhancements.integration import guard_phase, evaluate_for_bundle, internal_diagnostics
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
@@ -454,11 +454,12 @@ def _evaluate_local_wall_state(
     tube = bundle.tube
     D_h = bundle.internal_hydraulic_diameter
     from core.enhancements.integration import (
-        hydraulic_property_reference, thermal_property_reference,
+        hydraulic_property_reference, thermal_property_reference, requires_wall_state,
     )
     if (inside_wall_temperature is None
             and (thermal_property_reference(hx.tube_side_enhancement) != "bulk"
-                 or hydraulic_property_reference(hx.tube_side_enhancement) != "bulk")):
+                 or hydraulic_property_reference(hx.tube_side_enhancement) != "bulk"
+                 or requires_wall_state(hx.tube_side_enhancement))):
         # Initial iterate only, bounded by the two bulk states. The existing
         # resistance-network iteration replaces this guess with its wall state.
         inside_wall_temperature = (inside_bulk_temperature + outside_bulk_temperature)/2
@@ -492,6 +493,7 @@ def _evaluate_local_wall_state(
         wall_props=wall_i, wall_temperature=inside_wall_temperature,
         property_provider=inside_provider,
         heat_flow_direction=("heating" if outside_bulk_temperature >= inside_bulk_temperature else "cooling"),
+        operation_context=getattr(hx, "enhancement_operation_context", None),
     )
     if enhancement is None:
         internal = heat_transfer_coefficient_internal_diagnostics(
@@ -761,6 +763,10 @@ def estimate_wall_temperature_envelope(
                 relative_alfa_tolerance=relative_alfa_tolerance,
                 relaxation_factor=relaxation_factor,
             )
+        except EnhancementProviderError:
+            # Optional numerical envelope failures may be diagnostic, but the
+            # explicitly selected physical provider must never be bypassed.
+            raise
         except Exception as exc:
             warning = make_warning(
                 code="wall_temperature_probe_not_converged",

@@ -4,6 +4,7 @@
 from .base import (
     EnhancementDiagnostic, EnhancementInput, EnhancementReferenceState,
     EnhancementResult, EnhancementState, EnhancementUnsupportedError,
+    EnhancementOperationContext, EnhancementProviderError, EnhancementTimeoutError,
     TubeSideEnhancement, TubeSideEnhancementProvider, TwistedTapeGeometry, TwistedTapeClearanceGeometry,
     WireCoilGeometry,
     evaluate_enhancement,
@@ -19,6 +20,7 @@ from .clearance import (
 __all__ = [
     "EnhancementDiagnostic", "EnhancementInput", "EnhancementReferenceState",
     "EnhancementResult", "EnhancementState", "EnhancementUnsupportedError",
+    "EnhancementOperationContext", "EnhancementProviderError", "EnhancementTimeoutError",
     "TubeSideEnhancement", "TubeSideEnhancementProvider", "TwistedTapeGeometry",
     "WireCoilGeometry",
     "evaluate_enhancement",

@@ -820,7 +820,7 @@ def run_simulation(
 
     from core.enhancements.integration import (
         check_model_identity, guard_side, hydraulic_evaluator,
-        hydraulic_property_reference,
+        hydraulic_property_reference, requires_wall_state,
     )
     guard_side(hx.tube_side_enhancement, inside)
     hot_is_inside = inside.T_in >= outside.T_in
@@ -908,7 +908,8 @@ def run_simulation(
         # hydraulic snapshot was first evaluated. Refresh both common
         # three-state hydraulic results so exposed states use those outlets.
         hydraulic_wall_temperature = None
-        if hydraulic_property_reference(hx.tube_side_enhancement) != "bulk":
+        if (hydraulic_property_reference(hx.tube_side_enhancement) != "bulk"
+                or requires_wall_state(hx.tube_side_enhancement)):
             from core.enhancements import EnhancementUnsupportedError
             from core.heat_transfer.thermal_iteration import _solve_wall_temperature_probe
 
@@ -934,6 +935,7 @@ def run_simulation(
                 hx.tube_side_enhancement, hx.bundle, inside.provider,
                 wall_temperature=hydraulic_wall_temperature,
                 heat_flow_direction="cooling" if hot_is_inside else "heating",
+                operation_context=hx.enhancement_operation_context,
             ),
             m_dot=inside.m_dot,
             flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,

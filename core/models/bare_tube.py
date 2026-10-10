@@ -23,7 +23,10 @@ from __future__ import annotations
 from core.heat_transfer.wet_coil_solver import WetCoilSolverOptions, _wet_operation
 from core.phase_change.wet_coil_provider import WetCoilModelProvider
 
-from core.enhancements.base import TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError
+from core.enhancements.base import (
+    TubeSideEnhancement, EnhancementResult, EnhancementUnsupportedError,
+    EnhancementOperationContext,
+)
 from core.enhancements.integration import evaluate_for_bundle, guard_side, hydraulic_evaluator, check_model_identity
 
 import math
@@ -666,6 +669,7 @@ class BareTubeHeatExchanger:
             raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
         self.bundle = bundle
         self._tube_side_enhancement = tube_side_enhancement
+        self._enhancement_operation_context = None
         self._fouling_resistance_inside = normalize_fouling_resistance(
             fouling_resistance_inside, "fouling_resistance_inside")
         self._fouling_resistance_outside = normalize_fouling_resistance(
@@ -693,15 +697,26 @@ class BareTubeHeatExchanger:
     def tube_side_enhancement(self) -> TubeSideEnhancement | None:
         return self._tube_side_enhancement
 
-    def _for_enhancement_call(self, selection):
-        if selection is _EnhancementDefault.INHERIT:
+    @property
+    def enhancement_operation_context(self) -> EnhancementOperationContext | None:
+        """Call-local budget, shared unchanged by nested solver evaluations."""
+        return self._enhancement_operation_context
+
+    def _for_enhancement_call(self, selection, operation_context=None):
+        if operation_context is not None and not isinstance(operation_context, EnhancementOperationContext):
+            raise TypeError("enhancement_operation_context must be an EnhancementOperationContext or None.")
+        if selection is _EnhancementDefault.INHERIT and operation_context is None:
             return self
-        if selection is not None and not isinstance(selection, TubeSideEnhancement):
+        if (selection is not _EnhancementDefault.INHERIT and selection is not None
+                and not isinstance(selection, TubeSideEnhancement)):
             raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration or None.")
         # Preserve the exchanger/subclass and the exact provider object, but
         # keep selection local to this solve, including nested solver calls.
         selected = copy(self)
-        selected._tube_side_enhancement = selection
+        if selection is not _EnhancementDefault.INHERIT:
+            selected._tube_side_enhancement = selection
+        if operation_context is not None:
+            selected._enhancement_operation_context = operation_context
         return selected
 
     def tube_wall_resistance(self) -> float:
@@ -815,12 +830,13 @@ class BareTubeHeatExchanger:
             elif tube_side_temperature_out > tube_side_temperature_in:
                 tube_side_heat_flow_direction = "heating"
         from core.enhancements.integration import (
-            hydraulic_property_reference, thermal_property_reference,
+            hydraulic_property_reference, thermal_property_reference, requires_wall_state,
         )
         wall_temperature = None
         wall_props = None
         if (thermal_property_reference(self.tube_side_enhancement) != "bulk"
-                or hydraulic_property_reference(self.tube_side_enhancement) != "bulk"):
+                or hydraulic_property_reference(self.tube_side_enhancement) != "bulk"
+                or requires_wall_state(self.tube_side_enhancement)):
             # Even a fixed-bulk snapshot needs a resolved wall for a film/wall
             # reference. Reuse the existing local resistance-network iteration.
             from core.heat_transfer.thermal_iteration import _solve_wall_temperature_probe
@@ -848,6 +864,7 @@ class BareTubeHeatExchanger:
             pressure=tube_side_pressure, property_provider=tube_side_provider,
             wall_temperature=wall_temperature, wall_props=wall_props,
             heat_flow_direction=tube_side_heat_flow_direction,
+            operation_context=self.enhancement_operation_context,
         )
         if enhancement is None:
             v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = heat_transfer_coefficient_internal(
@@ -869,7 +886,8 @@ class BareTubeHeatExchanger:
         enhancement_evaluator = hydraulic_evaluator(
             self.tube_side_enhancement, self.bundle, tube_side_provider,
             wall_temperature=wall_temperature,
-            heat_flow_direction=tube_side_heat_flow_direction)
+            heat_flow_direction=tube_side_heat_flow_direction,
+            operation_context=self.enhancement_operation_context)
         tube_thermal = HXOutSideThermalResults(v=v_i, Re=Re_i, Pr=Pr_i, alfa=alfa_i)
 
         # --------------------------------------------------------------
@@ -1238,6 +1256,7 @@ class BareTubeHeatExchanger:
         outside: "HXSideInput",
         *,
         tube_side_enhancement: TubeSideEnhancement | None | _EnhancementDefault = _EnhancementDefault.INHERIT,
+        enhancement_operation_context: EnhancementOperationContext | None = None,
         surface_margin: float = 0.0,
         iterate: bool = True,
         flow_arrangement: str | None = None,
@@ -1292,6 +1311,11 @@ class BareTubeHeatExchanger:
         The original exchanger is unchanged; the selected provider instance
         is reused throughout the solve.
 
+        ``enhancement_operation_context`` optionally supplies a shared
+        monotonic deadline for tube-side provider calls. Construct it with
+        ``EnhancementOperationContext.from_timeout(seconds)``; omission is
+        unlimited. Nested calls reuse it, without resetting the deadline.
+
         ``surface_margin`` (default ``0.0``, "on the nose") is the Simulation
         input derating applied to the full-geometry ``UA`` before duty and
         outlet temperatures are computed. It remains echoed on the result for
@@ -1304,7 +1328,9 @@ class BareTubeHeatExchanger:
         ``iterate=False`` is an explicit escape hatch: a single, fast,
         *uncorrected* ``solve()`` pass at the inlet state (``converged=True``,
         ``iterations=1``, ``thermal_state=None`` on the result) -- no wall-
-        temperature correction is applied.
+        temperature correction is applied by the smooth-tube path. An
+        enhancement declaring a nonbulk reference or ``requires_wall_state``
+        resolves a representative wall through the existing wall probe.
 
         For Rating (closing a known heat balance to get overdesign/margin),
         see ``.rate(...)``.
@@ -1332,7 +1358,7 @@ class BareTubeHeatExchanger:
         """
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
-        self = self._for_enhancement_call(tube_side_enhancement)
+        self = self._for_enhancement_call(tube_side_enhancement, enhancement_operation_context)
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,
@@ -1519,6 +1545,7 @@ class BareTubeHeatExchanger:
         outside: "BalanceSideSpec",
         *,
         tube_side_enhancement: TubeSideEnhancement | None | _EnhancementDefault = _EnhancementDefault.INHERIT,
+        enhancement_operation_context: EnhancementOperationContext | None = None,
         Q: float | None = None,
         effectiveness: float | None = None,
         flow_arrangement: str | None = None,
@@ -1554,6 +1581,10 @@ class BareTubeHeatExchanger:
         as ``simulate``: omit to inherit, supply a configuration to override,
         or pass ``None`` for the legacy smooth path. This also governs the
         optional Rating-to-Simulation bridge.
+
+        ``enhancement_operation_context`` has the same shared-deadline
+        semantics as ``simulate``, including repeated forward evaluations,
+        wall probes, hydraulics and the optional nested Simulation.
 
         ``wet_coil_provider`` selects a global model object (default Elmahdy-
         Mitalas). Unsupported selections raise; DISABLED bypasses the provider.
@@ -1609,7 +1640,7 @@ class BareTubeHeatExchanger:
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
-        self = self._for_enhancement_call(tube_side_enhancement)
+        self = self._for_enhancement_call(tube_side_enhancement, enhancement_operation_context)
         settings = PhaseChangeSettings(
             onset_tolerance_K=phase_change_onset_tolerance_K,
             activation_band_K=phase_change_activation_band_K,
