@@ -41,7 +41,7 @@ from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.internal_dispatch import internal_heat_transfer_coefficient, straight_friction_evaluator
 from core.heat_transfer.internal_flow import (
     FluidProps as InternalFlowFluidProps,
-    heat_transfer_coefficient_internal,
+    heat_transfer_coefficient_internal,  # Historical module-level integration hook.
 )
 
 from core.pressure_drop.internal_pressure_drop import (

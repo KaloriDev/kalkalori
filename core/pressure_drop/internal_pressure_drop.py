@@ -397,6 +397,7 @@ def calculate_tube_bundle_hydraulics(
     roughness_inner: float | None = None,
     enhancement_evaluator: Callable[[TubeSideHydraulicPoint], EnhancementResult] | None = None,
     straight_friction_evaluator: Callable[[float, float | None], tuple[float, str]] | None = None,
+    tube: Any | None = None,
     provider: Any | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
@@ -439,6 +440,9 @@ def calculate_tube_bundle_hydraulics(
     The point-property arguments are a deterministic test/compatibility hook.
     Production exchanger paths pass a provider and temperatures.
     """
+    if tube is not None:
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(tube, "Automatic tube-bundle entrance/exit losses")
     _validate_hydraulic_input(
         m_dot=m_dot,
         flow_area_per_pass=flow_area_per_pass,

@@ -136,6 +136,7 @@ from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
 
 from core.heat_transfer.internal_dispatch import internal_heat_transfer_diagnostics
+from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics  # Historical integration hook.
 from core.heat_transfer.outside_flow import (
     prandtl_number as outside_prandtl_number,
 )
