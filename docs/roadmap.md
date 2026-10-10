@@ -35,7 +35,9 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.7`
+**Current version:** `v0.8.8`
+**Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
+**Next active public line:** `0.9.x` — non-round / smooth elliptical tube foundation
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change balance and source-profile wet-coil approximation,
@@ -147,7 +149,7 @@ where that assumption is documented.
   remain future work
 - no release number or order is assigned; implementation can be before or
   after `v1.0.0`
-- long-term ownership of dedicated hydraulic models belongs to KalFluxi
+- dedicated hydraulic models remain separate from the thermal core
 - KalKalori should provide thermodynamic states needed by hydraulics, including
   phase, vapor quality, mass flux, pressure and enthalpy
 - coupled thermal-hydraulic iteration should be managed by an orchestrator
@@ -163,7 +165,21 @@ selection remain outside the solver's scope.
 
 ---
 
-### v0.8.x — Tube-Side Enhancement / Turbulators
+### v0.8.x — Tube-Side Enhancement / Turbulators (complete)
+
+The `0.8.x` development line is complete with `v0.8.8`. Its delivered scope
+includes:
+
+- the tube-side enhancement provider architecture and public/open models;
+- the wet-coil provider architecture and wet Simulation/Rating;
+- the optimized BareTube wet numerical path;
+- independent inside/outside thermal fouling resistance;
+- a generic external/private provider boundary with a shared operation
+  deadline, independent wall requirements and explicit fatal failures.
+
+Private implementations remain outside the public distribution. Direct
+distributed pressure-gradient results remain deferred until a demonstrated
+need cannot be met by documented equivalent friction/reference normalization.
 
 **Included in v0.8.0:**
 
@@ -186,8 +202,8 @@ selected model.
 Paywalled literature, manufacturer data,
 proprietary correlations and licensed software belong in external/private
 providers, supported by the open generic interface.
-Insert-specific local losses, phase change inside enhanced tubes, and
-CALGAVIN/hiTRAN physics are excluded from this stage.
+Insert-specific local losses, phase change inside enhanced tubes and
+proprietary implementations are excluded from this stage.
 
 This provider scope is specific to tube-side enhancement devices.
 The generic clearance-composition API is included; a verified built-in
@@ -231,10 +247,9 @@ finite-width clearance correlation remains future work.
   discovery or string-based selection and are outside the distribution.
   See [the provider API](wet_coil_providers.md).
 
-Release-candidate validation passed all 1487 public tests and 17 required
-engineering cases in seven notebook representatives. Publication awaits
-user release review; model applicability and wet pressure-drop limits remain
-as documented.
+The v0.8.3 validation passed all 1487 public tests and 17 required engineering
+cases in seven notebook representatives. Model applicability and wet
+pressure-drop limits remain as documented.
 
 ---
 
@@ -254,11 +269,33 @@ See [thermal fouling conventions](thermal_fouling.md).
 
 ---
 
-### v0.9.x — Smooth Elliptical Tubes
+### v0.8.8 — Generic External Provider Hardening
+
+**Delivered scope:**
+
+- optional immutable tube-enhancement operation context with one monotonic
+  deadline shared by repeated/nested Rating and Simulation evaluations;
+- optional `requires_wall_state` independent of property-reference selection,
+  including representative wall properties at hydraulic quadrature nodes;
+- fatal selected-provider failures propagate through endpoint probes;
+- separate-package synthetic contract coverage, retaining direct objects,
+  absolute HTC, normalized friction and private session/configuration state.
+
+No new physical correlation or proprietary integration is included. Optional
+numerical wall-envelope nonconvergence keeps its diagnostic policy. See
+[the public provider guide](tube_side_enhancements.md).
+
+---
+
+### v0.9.x — Non-Round / Smooth Elliptical Tube Foundation (next active line)
 
 Add smooth elliptical tubes as a dedicated regular geometry family. This is
 not the empirical/provider-based non-standard geometry stage and is not part
 of the v0.8.x turbulator work.
+
+Start with geometry and a source audit. Specific elliptical heat-transfer
+and hydraulic correlations will be selected only after their definitions,
+applicability and accessible sources have been established.
 
 ---
 
