@@ -5,6 +5,34 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.8] — Generic external tube-side provider hardening
+
+- Hardened the structural tube-side enhancement boundary for external/private
+  implementations without registration, discovery, inheritance or new runtime
+  dependencies. Absolute HTC and Darcy/Fanning reference normalization remain
+  unchanged; provider-owned configuration and session objects are retained.
+- Added optional immutable `EnhancementOperationContext`, carried in
+  `EnhancementInput.operation_context` and supplied through Rating/Simulation's
+  `enhancement_operation_context` keyword. One monotonic deadline is shared by
+  repeated thermal/hydraulic evaluations, wall/endpoint probes and nested
+  Simulation. Omission remains unlimited; checks occur before and after calls.
+  Providers must enforce the remaining budget inside their blocking transport.
+- Added optional `requires_wall_state`, independent of thermal/hydraulic
+  property reference. Required-wall providers receive backend-evaluated
+  representative wall properties during initialization, iteration, snapshots
+  and hydraulic quadrature without applying their wall correction twice.
+- Added generic fatal provider/timeout errors and explicitly propagate provider
+  failures and invalid results from endpoint probes. Unsupported and validation
+  errors retain ValueError/TypeError compatibility. Optional numerical envelope
+  failures keep warning/nonconverged diagnostics; no physical fallback is added.
+- Added separate-package external-provider, session-isolation, deadline,
+  wall-state and endpoint-failure regressions. Existing enhancement physics,
+  smooth-tube behavior, wet solvers, fouling and pressure-drop equations remain
+  unchanged. See [the provider guide](docs/tube_side_enhancements.md).
+- Closes the planned `0.8.x` line. The next active public line is the `0.9.x`
+  non-round/smooth elliptical tube foundation. Direct distributed-gradient
+  results remain deferred.
+
 ## [0.8.7] — Thermal fouling resistance
 
 - Added independent optional `fouling_resistance_inside` and

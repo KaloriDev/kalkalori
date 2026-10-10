@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from numbers import Real
+from time import monotonic
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from core.common.warnings import ModelWarning
@@ -23,8 +25,59 @@ def _positive(**values: float) -> None:
             raise ValueError(f"{name} must be positive and finite.")
 
 
-class EnhancementUnsupportedError(ValueError):
+class EnhancementProviderError(RuntimeError):
+    """Fatal failure of the explicitly selected enhancement provider."""
+
+
+class EnhancementUnsupportedError(ValueError, EnhancementProviderError):
     """Explicitly requested enhancement cannot describe the supplied state."""
+
+
+class EnhancementTimeoutError(TimeoutError, EnhancementProviderError):
+    """The shared enhancement deadline or the provider's timeout expired."""
+
+
+class _EnhancementProviderValueError(ValueError, EnhancementProviderError):
+    """Preserve ValueError compatibility while marking provider validation."""
+
+
+class _EnhancementProviderTypeError(TypeError, EnhancementProviderError):
+    """Preserve TypeError compatibility while marking provider validation."""
+
+
+@dataclass(frozen=True)
+class EnhancementOperationContext:
+    """Shared absolute monotonic deadline [s]; None means unlimited.
+
+    Providers must apply remaining_time() to their own blocking transport.
+    Core checks the deadline before and after evaluation, without interrupting
+    native calls. Reuse the same object for every trial in an operation.
+    """
+    deadline: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.deadline is not None and (
+                isinstance(self.deadline, bool) or not isinstance(self.deadline, Real)
+                or not math.isfinite(self.deadline)):
+            raise ValueError("deadline must be finite monotonic seconds or None.")
+
+    @classmethod
+    def from_timeout(cls, timeout_s: float | None = None) -> EnhancementOperationContext:
+        """Start one budget now; timeout_s is positive finite seconds or None."""
+        if timeout_s is None:
+            return cls()
+        if (isinstance(timeout_s, bool) or not isinstance(timeout_s, Real)
+                or not math.isfinite(timeout_s) or timeout_s <= 0):
+            raise ValueError("timeout_s must be positive and finite or None.")
+        return cls(monotonic() + timeout_s)
+
+    def remaining_time(self) -> float | None:
+        """Remaining seconds, clamped to zero, or None for unlimited work."""
+        return None if self.deadline is None else max(0.0, self.deadline - monotonic())
+
+    def check_deadline(self) -> None:
+        if self.deadline is not None and monotonic() >= self.deadline:
+            raise EnhancementTimeoutError("Tube-side enhancement operation deadline expired.")
 
 
 @dataclass(frozen=True)
@@ -152,6 +205,7 @@ class EnhancementInput:
     # Optional source-neutral hydraulic property state. Providers declare its
     # reference temperature independently from the thermal Nu state.
     hydraulic: EnhancementState | None = None
+    operation_context: EnhancementOperationContext | None = None
 
     def __post_init__(self) -> None:
         _positive(mass_flow_per_tube=self.mass_flow_per_tube,
@@ -173,6 +227,9 @@ class EnhancementInput:
             raise TypeError("thermal must be an EnhancementState.")
         if self.hydraulic is not None and not isinstance(self.hydraulic, EnhancementState):
             raise TypeError("hydraulic must be an EnhancementState.")
+        if self.operation_context is not None and not isinstance(
+                self.operation_context, EnhancementOperationContext):
+            raise TypeError("operation_context must be an EnhancementOperationContext or None.")
 
     @property
     def base_mass_flux(self) -> float | None:
@@ -325,11 +382,57 @@ class TubeSideEnhancement:
             validate_clearance_provider(self.clearance_provider)
 
 
+def requires_wall_state(configuration: TubeSideEnhancement | None) -> bool:
+    """Optional capability independent of thermal/hydraulic property reference."""
+    if configuration is None:
+        return False
+    providers = [configuration.provider]
+    if configuration.clearance_provider is not None:
+        from .clearance import ClearanceModelMode
+        if configuration.clearance_provider.mode is ClearanceModelMode.ABSOLUTE:
+            providers = []
+        providers.append(configuration.clearance_provider)
+    requirements = [getattr(provider, "requires_wall_state", False) for provider in providers]
+    if any(not isinstance(required, bool) for required in requirements):
+        raise _EnhancementProviderTypeError("requires_wall_state must be a bool.")
+    return any(requirements)
+
+
+def _provider_call(state, evaluate):
+    """Mark provider failures, keeping validation exception compatibility."""
+    context = state.operation_context
+    if context is not None:
+        context.check_deadline()
+    try:
+        result = evaluate()
+        if context is not None:
+            context.check_deadline()
+        return result
+    except EnhancementProviderError:
+        raise
+    except TimeoutError as exc:
+        raise EnhancementTimeoutError(str(exc)) from exc
+    except TypeError as exc:
+        raise _EnhancementProviderTypeError(str(exc)) from exc
+    except ValueError as exc:
+        raise _EnhancementProviderValueError(str(exc)) from exc
+    except Exception as exc:
+        raise EnhancementProviderError(str(exc)) from exc
+
+
 def evaluate_enhancement(configuration: TubeSideEnhancement | None,
                          state: EnhancementInput) -> EnhancementResult | None:
-    """None is the exact legacy-dispatch sentinel. Never catch provider errors."""
+    """None is the legacy sentinel; selected-provider failures never fall back."""
     if configuration is None:
         return None
+
+    return _provider_call(state, lambda: _evaluate_selected(configuration, state))
+
+
+def _evaluate_selected(configuration, state):
+    if requires_wall_state(configuration) and (
+            state.wall is None or state.wall.temperature is None):
+        raise EnhancementUnsupportedError("enhancement_wall_state_required")
     if state.fluid_phase != configuration.fluid_phase:
         raise EnhancementUnsupportedError("Enhancement fluid phase does not match configuration.")
     if isinstance(configuration.geometry, TwistedTapeGeometry):

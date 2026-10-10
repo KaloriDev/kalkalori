@@ -151,7 +151,9 @@ and an insert-specific momentum model are not included.
 A separate package supplies an object with `provider_id` and
 `evaluate(geometry, state) -> EnhancementResult`. Select it through the same
 `TubeSideEnhancement` constructor; no registry or solver modification is
-needed. `geometry` may be `TwistedTapeGeometry` or a provider-owned typed
+needed. Structural compatibility requires no registration, discovery,
+inheritance or import of the external provider into KalKalori.
+`geometry` may be `TwistedTapeGeometry` or a provider-owned typed
 object. The external provider validates geometry compatibility and its own
 physical limits. Twisted-tape geometry uses an explicit 180-degree length;
 providers with a 360-degree or width-based ratio convert at their boundary.
@@ -160,7 +162,8 @@ All core contract types are exported from `core.enhancements`:
 
 | Contract | Required interpretation |
 | --- | --- |
-| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall and backend-evaluated thermal/hydraulic reference states, declared phase, position and heating/cooling direction |
+| `EnhancementInput` | SI per-tube mass flow, inside diameter, physical/heated lengths, base per-tube flow area, total hydraulic length, roughness, bulk state, optional wall and backend-evaluated thermal/hydraulic reference states, declared phase, position, heating/cooling direction and optional shared `operation_context` |
+| `EnhancementOperationContext` | Immutable absolute monotonic deadline [s] or unlimited; `remaining_time()` and `check_deadline()` |
 | `EnhancementState` | Positive finite density, viscosity, conductivity and cp; optional temperature and pressure |
 | `EnhancementReferenceState` | Per-tube flow area and consistent mass-flow velocity, provider-owned Re/Pr, friction diameter, separate hydraulic diameter and Nu reference length |
 | `EnhancementResult` | Positive thermal `alpha_inside` and canonical `f_darcy`, native friction with explicit `darcy`/`fanning` basis and reference normalization, reference state, regime, applicability, provenance, thermal property reference and optional Nu; hydraulic-only nodes may omit alpha and Nu |
@@ -206,12 +209,10 @@ identifiers need not expose confidential data, but values placed in results
 are visible to callers and should be chosen accordingly.
 
 The same provider owns thermal and hydraulic performance. Hydraulic nodes
-with `wall=None` may return friction only (`alpha_inside=None`, `nusselt=None`)
-when the thermal reference is unavailable; thermal requests require alpha.
-There is no resolved axial wall-temperature field. A model whose friction
-requires unavailable wall information must raise `EnhancementUnsupportedError`.
-Thermal wall/film requirements reuse the existing iterative wall solver; a
-standalone context without the required temperatures/backend fails clearly.
+may return friction only (`alpha_inside=None`, `nusselt=None`) when the thermal
+reference is unavailable; thermal requests require alpha. Wall requirements
+reuse the existing iterative wall solver, as described below; a standalone
+call without required wall data fails clearly.
 External property tables/software own their interpolation,
 extrapolation policy, unavailable-data errors and any external I/O; core adds
 no dependency or proprietary equation.
@@ -232,7 +233,122 @@ error when unavailable, so importing KalKalori never depends on that software.
 Installation alone must not place an external model in `AUTO`. Backend name,
 revision and execution mode may be carried in opaque diagnostics or defaulted
 fields on a result subtype alongside the required provider/model/source
-identity; the v0.8.0 solver needs no second provider hierarchy for this.
+identity; the solver needs no second provider hierarchy for this.
+
+### Shared operation deadline
+
+Rating and Simulation accept the optional `enhancement_operation_context`
+keyword. Create the budget once, at the start of the operation:
+
+```python
+from core.enhancements import EnhancementOperationContext
+
+context = EnhancementOperationContext.from_timeout(30.0)
+result = hx.rate(
+    inside_balance, outside_balance,
+    tube_side_enhancement=selection,
+    enhancement_operation_context=context,
+    include_simulation=True,
+)
+```
+
+The exact same immutable object reaches `state.operation_context` during
+initial calls, thermal/wall iterations, hydraulic nodes, endpoint probes,
+repeated Rating forward evaluations and optional nested Simulation. Its
+deadline is never restarted per evaluation. Selection and context remain
+local to this operation; the original exchanger is unchanged and the provider
+is not cloned.
+The exchanger is shallow-copied for call-local options while retaining the
+same provider, config and private session.
+
+Omission preserves unlimited behavior (`state.operation_context is None`).
+`EnhancementOperationContext()` or `from_timeout(None)` also means unlimited.
+`from_timeout(seconds)` requires a positive finite timeout. A directly
+supplied `deadline` is in absolute monotonic seconds, not a wall-clock date.
+`remaining_time()` returns nonnegative seconds or `None` when unlimited;
+`check_deadline()` raises `EnhancementTimeoutError` when expired. Standalone
+provider callers can populate `EnhancementInput.operation_context` directly.
+The context applies to selected tube enhancement calls and does not replace
+the separate wet-coil solver controls or impose a timeout on smooth physics.
+
+Core checks before invocation and after the provider returns. It cannot
+forcibly interrupt an arbitrary external blocking call. A private adapter
+must pass `remaining_time()` into its own transport/request timeout and
+check the context during cooperative work. No thread/process executor or
+external runtime dependency is required by core.
+
+### Required wall state and property references
+
+`requires_wall_state` is an optional boolean provider attribute, default
+`False`; it is not a required structural protocol member. A provider can
+correctly declare:
+
+```python
+thermal_property_reference = "bulk"
+hydraulic_property_reference = "bulk"
+requires_wall_state = True
+```
+
+The property-reference attributes select which fluid state supplies the
+primary thermal/hydraulic transport properties. The wall requirement means
+that a separate wall state is also needed, for example for a wall-viscosity
+correction. It never changes the meaning of bulk, wall or film reference.
+
+For required-wall providers, initialization uses a bounded representative
+wall temperature between the two bulk temperatures and evaluates properties
+at that temperature through the existing fluid backend. Rating and iterative
+Simulation continue re-evaluating the provider inside the wall solve.
+Snapshot Simulation resolves the representative wall through a wall probe
+even with bulk references. Hydraulic inlet/midpoint/outlet evaluations receive
+`state.wall` from the backend whenever representative wall temperature is
+known. Film `state.hydraulic` and `state.wall` are separate states, evaluated
+at their respective temperatures; transport properties are never averaged.
+
+Missing required wall properties/temperature raise
+`EnhancementUnsupportedError` before provider invocation. The provider
+returns its already corrected absolute `alpha_inside`; core does not apply
+that correction again. Providers without the new capability retain their
+existing optional-wall behavior. For clearance composition, correction mode
+honors both active providers' requirements, while absolute mode honors the
+replacement provider only.
+
+### Sessions and explicit failure
+
+An external provider may retain mutable private configuration, opaque model
+identity and a non-serializable session/process/client. Core performs calls
+serially within an operation and neither deep-copies, pickles, reconstructs,
+compares nor hashes that provider object. Applications sharing a stateful
+object across concurrent operations must coordinate access themselves.
+Private adapters retain their runtime dependencies and session lifecycle;
+they may use `source_access_basis="private"` or `"external"` and opaque
+diagnostics/provenance without revealing private configuration to core.
+
+`EnhancementProviderError` marks a fatal selected-provider failure.
+`EnhancementUnsupportedError` remains catchable as `ValueError`;
+`EnhancementTimeoutError` is also a `TimeoutError`. Adapters can raise the
+generic marker for an unavailable backend or failed external protocol.
+Core normalizes unmarked exceptions raised during provider evaluation and
+result validation into marked failures, retaining the original exception as
+`__cause__`. Validation failures retain `ValueError`/`TypeError` compatibility.
+
+An explicitly selected provider never triggers physical-model fallback.
+Fatal unsupported, timeout, backend and invalid-result failures also propagate
+from endpoint wall-envelope probes and fail Rating/Simulation. Ordinary
+numerical inability to estimate an optional envelope can still produce
+`wall_temperature_probe_not_converged` warnings and nonconverged/NaN probe
+diagnostics when the provider itself has not failed.
+
+Direct distributed-gradient output remains deferred. The hydraulic contract
+still requires coherent friction/reference normalization. Conversion of a
+backend pressure drop to equivalent Darcy friction requires a documented
+distributed straight-tube loss, applicable length and reference state; it
+must exclude separately owned acceleration, entrances/exits and component
+losses. An undivided whole-exchanger pressure drop cannot be assumed to meet
+that condition.
+
+This remains a 0D boundary. Local segment coordinates, cumulative development
+lengths, pass indices and spatial wall/pressure fields remain future
+distributed-model concerns.
 
 Single-phase `liquid` or `gas` must be declared. Where a property backend
 exposes authoritative phase data, core checks it, including wall states.
@@ -241,76 +357,20 @@ prove phase. Quality inputs, active inside phase-change paths, and wet-gas
 phase-capable inside providers are excluded. Gas support in the generic
 contract does not extend the liquid-only public model.
 
-## PRIVATE M&B PROVIDER READINESS
+## External contract regression coverage
 
-**Interface readiness: yes.** A future privately supplied
-`ManglikBergles1993Provider` can implement the public
-`TubeSideEnhancementProvider` contract and be used by private notebooks
-without registering its name, editing a dispatcher, monkey-patching, or
-adding an import of private code to core. No further core change is required
-to select the object and consume its coherent result within the documented
-single-phase 0D state contract. This audit verifies integration readiness;
-it does not verify or implement the paywalled model's physics or applicability.
+`core/tests/external_enhancement_hardening_test.py` loads a synthetic fixture
+from `tests/fixtures/external_enhancement_provider`, outside the core namespace.
+It verifies structural compatibility, arbitrary private config, retained
+mutable session state, repeated Rating/Simulation evaluation, shared deadlines,
+required wall properties, opaque result details and strict endpoint failures.
+The fixture rejects deepcopy, serialization, equality and hashing to expose
+accidental assumptions about private session objects.
 
-The notebook imports its private class using its own Python import setup
-and constructs it normally. With that `provider` object already created,
-the public side of the notebook code is:
-
-```python
-from core.enhancements import TubeSideEnhancement, TwistedTapeGeometry
-
-tape = TwistedTapeGeometry(
-    half_turn_length=0.036, tape_width=0.012, tape_thickness=0.001,
-)
-selection = TubeSideEnhancement(provider=provider, geometry=tape, fluid_phase="liquid")
-rating = hx.rate(inside_balance, outside_balance, tube_side_enhancement=selection)
-simulation = hx.simulate(inside, outside, tube_side_enhancement=selection)
-```
-
-These geometry values illustrate the public API only; they do not declare
-the private model's validity. A conceptual private location such as
-`.kon/_shared/tube_side_enhancement/manglik_bergles_1993.py` has no special
-meaning to core. No such module or notebook is created, imported, inspected,
-or required by public implementation/tests. Dependency direction is solely
-private notebook/provider -> public contract.
-
-| Requirement | Public data/path available to the private provider |
-| --- | --- |
-| Physical geometry | `evaluate(geometry, state)` receives the public tape geometry, without Sw, friction or private model parameters |
-| Local flow | `state.mass_flow_per_tube`; `base_flow_area_per_tube`; derived `base_mass_flux` in kg/(m2 s). Core already divides bundle mass flow/area by effective parallel tube count, so the provider need not access bundle internals |
-| Tube and lengths | `tube_inner_diameter`, `tube_length` (one physical tube), `heated_length` (one heated tube), `hydraulic_length_total` (complete path through the passes), `roughness_inner` |
-| Bulk state | `state.bulk.rho`, `.mu`, `.k`, `.cp`, `.temperature` [K], `.pressure` [Pa]; phase/direction/position separately on input |
-| Wall state | `state.wall` carries the authoritative wall transport properties, temperature and pressure when thermal iteration evaluates them; it is optional during initialization and absent at hydraulic quadrature nodes |
-| Coherent output | Required positive `alpha_inside`, explicit `f_darcy`, native factor/basis, `reference`, `regime`, provider/correlation/source identifiers; optional `nusselt`, declared applicability, warnings and correction diagnostic |
-| Provider-specific details | Immutable scalar `EnhancementDiagnostic` tuples or defaulted typed fields on a frozen `EnhancementResult` subclass; solver does not interpret Sw, Re variants or private factors |
-| Darcy hydraulic consumption | At each inlet/midpoint/outlet, the same provider supplies `f_darcy` with its own reference velocity and friction diameter; Simpson integration uses its pressure gradient over `hydraulic_length_total` |
-| Thermal correction | The external provider returns its already corrected alpha. Core applies no additional smooth-tube wall or length correction |
-| Selection and failures | Constructor default or direct `rate`/`simulate` configuration; no registry. Unsupported errors propagate and model identity must agree across thermal/hydraulic paths |
-
-The two added geometry fields are optional for independently constructed
-standalone `EnhancementInput` values, preserving existing calls. Exchanger
-adapters always fill them. `base_mass_flux` is `None` when a standalone caller
-omits the base area. Provider-owned blocked area, reference velocities,
-hydraulic diameters and dimensionless groups remain derived by the provider;
-the base inputs do not prescribe its correlation convention.
-
-The 0D availability boundary is explicit: there is no axial wall-temperature
-field and no invented wall state in hydraulics. The future provider must
-handle provisional/missing-wall evaluations according to its verified model
-or reject unsupported states. This is not a promise that an arbitrary model
-requiring a spatially resolved wall solution can be evaluated by a 0D solver.
-Extra private source data and additional property evaluation, if needed,
-belong to the external object and must not depend on private core internals.
-
-`core/tests/external_enhancement_integration_test.py` defines synthetic
-providers entirely in tests and verifies notebook-style selection through
-Rating, both Simulation modes and the Rating-to-Simulation bridge. It checks
-per-tube inputs and two-pass length, authoritative bulk/wall properties,
-an independently specified synthetic wall multiplier applied once, explicit
-Darcy pressure gradients, provenance/typed detail/warning propagation,
-unchanged defaults after overrides/errors, exact explicit-None smooth
-results, and controlled unsupported failure. These fixtures contain no M&B
-equations, paywalled numerical anchors or manufacturer data.
+Existing provider tests continue checking independently calculated public
+equation anchors, Darcy/Fanning normalization, reference geometry, warning
+propagation, no fallback and unchanged smooth/default behavior. Synthetic
+fixtures contain no proprietary physics or runtime dependencies.
 
 ## Source policy and private-model boundary
 
@@ -320,17 +380,14 @@ publications, licensed datasets, proprietary software or manufacturer-confidenti
 information are integrated through external providers. This is a project
 policy; see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-Manglik-Bergles Part I/II are reserved as sources for a future private
-external implementation from legitimately acquired full papers. No Part I/II
-implementation is in this GPL core, and no private package is required to use
-the public model. CALGAVIN/hiTRAN, supplier tables and licensed software may
-use the interface, but no manufacturer physics has been implemented or
-reverse engineered; sharing an interface does not imply shared physics.
+Licensed reference data and software remain outside the public distribution.
+No private package is required to use the public models. Sharing the generic
+interface does not imply shared physics or implementation of an external model.
 
-Synthetic fixtures exist only in `core/tests` to verify dispatch, alpha-only
+Synthetic fixtures in the public test tree verify dispatch, alpha-only
 results, native Fanning factors, independent hydraulic references, typed
-metadata, warnings, Rating and both Simulation modes. They contain no M&B
-or manufacturer correlation. Public-model tests include independently
+metadata, warnings, Rating and both Simulation modes. They contain no
+manufacturer correlation. Public-model tests include independently
 hand-calculated equation anchors, boundary/unsupported cases and end-to-end
 laminar solves; the source's CFD comparison tables are not presented as
 exact anchors for Eqs.21-22.

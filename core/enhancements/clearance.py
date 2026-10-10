@@ -16,6 +16,7 @@ from core.common.warnings import ModelWarning
 from .base import (
     EnhancementDiagnostic, EnhancementInput, EnhancementResult,
     EnhancementUnsupportedError, TwistedTapeGeometry, _positive, _validate_result,
+    _provider_call,
 )
 
 
@@ -130,14 +131,14 @@ def evaluate_with_clearance(configuration, state):
     if provider.mode is ClearanceModelMode.CORRECTION:
         # Only the model may select a nominal base geometry. Core never widens
         # a tape to hide an unsupported finite gap or normalizes a singular fit.
-        base_geometry = provider.base_geometry_for(geometry, state)
+        base_geometry = _provider_call(state, lambda: provider.base_geometry_for(geometry, state))
         if not isinstance(base_geometry, TwistedTapeGeometry):
             raise TypeError("Clearance base geometry must be TwistedTapeGeometry.")
         base_geometry.clearance_for(state.tube_inner_diameter)
-        base = _validate_result(configuration.provider.evaluate(base_geometry, state),
+        base = _validate_result(_provider_call(state, lambda: configuration.provider.evaluate(base_geometry, state)),
                                 configuration.provider.provider_id, state,
                                 getattr(configuration.provider, "thermal_property_reference", "bulk"))
-    model = provider.evaluate(geometry, state, base)
+    model = _provider_call(state, lambda: provider.evaluate(geometry, state, base))
     if not isinstance(model, TwistedTapeClearanceResult) or model.mode is not provider.mode:
         raise TypeError("Clearance result must match the selected provider mode.")
     fields = [
