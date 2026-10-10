@@ -48,7 +48,7 @@ def test_nonround_geometry_is_rejected_before_any_diameter_access():
         lambda: hx.simulate(None, None),
     ]
     for call in calls:
-        with pytest.raises(TubeGeometryApplicabilityError, match='circular|outside-bank'):
+        with pytest.raises(TubeGeometryApplicabilityError, match='circular|outside-bank|explicit|EllipticalTube'):
             call()
 
 

@@ -720,16 +720,18 @@ class BareTubeHeatExchanger:
             selected._enhancement_operation_context = operation_context
         return selected
 
-    def tube_wall_resistance(self) -> float:
-        """Public accessor for the cylindrical tube-wall conduction resistance [K/W].
+    def tube_wall_resistance(self, *, model=None) -> float:
+        """Public accessor for selected tube-wall conduction resistance [K/W].
 
         Exposed so orchestration layers (e.g.
         ``core.heat_transfer.thermal_iteration``) can reuse the existing
         wall-resistance model without duplicating it.
         """
-        return self._tube_wall_resistance()
+        if model is None:
+            return self._tube_wall_resistance()
+        return self._tube_wall_resistance(model=model)
 
-    def _tube_wall_resistance(self) -> float:
+    def _tube_wall_resistance(self, *, model=None) -> float:
         """
         Cylindrical wall conduction resistance (total) [K/W].
 
@@ -738,7 +740,7 @@ class BareTubeHeatExchanger:
         Ref: standard conduction through cylindrical wall (heat transfer textbooks).
         """
         from core.heat_transfer.wall_conduction import tube_wall_resistance
-        return tube_wall_resistance(self.bundle.tube, n_tubes=self.bundle.n_tubes_total)
+        return tube_wall_resistance(self.bundle.tube, n_tubes=self.bundle.n_tubes_total, model=model)
 
     def solve(
         self,
