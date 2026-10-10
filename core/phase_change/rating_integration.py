@@ -797,7 +797,7 @@ def _apply_inside_condensation_to_rating(
         alfa_i_effective = Q_required / (wet_rating_result.final_result.A_i * delta_T_film)
     R_i = 1.0 / (alfa_i_effective * wet_rating_result.final_result.A_i)
     R_o = 1.0 / (wet_rating_result.alfa_o * wet_rating_result.A_o)
-    UA_effective = 1.0 / (R_i + hx.tube_wall_resistance() + R_o)
+    UA_effective = 1.0 / (R_i + hx.resistance_fouling_inside + hx.tube_wall_resistance() + R_o)
     U_effective = UA_effective / wet_rating_result.A_o
     wet_thermal_state = replace(
         wet_rating_result.thermal_state,

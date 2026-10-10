@@ -35,7 +35,13 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.7.9)
+## Current Capabilities (v0.8.7)
+
+- Independent inside/outside thermal fouling resistances [m² K/W] on the
+  exchanger, with omitted/`None` values resolving to zero. Rating and
+  Simulation include them in the solved dry/wet thermal circuit, including
+  finned and tube-side phase-change paths. Installed hydraulic geometry
+  remains unchanged; see [thermal fouling](docs/thermal_fouling.md).
 
 - Rating and Simulation expose a common surface-margin result contract:
   `UA_actual` is the full actual exchanger UA, `UA_process` is the UA required
@@ -218,8 +224,9 @@ For the tube-side enhancement API, including public Yang2020 and Rossi2017
 twisted-tape models, the released Inaba1994 wire-coil model, and external
 providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version is v0.8.6. Its principal change is the
-[BareTube wet numerical performance improvement](docs/wet_numerical_performance.md).
+The current package version is v0.8.7. Its principal change is
+[thermal fouling resistance support](docs/thermal_fouling.md), retaining the
+[BareTube wet numerical performance improvements](docs/wet_numerical_performance.md).
 Smooth laminar flow with a supplied
 heated length now includes [thermal development](docs/internal_laminar_thermal_development.md).
 

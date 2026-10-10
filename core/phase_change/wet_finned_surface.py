@@ -456,6 +456,7 @@ def solve_wet_finned_surface(
                 "resistance_inside", "resistance_core_wall", "resistance_root",
                 "resistance_contact", "resistance_outside_branches",
                 "resistance_outside", "resistance_total",
+                "resistance_fouling_inside", "resistance_fouling_outside",
             )},
         })
 
@@ -500,8 +501,12 @@ def solve_wet_finned_surface(
     T_core = temperatures[core_index]
     T_root = temperatures[root_index]
     T_primary = temperatures[primary_index]
-    R_downstream = network.resistance_inside + network.resistance_core_wall
+    R_downstream = (network.resistance_inside + network.resistance_core_wall
+                    + network.resistance_fouling_outside)
     Q_downstream = (T_core - inside_bulk_temperature) / R_downstream
+    # The radial chain starts after the common lumped outside fouling.
+    # Recover the metal core node for the public wall diagnostics/HTC basis.
+    T_core -= Q_downstream * network.resistance_fouling_outside
 
     primary_transfer = evaluation.transfers[primary_index]
     primary_area = network.area_primary_outside
@@ -836,7 +841,8 @@ def _build_bundle_chain(
 
     boundaries = [0.0] * count
     boundary_temperatures = [0.0] * count
-    R_downstream = network.resistance_inside + network.resistance_core_wall
+    R_downstream = (network.resistance_inside + network.resistance_core_wall
+                    + network.resistance_fouling_outside)
     if not math.isfinite(R_downstream) or R_downstream <= 0.0:
         raise ValueError("Inside-film plus core-wall resistance must be positive.")
     boundaries[core_index] = 1.0 / R_downstream

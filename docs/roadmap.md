@@ -35,14 +35,15 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.6`
+**Current version:** `v0.8.7`
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change balance and source-profile wet-coil approximation,
 tube-bank hydraulic balance,
 local nozzle/chamber/tube-sheet/return losses, unified surface-margin reporting,
 alternating staggered-row tube counts, tube-side enhancement providers and
-smooth laminar thermal development. Active wet-finned pressure drop
+smooth laminar thermal development and independent inside/outside thermal
+fouling resistances. Active wet-finned pressure drop
 and distributed thermal resolution remain future work.
 
 ---
@@ -234,6 +235,22 @@ Release-candidate validation passed all 1487 public tests and 17 required
 engineering cases in seven notebook representatives. Publication awaits
 user release review; model applicability and wet pressure-drop limits remain
 as documented.
+
+---
+
+### v0.8.7 — Thermal Fouling Resistance
+
+**Delivered scope:**
+
+- independent inside/outside area-specific thermal fouling resistance inputs;
+- dry and wet Rating/Simulation, bare and circular-finned thermal circuits,
+  Legacy wet Simulation and tube-side condensation/evaporation support;
+- explicit resistance and area-basis diagnostics, with installed geometry
+  retained for heat-transfer correlations and hydraulics.
+
+Missing, `None` and zero inputs retain the clean thermal circuit. Deposit
+growth, roughness changes and hydraulic blockage remain outside this model.
+See [thermal fouling conventions](thermal_fouling.md).
 
 ---
 

@@ -714,3 +714,13 @@ freezing, acid dew point, multiple condensables, flow maldistribution,
 condensate-film resistance, retention, flooding, bridging, re-evaporation,
 carryover/re-entrainment, explicit drainage geometry or wet pressure-drop
 correction. At most one exchanger side may have active phase change.
+
+## Thermal fouling in v0.8.7
+
+`BareTubeHeatExchanger` accepts independent inside/outside thermal fouling
+resistances [m² K/W], defaulting to zero for omitted or `None` inputs.
+Outside fouling uses the authoritative gross finned thermal area as a lumped
+series term before the existing root/contact/fin circuit. Installed geometry,
+physical film HTC and hydraulics retain their definitions. Both dry and wet
+thermal solutions include the term; see [thermal fouling](thermal_fouling.md)
+for area conversion, surface-state and reporting conventions.

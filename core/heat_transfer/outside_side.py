@@ -99,13 +99,15 @@ def evaluate_outside_side(
         finned_pressure_drop_provider=finned_pressure_drop_provider,
     )
     # The effective outside coefficient depends only on the physical film
-    # coefficient and the declared fin topology.  The reference inside film
+    # coefficient, declared fin topology and gross-area outside fouling.
+    # The reference inside film
     # and zero core-wall resistance do not influence this outside-only term.
     reference_network = calculate_resistance_network(
         bundle=hx.bundle,
         alpha_inside=1.0,
         outside_alpha_physical=thermal.alpha_physical,
         resistance_core_wall=0.0,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     warnings = _deduplicate((*thermal.warnings, *hydraulics.warnings))
     return OutsideSideEvaluation(

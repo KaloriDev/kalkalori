@@ -183,6 +183,14 @@ def dispatch_wet_coil(hx, inside, outside, *, mode, settings,
 def _attach_provider_diagnostics(result, provider):
     """Also cover the adapter's cached Rating-to-Simulation report."""
     diagnostics = dict(result.wet_coil_diagnostics or {})
+    # Applied exchanger parameters also accompany Legacy/custom provider
+    # reports. Preserve Elmahdy's process-area resistance decomposition.
+    snapshot = getattr(result, "final_result", None)
+    if snapshot is not None:
+        for name in ("fouling_resistance_inside", "fouling_resistance_outside"):
+            diagnostics.setdefault(name, getattr(snapshot, name))
+        for name in ("resistance_fouling_inside", "resistance_fouling_outside"):
+            diagnostics.setdefault(name, getattr(snapshot, name))
     diagnostics["global_wet_model"] = provider.model_id
     diagnostics["provider"] = dict(
         model_id=provider.model_id, model_name=provider.model_name,

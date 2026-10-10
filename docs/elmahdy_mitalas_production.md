@@ -41,7 +41,10 @@ enthalpy differences are used where available, otherwise a cp integral supplies
 the sensible enthalpy rise. Mean liquid capacity is iterated against that rise.
 The internal-flow HTC dispatch and exact cylindrical core-wall resistance are
 used. No source water correlation or 5e-5 m2 K/W fouling constant is introduced.
-Production fouling is zero. Unsupported phase / cocurrent inputs fail explicitly.
+Default production fouling is zero. Since v0.8.7, the exchanger's optional
+inside/outside fouling resistances [m² K/W] enter the solved surface-to-liquid
+circuit; see [thermal fouling](thermal_fouling.md). Unsupported phase /
+cocurrent inputs fail explicitly.
 
 ## Source-profile moisture and drain equations
 

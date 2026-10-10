@@ -5,6 +5,26 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.8.7] — Thermal fouling resistance
+
+- Added independent optional `fouling_resistance_inside` and
+  `fouling_resistance_outside` exchanger inputs [m² K/W]. Omitted, `None`
+  and zero values retain the clean circuit; negative and nonfinite values fail.
+- Included area-converted fouling in dry Rating/Simulation and the solved
+  Elmahdy wet surface circuit, influencing condensation and outlet states.
+  Preserved optimized BareTube numerics, strict closure and native fallback.
+- Supported the gross-area lumped finned thermal path, Legacy wet Simulation
+  and tube-side condensation/evaporation resistance stacks. Installed geometry
+  and hydraulics remain unchanged; this does not model deposit growth or blockage.
+- Added focused area-basis, zero-freeze, hydraulic, dry/wet Rating/Simulation,
+  Legacy, finned and tube-side phase-change regressions. See
+  [thermal fouling conventions](docs/thermal_fouling.md).
+- Local `.kon` case configuration now defines `fouling_resistance` [m² K/W]
+  independently within each case's `inside` and `outside` dictionaries.
+  The shared builders, notebook templates and reporting use the selected
+  case values without modifying reusable stage geometry. Private notebooks
+  and configuration helpers remain outside the package distribution.
+
 ## [0.8.6] — BareTube wet numerical performance
 
 - Substantially improved Elmahdy BareTube wet Simulation/Rating performance

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import math
+from core.heat_transfer.fouling import normalize_fouling_resistance
 from typing import TYPE_CHECKING, Any
 
 from core.common.warnings import ModelWarning
@@ -156,6 +157,10 @@ class ThermalResistanceNetwork:
     UA: float
     U_gross_outside: float
     fin_efficiency_result: FinEfficiencyResult | None = None
+    fouling_resistance_inside: float = 0.0
+    fouling_resistance_outside: float = 0.0
+    resistance_fouling_inside: float = 0.0
+    resistance_fouling_outside: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -237,6 +242,10 @@ class FinnedTubeDiagnostics:
     # are not a scalar reduction of latent transfer; public process U/UA are
     # reported separately using the explicitly marked equivalent convention.
     thermal_reporting_basis: str = "thermal_resistance"
+    fouling_resistance_inside: float = 0.0
+    fouling_resistance_outside: float = 0.0
+    resistance_fouling_inside: float = 0.0
+    resistance_fouling_outside: float = 0.0
 
     @property
     def alpha(self) -> float:
@@ -567,6 +576,8 @@ def calculate_resistance_network(
     alpha_inside: float,
     outside_alpha_physical: float,
     resistance_core_wall: float,
+    fouling_resistance_inside: float | None = None,
+    fouling_resistance_outside: float | None = None,
 ) -> ThermalResistanceNetwork:
     """Build core terms and the full topology-correct outside resistance.
 
@@ -576,6 +587,11 @@ def calculate_resistance_network(
     continuous root layer it consequently includes the common root/contact
     series terms; ``resistance_outside_branches`` exposes only the downstream
     primary/fin parallel branch component for auditability.
+
+    Fouling inputs are area-specific [m² K/W], on the inner/gross outer
+    areas respectively. ``resistance_inside`` includes inside fouling;
+    ``resistance_outside`` includes common lumped outside fouling before
+    the root/contact/fin path. Explicit fouling contributions are [K/W].
     """
 
     for name, value in (
@@ -591,6 +607,10 @@ def calculate_resistance_network(
     area_i = bundle.total_inner_area
     area_gross = bundle.total_outer_area
     resistance_i = 1.0 / (alpha_inside * area_i)
+    fouling_i = normalize_fouling_resistance(fouling_resistance_inside, "fouling_resistance_inside")
+    fouling_o = normalize_fouling_resistance(fouling_resistance_outside, "fouling_resistance_outside")
+    resistance_fi, resistance_fo = fouling_i / area_i, fouling_o / area_gross
+    resistance_i += resistance_fi
     fin_result: FinEfficiencyResult | None = None
 
     if surface is TubeSurfaceType.PLAIN:
@@ -700,6 +720,12 @@ def calculate_resistance_network(
         outside_alpha_effective_gross = 1.0 / (
             resistance_outside * area_gross
         )
+    # Lumped outside fouling uses the authoritative gross area, before the
+    # existing root/contact/fin branches. Fin geometry and physical HTC stay
+    # unchanged; the generic outside HTC reconstructs the complete path.
+    if resistance_fo:
+        resistance_outside += resistance_fo
+        outside_alpha_effective_gross = 1.0 / (resistance_outside * area_gross)
     if not math.isfinite(resistance_outside) or resistance_outside <= 0.0:
         raise ValueError("Invalid outside thermal resistance.")
     if (
@@ -728,6 +754,10 @@ def calculate_resistance_network(
         outside_alpha_physical=outside_alpha_physical,
         outside_alpha_effective_gross=outside_alpha_effective_gross,
         resistance_inside=resistance_i,
+        fouling_resistance_inside=fouling_i,
+        fouling_resistance_outside=fouling_o,
+        resistance_fouling_inside=resistance_fi,
+        resistance_fouling_outside=resistance_fo,
         resistance_core_wall=resistance_core_wall,
         resistance_root=resistance_root,
         contact_input_mode=contact_input_mode,
@@ -781,6 +811,10 @@ def build_finned_tube_diagnostics(
         outside_alpha_physical=network.outside_alpha_physical,
         outside_alpha_effective_gross=network.outside_alpha_effective_gross,
         resistance_inside=network.resistance_inside,
+        fouling_resistance_inside=network.fouling_resistance_inside,
+        fouling_resistance_outside=network.fouling_resistance_outside,
+        resistance_fouling_inside=network.resistance_fouling_inside,
+        resistance_fouling_outside=network.resistance_fouling_outside,
         resistance_core_wall=network.resistance_core_wall,
         resistance_root=network.resistance_root,
         contact_input_mode=network.contact_input_mode,

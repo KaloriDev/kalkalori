@@ -1091,6 +1091,8 @@ def _water_steam_diagnostics(
         alpha_inside=solution.inside_alpha_equivalent,
         outside_alpha_physical=outside_evaluation.alpha_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
     )
     thermal_state, envelope = _water_steam_wall_diagnostics(
         hx,
@@ -1115,6 +1117,10 @@ def _water_steam_diagnostics(
         ),
     )
     final_result = HXResult(
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
+        resistance_fouling_inside=hx.resistance_fouling_inside,
+        resistance_fouling_outside=hx.resistance_fouling_outside,
         A_i=hx.bundle.total_inner_area,
         A_o=hx.bundle.total_outer_area,
         A_frontal=hx.bundle.frontal_flow_area,
@@ -1177,7 +1183,8 @@ def _water_steam_wall_diagnostics(
 
     def probe(T_i: float, T_o: float) -> WallTemperatureProbe:
         heat_flux = solution.U_equivalent * (T_i - T_o)
-        T_wall_i = T_i - heat_flux * area_ratio / solution.inside_alpha_equivalent
+        T_wall_i = T_i - heat_flux * area_ratio * (
+            1.0 / solution.inside_alpha_equivalent + hx.fouling_resistance_inside)
         T_wall_o = T_o + heat_flux / solution.outside_alpha
         heat_rate_probe = heat_flux * hx.bundle.total_outer_area
         inside_nusselt = (
