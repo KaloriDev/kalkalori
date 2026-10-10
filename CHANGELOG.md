@@ -19,6 +19,11 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added focused area-basis, zero-freeze, hydraulic, dry/wet Rating/Simulation,
   Legacy, finned and tube-side phase-change regressions. See
   [thermal fouling conventions](docs/thermal_fouling.md).
+- Local `.kon` case configuration now defines `fouling_resistance` [m² K/W]
+  independently within each case's `inside` and `outside` dictionaries.
+  The shared builders, notebook templates and reporting use the selected
+  case values without modifying reusable stage geometry. Private notebooks
+  and configuration helpers remain outside the package distribution.
 
 ## [0.8.6] — BareTube wet numerical performance
 
