@@ -47,6 +47,17 @@ def _odd_even_row_counts(n_rows: int) -> tuple[int, int]:
     return math.ceil(n_rows / 2), math.floor(n_rows / 2)
 
 
+class RowParityMode(str, Enum):
+    """Physical alternating-row numbering, independent of thermal mixing.
+
+    RESET preserves repeated section modules (and the legacy global fallback
+    when rows do not divide exactly). CONTINUOUS numbers the whole bank.
+    """
+
+    CONTINUOUS = "continuous"
+    RESET = "reset"
+
+
 class TubePathType(str, Enum):
     """How successive tube passes are physically connected (v0.5.6).
 
@@ -98,9 +109,9 @@ class TubeBundle:
           ``n_tubes_per_row_even = floor(n_tubes_per_row)``. Example:
           ``n_tubes_per_row=6.5`` describes a real bank alternating
           ``7 / 6 / 7 / 6 / ...`` tubes per row. When the bank has multiple
-          *exact* longitudinal sections, this alternation restarts at
-          "odd" for every section (see ``n_tubes_total``, v0.7.10
-          follow-up) rather than continuing globally.
+          *exact* longitudinal sections, ``row_parity_mode="reset"``
+          restarts at "odd" for every section. ``"continuous"`` numbers
+          rows globally, independently of thermal-section boundaries.
 
         A legacy integer input (e.g. ``n_tubes_per_row=8``) is unaffected by
         this: it normalizes to itself and ``odd == even == 8``, preserving
@@ -134,6 +145,11 @@ class TubeBundle:
         longitudinal sections: all tube-side passes are treated as
         belonging to one effective longitudinal section, which preserves
         every pre-v0.7.3 bundle's interpretation and numerical results.
+    row_parity_mode : RowParityMode | str
+        Physical alternating-row numbering: ``"reset"`` (default) preserves
+        repeated section modules and the legacy global fallback for nonexact
+        row partitions; ``"continuous"`` numbers the entire bank globally.
+        This is a geometry choice, not an inter-section mixing assumption.
 
     Notes
     -----
@@ -159,7 +175,7 @@ class TubeBundle:
     - ``n_tubes_total`` (v0.7.10) is the exact integer tube count, computed
       from the alternating odd/even row pattern -- not
       ``n_rows * n_tubes_per_row``. When rows partition exactly between
-      longitudinal sections, the odd/even pattern resets per section
+      longitudinal sections in RESET mode, the odd/even pattern resets per section
       (v0.7.10 follow-up: each exact section is a repeated physical
       module); otherwise it falls back to a global-row approximation
       across the whole bundle (see ``alternating_rows_nonexact_section_
@@ -177,11 +193,16 @@ class TubeBundle:
     flow_arrangement: str = "auto"
     tube_path_type: TubePathType = TubePathType.STRAIGHT
     n_passes_transverse: int | None = None
+    row_parity_mode: RowParityMode = RowParityMode.RESET
     _tube_count_normalization_warning: ModelWarning | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
+        try:
+            object.__setattr__(self, "row_parity_mode", RowParityMode(self.row_parity_mode))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("row_parity_mode must be 'continuous' or 'reset'.") from exc
         if self.n_rows <= 0:
             raise ValueError("n_rows must be a positive integer.")
         if not math.isfinite(self.n_tubes_per_row) or self.n_tubes_per_row <= 0.0:
@@ -312,7 +333,7 @@ class TubeBundle:
 
         Longitudinal sections (v0.7.10 follow-up)
         ------------------------------------------
-        When rows partition exactly between longitudinal sections
+        In RESET mode, when rows partition exactly between longitudinal sections
         (``rows_partition_is_exact``), each section is treated as a
         repeated physical module of the bank: odd/even row parity resets to
         "odd" at the start of every section, rather than continuing
@@ -329,7 +350,7 @@ class TubeBundle:
         effective approximation across the whole bundle (see
         ``alternating_rows_nonexact_section_warnings``).
         """
-        if self.rows_partition_is_exact:
+        if self.row_parity_mode == RowParityMode.RESET and self.rows_partition_is_exact:
             rows_per_section = self.n_rows // self.n_sections_longitudinal
             n_odd_rows, n_even_rows = _odd_even_row_counts(rows_per_section)
             tubes_per_section = (
