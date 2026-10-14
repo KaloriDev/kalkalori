@@ -167,6 +167,8 @@ def dispatch_wet_coil(hx, inside, outside, *, mode, settings,
         if not provider.is_applicable(hx, inside, outside, settings=settings, **options):
             raise WetCoilProviderUnsupportedError(
                 f"Wet provider {provider.model_id} is not applicable: {provider.applicability}")
+    from core.geometry._thermal_topology import reject_phase_change_topology
+    reject_phase_change_topology(hx.bundle, options.get("flow_arrangement"))
     budget = _solve_budget(options.pop("wet_solver_options", None))
     budget.used = True
     budget.check()

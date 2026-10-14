@@ -35,7 +35,7 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.0)
+## Current Capabilities (v0.9.1)
 
 - Smooth mathematical `EllipticalTube` geometry with exact perimeter and
   hydraulic diameter, explicit fully developed laminar Darcy friction and H1
@@ -103,7 +103,8 @@ and serialization**, enabling both open collaboration and commercial adoption.
 - Thermal analysis using ε–NTU method:
   - counterflow
   - cocurrentflow
-  - crossflow (both sides mixed, lumped 0D)
+  - crossflow (outside mixed, inside unmixed)
+  - topology-aware AUTO: equal-UA countercurrent series of crossflow sections
 - Three-state variable-property tube-side pressure change:
   - distributed straight-tube friction
   - signed acceleration pressure change
@@ -145,10 +146,26 @@ With the default `flow_arrangement="auto"`, a single longitudinal section
 resolves to global `crossflow`, and one transverse pass per section with more
 than one tube-side pass resolves to global `counterflow`. Intermediate
 circuits containing both multiple transverse passes and multiple longitudinal
-sections also resolve to global `crossflow`; this is a global/lumped 0D
-crossflow approximation, not section-wise thermal coupling or a segmented/
-distributed model. An explicit `crossflow`, `counterflow` or `cocurrentflow`
-value always overrides AUTO resolution.
+sections use an internal N-section counter-crossflow model: each section has
+`UA_total/N`, outside mixed / inside unmixed crossflow, and complete mixing
+between sections. This restricted dry model retains full serial capacity
+rates and countercurrent section coupling. An explicit `crossflow`,
+`counterflow` or `cocurrentflow` value, including a method-level override,
+always overrides AUTO resolution. No additional public arrangement string is
+needed. The compatibility `flow_arrangement_resolved` label stays `crossflow`
+for this branch; dry results expose the actual `thermal_topology_model`,
+`n_thermal_sections`, and `inter_section_mixing`.
+
+`row_parity_mode="reset"` (default) preserves repeated physical row modules
+at exact section boundaries and the legacy global fallback for nonexact row
+partitions. `"continuous"` numbers alternating rows across the whole bank,
+independently of thermal boundaries. For 6 rows in two 3-row modules with
+10/9 tubes per row, reset gives 58 tubes and continuous gives 57. Areas and
+tube-side flow geometry use that physical count; transverse frontal geometry
+retains its periodic row average.
+
+See [the thermal topology guide](docs/thermal_topology.md) for equations,
+public provenance, reachability limits, diagnostics and dry-only scope.
 
 ---
 

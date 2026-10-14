@@ -19,7 +19,7 @@ from .finned_tube import (
 )
 from .elliptical_tube import EllipticalTube
 from .applicability import TubeGeometryApplicabilityError
-from .bundle import TubeBundle, TubePathType
+from .bundle import TubeBundle, TubePathType, RowParityMode
 
 from .pressure_drop_stages import (
     FlowSectionShape,
@@ -62,6 +62,7 @@ __all__ = [
     "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
     "TubeBundle",
     "TubePathType",
+    "RowParityMode",
 
     # Common pressure-drop stage geometry
     "FlowSectionShape",

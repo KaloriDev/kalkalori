@@ -47,6 +47,17 @@ def _odd_even_row_counts(n_rows: int) -> tuple[int, int]:
     return math.ceil(n_rows / 2), math.floor(n_rows / 2)
 
 
+class RowParityMode(str, Enum):
+    """Physical alternating-row numbering, independent of thermal mixing.
+
+    RESET preserves repeated section modules (and the legacy global fallback
+    when rows do not divide exactly). CONTINUOUS numbers the whole bank.
+    """
+
+    CONTINUOUS = "continuous"
+    RESET = "reset"
+
+
 class TubePathType(str, Enum):
     """How successive tube passes are physically connected (v0.5.6).
 
@@ -98,9 +109,9 @@ class TubeBundle:
           ``n_tubes_per_row_even = floor(n_tubes_per_row)``. Example:
           ``n_tubes_per_row=6.5`` describes a real bank alternating
           ``7 / 6 / 7 / 6 / ...`` tubes per row. When the bank has multiple
-          *exact* longitudinal sections, this alternation restarts at
-          "odd" for every section (see ``n_tubes_total``, v0.7.10
-          follow-up) rather than continuing globally.
+          *exact* longitudinal sections, ``row_parity_mode="reset"``
+          restarts at "odd" for every section. ``"continuous"`` numbers
+          rows globally, independently of thermal-section boundaries.
 
         A legacy integer input (e.g. ``n_tubes_per_row=8``) is unaffected by
         this: it normalizes to itself and ``odd == even == 8``, preserving
@@ -134,6 +145,11 @@ class TubeBundle:
         longitudinal sections: all tube-side passes are treated as
         belonging to one effective longitudinal section, which preserves
         every pre-v0.7.3 bundle's interpretation and numerical results.
+    row_parity_mode : RowParityMode | str
+        Physical alternating-row numbering: ``"reset"`` (default) preserves
+        repeated section modules and the legacy global fallback for nonexact
+        row partitions; ``"continuous"`` numbers the entire bank globally.
+        This is a geometry choice, not an inter-section mixing assumption.
 
     Notes
     -----
@@ -146,20 +162,20 @@ class TubeBundle:
       number, heat-transfer coefficient, and pressure drop. Individual real
       passes may contain slightly different integer tube counts; an explicit
       circuit/pass map remains future scope.
-    - ``n_passes_transverse`` describes circuit topology only (how the total
+    - ``n_passes_transverse`` describes circuit topology (how the total
       tube-side passes are grouped into longitudinal sections of the outside
-      tube bank). It does not alter total heat-transfer area or outside-flow
-      geometry. Row counts need not divide evenly between sections; the 0D
+      tube bank). RESET row numbering can change tube count when section
+      boundaries change; CONTINUOUS counts remain independent. Row counts
+      need not divide evenly between sections; the 0D
       model uses the effective average ``n_rows / n_sections_longitudinal``.
     - ``flow_arrangement="auto"`` maps a single longitudinal section to
       crossflow and multiple single-transverse-pass sections to counterflow.
-      Intermediate multi-pass/multi-section circuits use a global/lumped 0D
-      crossflow approximation; section-wise coupling remains future
-      segmented/distributed-model scope.
+      Intermediate multi-pass/multi-section circuits use equal-UA crossflow
+      sections in countercurrent series, with complete mixing between sections.
     - ``n_tubes_total`` (v0.7.10) is the exact integer tube count, computed
       from the alternating odd/even row pattern -- not
       ``n_rows * n_tubes_per_row``. When rows partition exactly between
-      longitudinal sections, the odd/even pattern resets per section
+      longitudinal sections in RESET mode, the odd/even pattern resets per section
       (v0.7.10 follow-up: each exact section is a repeated physical
       module); otherwise it falls back to a global-row approximation
       across the whole bundle (see ``alternating_rows_nonexact_section_
@@ -177,12 +193,17 @@ class TubeBundle:
     flow_arrangement: str = "auto"
     tube_path_type: TubePathType = TubePathType.STRAIGHT
     n_passes_transverse: int | None = None
+    row_parity_mode: RowParityMode = RowParityMode.RESET
     _tube_count_normalization_warning: ModelWarning | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        if self.n_rows <= 0:
+        try:
+            object.__setattr__(self, "row_parity_mode", RowParityMode(self.row_parity_mode))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("row_parity_mode must be 'continuous' or 'reset'.") from exc
+        if isinstance(self.n_rows, bool) or not isinstance(self.n_rows, int) or self.n_rows <= 0:
             raise ValueError("n_rows must be a positive integer.")
         if not math.isfinite(self.n_tubes_per_row) or self.n_tubes_per_row <= 0.0:
             raise ValueError("n_tubes_per_row must be positive and finite.")
@@ -195,7 +216,7 @@ class TubeBundle:
             raise ValueError(
                 "pitch_transverse and pitch_longitudinal must be positive and finite."
             )
-        if self.n_passes_tube <= 0:
+        if isinstance(self.n_passes_tube, bool) or not isinstance(self.n_passes_tube, int) or self.n_passes_tube <= 0:
             raise ValueError("n_passes_tube must be a positive integer.")
         if self.layout.lower() not in ("inline", "staggered"):
             raise ValueError("layout must be 'inline' or 'staggered'.")
@@ -220,7 +241,7 @@ class TubeBundle:
             )
 
         if self.n_passes_transverse is not None:
-            if self.n_passes_transverse <= 0:
+            if isinstance(self.n_passes_transverse, bool) or not isinstance(self.n_passes_transverse, int) or self.n_passes_transverse <= 0:
                 raise ValueError("n_passes_transverse must be a positive integer.")
             if self.n_passes_transverse > self.n_passes_tube:
                 raise ValueError(
@@ -312,7 +333,7 @@ class TubeBundle:
 
         Longitudinal sections (v0.7.10 follow-up)
         ------------------------------------------
-        When rows partition exactly between longitudinal sections
+        In RESET mode, when rows partition exactly between longitudinal sections
         (``rows_partition_is_exact``), each section is treated as a
         repeated physical module of the bank: odd/even row parity resets to
         "odd" at the start of every section, rather than continuing
@@ -329,7 +350,7 @@ class TubeBundle:
         effective approximation across the whole bundle (see
         ``alternating_rows_nonexact_section_warnings``).
         """
-        if self.rows_partition_is_exact:
+        if self.row_parity_mode == RowParityMode.RESET and self.rows_partition_is_exact:
             rows_per_section = self.n_rows // self.n_sections_longitudinal
             n_odd_rows, n_even_rows = _odd_even_row_counts(rows_per_section)
             tubes_per_section = (
@@ -409,12 +430,13 @@ class TubeBundle:
 
     @property
     def flow_arrangement_resolved(self) -> str:
-        """Resolve the global 0D flow arrangement from circuit topology.
+        """Compatibility arrangement label (local crossflow for sectioned AUTO).
 
         Explicit arrangements always win. AUTO maps one longitudinal section
         to crossflow, multiple sections with one transverse pass each to
         counterflow, and intermediate multi-pass/multi-section circuits to a
-        global/lumped 0D crossflow approximation.
+        countercurrent series of crossflow cells. Dry solvers use
+        ``thermal_topology_resolved`` to retain that section coupling.
         """
         arrangement = self.flow_arrangement.lower()
         if arrangement != "auto":
@@ -424,6 +446,12 @@ class TubeBundle:
         if self.n_passes_transverse_resolved == 1:
             return "counterflow"
         return "crossflow"
+
+    @property
+    def thermal_topology_resolved(self):
+        """Canonical dry law, including the internal sectioned AUTO descriptor."""
+        from core.geometry._thermal_topology import resolve_thermal_topology
+        return resolve_thermal_topology(self)
 
     @property
     def topology_warnings(self) -> tuple[ModelWarning, ...]:
@@ -437,10 +465,10 @@ class TubeBundle:
                     code="FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION",
                     message=(
                         "TubeBundle circuit contains multiple transverse passes "
-                        "and multiple longitudinal sections; the current 0D "
-                        "model uses a global/lumped 0D crossflow approximation. "
-                        "Exact section-wise coupling requires a future segmented/"
-                        "distributed model."
+                        "and multiple longitudinal sections; the dry model uses "
+                        "equal-UA crossflow sections in countercurrent series, "
+                        "with complete inter-section mixing. Unequal section UA "
+                        "and exact circuit maps require a future distributed model."
                     ),
                     source="tube_bundle_geometry",
                     severity="warning",

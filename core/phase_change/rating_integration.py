@@ -15,6 +15,7 @@ from core.heat_transfer.internal_dispatch import straight_friction_evaluator
 
 import math
 from dataclasses import replace
+from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.outside_dispatch import DEFAULT_FINNED_DP_PROVIDER, DEFAULT_FINNED_HT_PROVIDER
@@ -387,6 +388,10 @@ def apply_phase_change_to_rating(
     # Rating has no iterate=False escape hatch, so the guard in
     # check_single_active_side never fires here (iterate=True always).
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=True)
+
+    if inside_auto_possible or outside_auto_possible:
+        from core.geometry._thermal_topology import reject_phase_change_topology
+        reject_phase_change_topology(hx.bundle, flow_arrangement)
 
     if inside_auto_possible:
         return _apply_inside_condensation_to_rating(
@@ -907,6 +912,7 @@ def _apply_inside_condensation_to_rating(
     )
     return replace(
         wet_rating_result,
+        **NO_DRY_TOPOLOGY_DIAGNOSTICS,
         overdesign_factor=surface_margin_factor,
         ua_margin=surface_margin_factor,
         A_required=A_required,

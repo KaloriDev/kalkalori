@@ -29,6 +29,9 @@ def equivalent_wet_process(
     both secant capacities. Reject that degenerate reporting state explicitly;
     do not invent a small temperature difference or a conductance.
     """
+    from core.geometry._thermal_topology import CounterCrossflowTopology
+    if isinstance(flow_arrangement, CounterCrossflowTopology):
+        raise ValueError("Dry N-section counter-crossflow is unsupported for wet equivalent reporting.")
     if not all(isfinite(v) for v in (heat, hot_in, hot_out, cold_in, cold_out)):
         raise ValueError("Wet equivalent process requires finite solved states")
     dh, dc, span = hot_in - hot_out, cold_out - cold_in, hot_in - cold_in

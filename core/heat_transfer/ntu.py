@@ -65,6 +65,20 @@ from __future__ import annotations
 
 import math
 from core.heat_transfer.streams import EnergyStream
+from core.geometry._thermal_topology import CounterCrossflowTopology
+from core.heat_transfer.counter_crossflow import (
+    effectiveness_counter_crossflow, ntu_counter_crossflow,
+)
+
+
+def _topology_capacity_ratio(C_hot, C_cold, C_inside, C_outside):
+    rates = (C_hot, C_cold, C_inside, C_outside)
+    if any(c is None or not math.isfinite(c) or c <= 0 for c in rates):
+        raise ValueError("Counter-crossflow requires finite positive hot/cold and inside/outside capacity rates.")
+    if not all(math.isclose(a, b, rel_tol=1e-9) for a, b in zip(
+            sorted((C_hot, C_cold)), sorted((C_inside, C_outside)))):
+        raise ValueError("Physical inside/outside capacity rates must match hot/cold rates.")
+    return min(C_hot, C_cold)/max(C_hot, C_cold)
 
 
 # Below this Cr, both crossflow branches converge to the same Cr->0 limit
@@ -107,6 +121,14 @@ def effectiveness_ntu(
         "counterflow"/"cocurrentflow" (those formulas depend only on
         C_min/C_max, not on which physical side is which).
     """
+
+    if isinstance(flow_arrangement, CounterCrossflowTopology):
+        cr = _topology_capacity_ratio(C_hot, C_cold, C_inside, C_outside)
+        if flow_arrangement.n_sections != 1:
+            return effectiveness_counter_crossflow(
+                UA/min(C_hot, C_cold), cr, flow_arrangement.n_sections,
+                outside_is_cmin=C_outside <= C_inside)
+        flow_arrangement = "crossflow"  # N=1 preserves legacy evaluation exactly.
 
     if C_hot <= 0.0 or C_cold <= 0.0:
         raise ValueError("C_hot and C_cold must be positive.")
@@ -221,6 +243,14 @@ def ntu_from_effectiveness(
             is at or above the thermodynamic maximum achievable by the given
             flow arrangement (unreachable regardless of area).
     """
+    if isinstance(flow_arrangement, CounterCrossflowTopology):
+        cr = _topology_capacity_ratio(C_hot, C_cold, C_inside, C_outside)
+        if flow_arrangement.n_sections != 1:
+            return ntu_counter_crossflow(
+                effectiveness, cr, flow_arrangement.n_sections,
+                outside_is_cmin=C_outside <= C_inside)
+        flow_arrangement = "crossflow"
+
     if C_hot <= 0.0 or C_cold <= 0.0:
         raise ValueError("C_hot and C_cold must be positive.")
     if not (0.0 <= effectiveness < 1.0):

@@ -421,6 +421,11 @@ class HXResult:
     fouling_resistance_outside: float = 0.0  # [m² K/W], gross outer area
     resistance_fouling_inside: float = 0.0  # [K/W], installed geometry
     resistance_fouling_outside: float = 0.0  # [K/W], installed geometry
+    thermal_topology_model: str | None = None
+    n_thermal_sections: int | None = None
+    inter_section_mixing: str | None = None
+    LMTD_countercurrent: float | None = None
+    F_equivalent: float | None = None
 
     @property
     def tube_surface_type(self) -> TubeSurfaceType:
@@ -792,8 +797,8 @@ class BareTubeHeatExchanger:
         topology_warnings = (
             self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
         )
-        if uses_bundle_flow_arrangement:
-            flow_arrangement = self.bundle.flow_arrangement_resolved
+        from core.geometry._thermal_topology import resolve_thermal_topology
+        flow_arrangement = resolve_thermal_topology(self.bundle, flow_arrangement)
 
         if m_dot_tube_side <= 0.0:
             raise ValueError("m_dot_tube_side must be positive.")
@@ -1212,7 +1217,12 @@ class BareTubeHeatExchanger:
                 geometry_warnings=geometry_warnings,
             )
 
+        from core.heat_transfer.topology_reporting import dry_topology_diagnostics
+        topology_diagnostics = dry_topology_diagnostics(flow_arrangement,
+            hot_stream.inlet_temperature(), cold_stream.inlet_temperature(),
+            T_hot_out, T_cold_out, abs(Q)/UA)
         return HXResult(
+            **topology_diagnostics,
             A_i=A_i,
             A_o=A_o,
             A_frontal=A_frontal,
@@ -1523,6 +1533,7 @@ class BareTubeHeatExchanger:
         return apply_phase_change(
             self, inside, outside, dry_result,
             iterate=iterate,
+            flow_arrangement=flow_arrangement,
             euler_provider=euler_provider,
             finned_heat_transfer_provider=finned_heat_transfer_provider,
             finned_pressure_drop_provider=finned_pressure_drop_provider,

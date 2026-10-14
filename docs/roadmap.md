@@ -35,9 +35,9 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.8.8`
+**Current version:** `v0.9.1`
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
-**Next active public line:** `0.9.x` — non-round / smooth elliptical tube foundation
+**Active public line:** `0.9.x` — smooth elliptical foundation and dry thermal topology
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change balance and source-profile wet-coil approximation,
@@ -300,6 +300,24 @@ Automatic elliptical-bank Rating/Simulation remains unsupported because
 validated outside HTC and hydraulic models are unavailable. This milestone
 does not enable fins, inserts, phase change, wet ellipse, T/H2, or
 developing/turbulent ellipse flow. See [the foundation guide](elliptical_tubes.md).
+
+### v0.9.1 — Topology-aware dry counter-crossflow (implemented)
+
+Canonical integer AUTO pass groups use equal-UA crossflow sections in
+countercurrent series, with full serial capacity rates and complete mixing
+between sections. Explicit legacy arrangements remain authoritative. Physical
+row numbering is separately selected by `row_parity_mode`; `reset` preserves
+legacy geometry and `continuous` follows the whole bank. Dry results report
+the selected law, section/mixing assumptions and derived equivalent F.
+See [the thermal topology guide](thermal_topology.md).
+
+Weighted / unequal-section counter-crossflow is future scope: specify
+`UA_j = weight_j * UA_total`, `sum(weight_j) = 1`, solve connected port
+balances, and numerically invert that same forward solver for Rating.
+Weights must follow an explicit section-UA map, with independent matrix and
+forward/inverse verification. No fractional-N or averaged-F heuristic is
+planned. Wet/phase-change network coupling and exact circuit maps remain
+separate future extensions.
 
 ### Later v0.9.x — Further regular non-round models
 
