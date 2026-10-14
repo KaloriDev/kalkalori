@@ -287,15 +287,33 @@ numerical wall-envelope nonconvergence keeps its diagnostic policy. See
 
 ---
 
-### v0.9.x — Non-Round / Smooth Elliptical Tube Foundation (next active line)
+### v0.9.0 — Smooth elliptical tube foundation (implemented)
 
-Add smooth elliptical tubes as a dedicated regular geometry family. This is
-not the empirical/provider-based non-standard geometry stage and is not part
-of the v0.8.x turbulator work.
+The first regular non-round family provides a true mathematical ellipse with
+independent inner/outer semi-axes, exact perimeter/area/hydraulic diameter and
+crossflow projection. Supported standalone physics comprises fully developed
+smooth laminar Darcy friction, fully developed H1 internal heat transfer and
+explicit exact confocal wall resistance. Model diagnostics retain assumptions
+and public provenance; circular-only paths reject ellipse geometry explicitly.
 
-Start with geometry and a source audit. Specific elliptical heat-transfer
-and hydraulic correlations will be selected only after their definitions,
-applicability and accessible sources have been established.
+Automatic elliptical-bank Rating/Simulation remains unsupported because
+validated outside HTC and hydraulic models are unavailable. This milestone
+does not enable fins, inserts, phase change, wet ellipse, T/H2, or
+developing/turbulent ellipse flow. See [the foundation guide](elliptical_tubes.md).
+
+### Later v0.9.x — Further regular non-round models
+
+Candidate milestones, subject to complete public provenance and validation:
+
+- T and H2 internal thermal boundary conditions;
+- developing and turbulent internal flow;
+- a restricted standalone isolated-ellipse outside provider;
+- validated finite tube-bank HTC and pressure-drop models;
+- additional explicitly defined non-round families.
+
+An isolated-cylinder provider cannot establish bank applicability. Each model
+must retain its own geometry, reference dimension/velocity and validity limits.
+These milestones have no promised dates or selected production correlations.
 
 ---
 

@@ -92,6 +92,8 @@ def evaluate_for_bundle(configuration, bundle, mass_flow, props, *,
                         heat_flow_direction="unknown", operation_context=None):
     if configuration is None:
         return None
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(bundle.tube, "Tube-side inserts and clearance corrections")
     guard_phase(configuration, property_provider, temperature, pressure)
     if wall_temperature is not None:
         guard_phase(configuration, property_provider, wall_temperature, pressure)

@@ -192,3 +192,25 @@ __all__ = [
     "make_warning",
     "has_critical_warnings",
 ]
+
+# Bounded smooth elliptical foundation; automatic outside-bank workflows stay
+# circular-only. These are explicit standalone geometry/model boundaries.
+from .internal_model_contract import EllipticalFlowAssumptions, InternalModelMetadata
+from .internal_dispatch import internal_heat_transfer_diagnostics, internal_heat_transfer_coefficient, internal_friction
+from .elliptical_internal import (
+    EllipticalFrictionResult, EllipticalDistributedPressureDrop,
+    elliptical_laminar_friction, elliptical_h1_heat_transfer,
+    elliptical_distributed_pressure_drop,
+)
+from .wall_conduction import (
+    TubeWallModel, WallResistanceResult, tube_wall_resistance,
+    tube_wall_resistance_diagnostics,
+)
+
+__all__ += [
+    'EllipticalFlowAssumptions', 'InternalModelMetadata',
+    'internal_heat_transfer_diagnostics', 'internal_heat_transfer_coefficient', 'internal_friction',
+    'EllipticalFrictionResult', 'EllipticalDistributedPressureDrop',
+    'elliptical_laminar_friction', 'elliptical_h1_heat_transfer', 'elliptical_distributed_pressure_drop',
+    'TubeWallModel', 'WallResistanceResult', 'tube_wall_resistance', 'tube_wall_resistance_diagnostics',
+]

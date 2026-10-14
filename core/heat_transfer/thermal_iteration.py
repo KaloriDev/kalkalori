@@ -135,7 +135,8 @@ from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
 
-from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics
+from core.heat_transfer.internal_dispatch import internal_heat_transfer_diagnostics
+from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics  # Historical integration hook.
 from core.heat_transfer.outside_flow import (
     prandtl_number as outside_prandtl_number,
 )
@@ -448,6 +449,8 @@ def _evaluate_local_wall_state(
     finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
 ) -> _LocalWallEvaluation:
     """Evaluate correlations and the resistance split at one fixed bulk pair."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
     from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 
     bundle = hx.bundle
@@ -496,9 +499,9 @@ def _evaluate_local_wall_state(
         operation_context=getattr(hx, "enhancement_operation_context", None),
     )
     if enhancement is None:
-        internal = heat_transfer_coefficient_internal_diagnostics(
+        internal = internal_heat_transfer_diagnostics(
             m_dot=m_dot_inside,
-            tube_inner_diameter=D_h,
+            tube=tube,
             flow_area=bundle.internal_flow_area_per_pass,
             props=to_internal_fluid_props(bulk_i),
             T_bulk=inside_bulk_temperature,

@@ -243,6 +243,8 @@ def solve_water_evaporator(
     heat_flux_relative_tolerance: float = 1.0e-8,
 ) -> WaterEvaporatorSolution:
     """Simulation driver: find the increasing outlet enthalpy that fills Ao."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Water boiling')
     started = perf_counter()
     _validate_common_inputs(
         inlet_state=inlet_state,
@@ -388,6 +390,8 @@ def rate_water_evaporator(
     heat_flux_relative_tolerance: float = 1.0e-8,
 ) -> WaterEvaporatorSolution:
     """Rating driver: calculate required zone areas for outlet state/duty."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Water boiling')
     started = perf_counter()
     _validate_common_inputs(
         inlet_state=inlet_state,

@@ -114,6 +114,8 @@ def solve_inside_condensation(
     relaxation_factor: float = 0.5,
 ) -> InsideCondensationSolution:
     """Solve inside wet-gas cooling with a regime locked before entry."""
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Carrier-gas inside condensation')
     if not inside_capability.capable or inside_capability.W_in is None:
         raise ValueError("solve_inside_condensation requires a capable inside stream.")
     if max_iterations <= 0:

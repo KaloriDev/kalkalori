@@ -138,6 +138,8 @@ Conventions
 
 from __future__ import annotations
 
+from core.heat_transfer.internal_dispatch import straight_friction_evaluator
+
 import math
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
@@ -804,6 +806,8 @@ def run_simulation(
     ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
     before computing duty/outlet temperatures; see the module docstring.
     """
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
     uses_bundle_flow_arrangement = flow_arrangement is None
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -931,6 +935,7 @@ def run_simulation(
             hydraulic_wall_temperature = probe.inside_wall_temperature
 
         bundle_hydraulic = calculate_tube_bundle_hydraulics(
+            straight_friction_evaluator=straight_friction_evaluator(hx.bundle.tube),
             enhancement_evaluator=hydraulic_evaluator(
                 hx.tube_side_enhancement, hx.bundle, inside.provider,
                 wall_temperature=hydraulic_wall_temperature,

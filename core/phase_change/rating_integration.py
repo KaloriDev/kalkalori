@@ -11,6 +11,8 @@ The helpers retained here serve the unchanged inside condensation path.
 
 from __future__ import annotations
 
+from core.heat_transfer.internal_dispatch import straight_friction_evaluator
+
 import math
 from dataclasses import replace
 
@@ -740,6 +742,7 @@ def _apply_inside_condensation_to_rating(
     from core.pressure_drop.flow_path import build_tube_side_pressure_drop_result
 
     tube_hydraulic = calculate_tube_bundle_hydraulics(
+        straight_friction_evaluator=straight_friction_evaluator(hx.bundle.tube),
         m_dot=m_dot_gas_mid,
         flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,
         hydraulic_diameter=hx.bundle.internal_hydraulic_diameter,

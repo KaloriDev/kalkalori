@@ -5,6 +5,29 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.0] — Smooth elliptical tube foundation
+
+- Added frozen `EllipticalTube` geometry with independent inner/outer SI
+  semi-axes, crossflow orientation, exact elliptic-integral perimeters,
+  flow/heat-transfer areas, hydraulic diameter and projected dimensions.
+- Added explicit fully developed smooth laminar Darcy friction and H1
+  internal heat transfer, with caller-declared assumptions and model/source
+  metadata. Standalone distributed pressure drop excludes entrance/exit and
+  other local losses; no universal ellipse transition criterion is inferred.
+- Added explicitly selected `CONFOCAL_EXACT` wall resistance for confocal
+  contours under isothermal-surface assumptions. Arbitrary nested elliptical
+  walls and a thin-wall approximation remain unsupported.
+- Added a common physical geometry contract, shape-aware internal/friction/
+  wall boundaries, and applicability guards for circular-only outside-bank,
+  insert, phase-change, wet and fin models. Existing circular constructor
+  signatures and numerical models are preserved.
+- Added independent geometry, momentum/energy and wall checks, source-value
+  regressions, circle limits and excluded-interaction coverage. Area-specific
+  fouling uses actual ellipse heat-transfer areas.
+- General elliptical-bank Rating/Simulation is not supported. Developing or
+  turbulent internal models and T/H2 thermal conditions remain deferred. See
+  [the elliptical foundation guide](docs/elliptical_tubes.md).
+
 ## [0.8.8] — Generic external tube-side provider hardening
 
 - Hardened the structural tube-side enhancement boundary for external/private

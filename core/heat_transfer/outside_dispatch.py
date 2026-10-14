@@ -370,6 +370,8 @@ def evaluate_outside_thermal(
 ) -> OutsideThermalDispatchResult:
     """Evaluate the dry outside film coefficient for the declared surface."""
 
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
     surface = tube_surface_type(bundle)
     if surface is TubeSurfaceType.PLAIN:
         _reject_finned_provider_on_plain(
@@ -457,6 +459,8 @@ def evaluate_outside_hydraulics(
 ) -> OutsideBankHydraulicResult:
     """Evaluate the three-state outside hydraulics for the declared surface."""
 
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
     surface = tube_surface_type(bundle)
     if surface is TubeSurfaceType.PLAIN:
         _reject_finned_provider_on_plain(
@@ -937,6 +941,8 @@ def _reject_finned_provider_on_plain(
 
 
 def _bare_reference_velocity_ratio(bundle: TubeBundle) -> float:
+    from core.geometry.applicability import require_circular_tube
+    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
     diameter = float(getattr(bundle.tube, "D_o"))
     transverse = bundle.pitch_transverse
     longitudinal = bundle.pitch_longitudinal

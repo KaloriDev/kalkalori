@@ -70,6 +70,26 @@ Used for:
 
 ---
 
+## Smooth elliptical foundation (v0.9.0)
+
+- [NIST DLMF, 19.30.5](https://dlmf.nist.gov/19.30#E5): exact ellipse
+  perimeter using the complete elliptic integral of the second kind. SciPy
+  evaluates it with parameter `m = 1 - (b/a)**2`.
+- [Su et al. (2019), open full text](https://pmc.ncbi.nlm.nih.gov/articles/PMC6843173/):
+  continuum governing equations and elliptical velocity formulation.
+- [Khan, Culham and Yovanovich, open author-hosted paper](https://www.mhtlab.uwaterloo.ca/pdf_papers/mhtl04-5.pdf):
+  elliptical-coordinate mapping used to derive the restricted confocal wall
+  solution.
+
+The implemented laminar Darcy, H1 and confocal-wall expressions are independent
+analytical reconstructions from their stated momentum, energy and Laplace
+boundary-value problems. These sources support the governing formulation or
+coordinate definitions; the code does not claim they all publish the resulting
+closed forms. No empirical bank, turbulent or private handbook model is
+implemented. See [equations and applicability](elliptical_tubes.md).
+
+---
+
 ## Local Pressure-Drop Fittings (explicit local pressure-drop paths)
 
 - Gibson, A. H.

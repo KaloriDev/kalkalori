@@ -396,6 +396,8 @@ def calculate_tube_bundle_hydraulics(
     exit_type: TubeSheetExitType = TubeSheetExitType.NORMAL,
     roughness_inner: float | None = None,
     enhancement_evaluator: Callable[[TubeSideHydraulicPoint], EnhancementResult] | None = None,
+    straight_friction_evaluator: Callable[[float, float | None], tuple[float, str]] | None = None,
+    tube: Any | None = None,
     provider: Any | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
@@ -438,6 +440,9 @@ def calculate_tube_bundle_hydraulics(
     The point-property arguments are a deterministic test/compatibility hook.
     Production exchanger paths pass a provider and temperatures.
     """
+    if tube is not None:
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(tube, "Automatic tube-bundle entrance/exit losses")
     _validate_hydraulic_input(
         m_dot=m_dot,
         flow_area_per_pass=flow_area_per_pass,
@@ -531,16 +536,19 @@ def calculate_tube_bundle_hydraulics(
             position="inlet", temperature=T_in, pressure=p, props=props_in,
             enthalpy=h_in, mass_flux=mass_flux_in, hydraulic_diameter=hydraulic_diameter,
             relative_roughness=relative_roughness,
+            straight_friction_evaluator=straight_friction_evaluator,
         ),
         _make_hydraulic_point(
             position="midpoint", temperature=T_mid, pressure=p, props=props_mid,
             enthalpy=h_mid, mass_flux=mass_flux_mid, hydraulic_diameter=hydraulic_diameter,
             relative_roughness=relative_roughness,
+            straight_friction_evaluator=straight_friction_evaluator,
         ),
         _make_hydraulic_point(
             position="outlet", temperature=T_out, pressure=p, props=props_out,
             enthalpy=h_out, mass_flux=mass_flux_out, hydraulic_diameter=hydraulic_diameter,
             relative_roughness=relative_roughness,
+            straight_friction_evaluator=straight_friction_evaluator,
         ),
     )
 
@@ -783,6 +791,7 @@ def _make_hydraulic_point(
     props: FluidTransportProperties, enthalpy: float | None,
     mass_flux: float, hydraulic_diameter: float,
     relative_roughness: float | None = None,
+    straight_friction_evaluator=None,
 ) -> TubeSideHydraulicPoint:
     if not math.isfinite(props.rho) or props.rho <= 0.0:
         raise ValueError("tube_bundle_hydraulics_invalid_density: density must be finite and positive.")
@@ -792,8 +801,11 @@ def _make_hydraulic_point(
     reynolds = mass_flux * hydraulic_diameter / props.mu
     if not math.isfinite(reynolds) or reynolds <= 0.0:
         raise ValueError("tube_bundle_hydraulics_nonfinite_state: Reynolds number must be finite and positive.")
-    friction_factor = darcy_friction_factor(reynolds, relative_roughness)
-    friction_factor_method = darcy_friction_factor_method(reynolds, relative_roughness)
+    if straight_friction_evaluator is None:
+        friction_factor = darcy_friction_factor(reynolds, relative_roughness)
+        friction_factor_method = darcy_friction_factor_method(reynolds, relative_roughness)
+    else:
+        friction_factor, friction_factor_method = straight_friction_evaluator(reynolds, relative_roughness)
     if not math.isfinite(friction_factor) or friction_factor <= 0.0:
         raise ValueError("tube_bundle_hydraulics_invalid_friction_factor: friction factor must be finite and positive.")
     dynamic_pressure_value = mass_flux**2 / (2.0 * props.rho)

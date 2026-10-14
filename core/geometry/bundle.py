@@ -640,12 +640,16 @@ class TubeBundle:
 
     @property
     def diagonal_free_flow_gap(self) -> float:
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.tube, 'Circular-bank minimum gap/reference velocity')
         return 2.0 * (
             self.diagonal_pitch - self.projected_blocking_area_per_length
         )
 
     @property
     def minimum_free_flow_gap(self) -> float:
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.tube, 'Circular-bank minimum gap/reference velocity')
         if self.layout.lower() == "inline":
             gap = self.transverse_free_flow_gap
         else:

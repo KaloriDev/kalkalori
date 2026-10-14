@@ -489,6 +489,7 @@ class InternalHeatTransferDiagnostics:
 
     warnings: list[ModelWarning]
     enhancement: EnhancementResult | None = None
+    model_metadata: object | None = None
 
 
 def heat_transfer_coefficient_internal_diagnostics(

@@ -22,7 +22,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import math
-from typing import ClassVar
+from typing import ClassVar, Protocol
+
+
+class TubeCrossSectionFamily(str, Enum):
+    """Physical contour family, separate from plain/finned surface treatment."""
+
+    CIRCULAR = "circular"
+    ELLIPTICAL = "elliptical"
+
+
+class TubeGeometry(Protocol):
+    """Small physical contract; areas use the effective axial length [SI]."""
+
+    cross_section_family: ClassVar[TubeCrossSectionFamily]
+    length_total: float
+    length_effective: float
+
+    @property
+    def flow_area(self) -> float: ...
+    @property
+    def hydraulic_diameter(self) -> float: ...
+    @property
+    def area_inner(self) -> float: ...
+    @property
+    def area_outer(self) -> float: ...
+    @property
+    def projected_blocking_area_per_length(self) -> float: ...
 
 class TubeSurfaceType(str, Enum):
     """Outside-surface geometry family used for correlation dispatch."""
@@ -58,6 +84,7 @@ class BaseTube:
     - projected_blocking_area_per_length [m2/m] (outside-flow blockage)
     """
     surface_type: ClassVar[TubeSurfaceType]
+    cross_section_family: ClassVar[TubeCrossSectionFamily]
 
     @property
     def projected_blocking_area_per_length(self) -> float:
@@ -126,6 +153,22 @@ class BareTube(BaseTube):
     # ClassVar deliberately keeps the historical dataclass constructor,
     # repr, equality and positional-field order unchanged.
     surface_type: ClassVar[TubeSurfaceType] = TubeSurfaceType.PLAIN
+    cross_section_family: ClassVar[TubeCrossSectionFamily] = TubeCrossSectionFamily.CIRCULAR
+
+    @property
+    def inside_wetted_perimeter(self) -> float:
+        """Actual inside contour length [m]."""
+        return math.pi * self.D_i
+
+    @property
+    def outside_perimeter(self) -> float:
+        """Actual outside contour length [m]."""
+        return math.pi * self.D_o
+
+    @property
+    def streamwise_extent(self) -> float:
+        """Outside extent along perpendicular crossflow [m]."""
+        return self.D_o
 
     def __post_init__(self) -> None:
         for name, value in (

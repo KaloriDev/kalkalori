@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from core.heat_transfer.internal_dispatch import straight_friction_evaluator
+
 from dataclasses import replace
 import math
 
@@ -1045,6 +1047,7 @@ def _water_steam_diagnostics(
         )
         if all(value is not None for value in transports):
             tube_bundle = calculate_tube_bundle_hydraulics(
+                straight_friction_evaluator=straight_friction_evaluator(hx.bundle.tube),
                 m_dot=getattr(solution, "mass_flow_steam", None)
                 or solution.mass_flow_water,
                 flow_area_per_pass=hx.bundle.internal_flow_area_per_pass,

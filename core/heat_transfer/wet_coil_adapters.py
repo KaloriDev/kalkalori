@@ -195,6 +195,8 @@ class InsideWallAdapter:
         return self.mass_flow * cp
 
     def evaluate(self, T):
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.bundle.tube, 'Wet-coil inside wall/HTC')
         b = self.bundle
         core = b.tube.core_tube if isinstance(b.tube, CircularFinnedTube) else b.tube
         if hasattr(self.provider, "full_at"):
@@ -269,6 +271,8 @@ class BareTubeAdapter:
     heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER
 
     def evaluate(self, T, W, md, inside):
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(self.bundle.tube, 'Wet-coil outside HTC')
         if isinstance(self.bundle.tube, CircularFinnedTube):
             raise TypeError("BareTubeAdapter requires a bare tube")
         provider = wet_gas_provider_at_water_ratio(self.thermodynamics.capability, W)
