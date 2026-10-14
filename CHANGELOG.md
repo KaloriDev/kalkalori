@@ -5,6 +5,28 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.1] — Topology-aware N-section counter-crossflow
+
+- Added `RowParityMode` / `row_parity_mode`: `reset` preserves legacy module
+  numbering; `continuous` counts alternating rows across the physical bank.
+  Physical tube count drives areas and tube-side flow independently of mixing.
+- Intermediate AUTO pass grouping now selects equal-UA crossflow sections in
+  countercurrent series, with complete mixing between sections. The stable
+  shared forward/inverse law covers both physical mixed-side capacity branches,
+  exact balanced capacities and finite-N reachability ceilings.
+- Applied the law consistently to dry Rating, Simulation, thermal iteration,
+  direct solve, single-pass Simulation, derating and comparison bridges.
+  Explicit legacy arrangement strings and method overrides retain their laws.
+- Added dry topology, section/mixing, terminal countercurrent LMTD and derived
+  equivalent-F diagnostics without changing EMTD or surface-margin semantics.
+- New AUTO topology rejects wet-model candidates and phase-change zone routes
+  explicitly; legacy explicit selection remains available. Fin/contact,
+  hydraulic and phase-change constitutive models are unchanged.
+- Added independent simultaneous port-balance, limiting-case, numerical and
+  dry integration coverage. Integer canonical pass grouping is required;
+  unequal section UA and physical circuit maps remain future work.
+  See [the topology guide](docs/thermal_topology.md).
+
 ## [0.9.0] — Smooth elliptical tube foundation
 
 - Added frozen `EllipticalTube` geometry with independent inner/outer SI

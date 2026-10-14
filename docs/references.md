@@ -465,6 +465,24 @@ KalKalori correlations and property helpers should always be used with:
 
 ---
 
+## Equal-UA counter-crossflow sections (v0.9.1)
+
+- Jaeger, F. A., Beshore, D. G., Miller, F. M., and Gartner, E. M. (1978).
+  *Applications of thermal energy storage in the cement industry*,
+  NASA-CR-159399 / CONS/5084-1, appendix ENTU, printed pp.161-162
+  (PDF pp.169-170). [NASA NTRS record and public report](https://ntrs.nasa.gov/citations/19780025594).
+  Local mixed/unmixed crossflow and identical-stage countercurrent series law.
+- Delnero, C. (2000). *Neural Networks and PI Control using Steady State
+  Prediction Applied to a Heating Coil*. Colorado State University,
+  Eq.4.33, printed p.31 (PDF p.45).
+  [University-hosted thesis](https://projects-web.engr.colostate.edu/nnhvac/papers/chris_thesis.pdf).
+  Independent authority for identical-stage global composition only.
+
+Implementation is original algebra and stable numerical evaluation of these
+public equations, with exact capacity-ratio limits and an independently
+derived inverse. No upstream code or source PDFs are redistributed.
+See [assumptions, equations and validation](thermal_topology.md).
+
 ## Private Reference Sources
 
 Project source policy: built-in engineering correlations must be independently
