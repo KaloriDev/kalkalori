@@ -48,6 +48,12 @@ def test_simulation_uses_shared_forward_in_every_dry_path(finned, hot_inside, it
     assert abs(result.q) == pytest.approx(eps*700.*50., rel=1e-10)
     assert result.EMTD == pytest.approx(abs(result.q)/(result.UA/(1+margin)))
     assert result.overdesign_factor == pytest.approx(margin, abs=1e-10)
+    assert result.thermal_topology_model == "counter_crossflow_equal_ua"
+    assert result.n_thermal_sections == 2
+    assert result.inter_section_mixing == "complete"
+    assert result.F_equivalent == pytest.approx(result.EMTD/result.LMTD_countercurrent)
+    assert 0 < result.F_equivalent <= 1.
+    assert result.final_result.n_thermal_sections == 2
 
 
 @pytest.mark.parametrize("finned", [False, True])
@@ -67,6 +73,9 @@ def test_rating_inverse_and_public_simulation_bridge_agree(finned):
     assert rate.UA_required == pytest.approx(sim.UA, rel=1e-9)
     assert rate.overdesign_factor == pytest.approx(0., abs=1e-9)
     assert rate.simulation.q == pytest.approx(sim.q, rel=1e-10)
+    assert rate.thermal_topology_model == sim.thermal_topology_model
+    assert rate.n_thermal_sections == sim.n_thermal_sections == 2
+    assert rate.F_equivalent == pytest.approx(sim.F_equivalent, rel=1e-9)
 
 
 @pytest.mark.parametrize("override", ["crossflow", "counterflow", "cocurrentflow"])
@@ -79,6 +88,9 @@ def test_explicit_method_overrides_freeze_legacy_law(override):
     assert result.q == pytest.approx(eps*700.*50., rel=1e-12)
     explicit = exchanger(flow_arrangement=override).simulate(inside,outside,iterate=False)
     assert result.q == explicit.q
+    assert result.n_thermal_sections == 1
+    if override == "counterflow":
+        assert result.F_equivalent == pytest.approx(1., abs=1e-13)
 
 
 def test_auto_resolution_and_parity_interaction():
@@ -126,3 +138,32 @@ def test_wet_candidate_rejects_before_provider_execution():
             dispatch_wet_coil(hx,inside,outside,mode="simulation",
                               settings=PhaseChangeSettings(),force_candidate=True)
         invoke.assert_not_called()
+
+
+def test_wet_equivalent_reporting_rejects_dry_descriptor():
+    from core.phase_change.wet_coil_reporting import equivalent_wet_process
+    with pytest.raises(ValueError,match="unsupported for wet"):
+        equivalent_wet_process(heat=100.,hot_in=350.,hot_out=340.,
+            cold_in=300.,cold_out=310.,flow_arrangement=CounterCrossflowTopology(2))
+
+
+def test_zero_duty_diagnostics_leave_factor_undefined():
+    hx = exchanger()
+    inside,outside = sides()
+    result = hx.simulate(replace(inside,T_in=300.),outside,iterate=False)
+    assert result.q == 0.
+    assert result.LMTD_countercurrent == 0.
+    assert result.F_equivalent is None
+
+
+def test_rating_diagnostic_counterflow_and_simple_crossflow():
+    inside,outside = sides()
+    ri = BalanceSideSpec(provider=inside.provider,m_dot=1.,T_in=350.,T_out=336.,p=inside.p)
+    ro = BalanceSideSpec(provider=outside.provider,m_dot=1.,T_in=300.,T_out=320.,p=outside.p)
+    for arrangement in ('counterflow','crossflow'):
+        result = exchanger().rate(ri,ro,flow_arrangement=arrangement,include_simulation=True)
+        assert result.n_thermal_sections == 1
+        assert result.simulation.n_thermal_sections == 1
+        assert result.F_equivalent == pytest.approx(result.EMTD/result.LMTD_countercurrent)
+        if arrangement=='counterflow':
+            assert result.F_equivalent == pytest.approx(1.,abs=1e-13)

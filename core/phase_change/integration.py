@@ -16,6 +16,7 @@ from core.heat_transfer.internal_dispatch import straight_friction_evaluator
 
 import math
 from dataclasses import dataclass, replace
+from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.thermal_iteration import IterativeThermalState, estimate_wall_temperature_envelope
@@ -853,6 +854,7 @@ def _apply_inside_condensation(
     return replace(
         dry_result,
         converged=solution.converged,
+        **NO_DRY_TOPOLOGY_DIAGNOSTICS,
         iterations=solution.iterations,
         T_mean_inside=T_mean_inside,
         T_mean_outside=T_mean_outside,

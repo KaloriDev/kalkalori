@@ -409,6 +409,11 @@ class HXSimulationResult:
     ua_reporting_basis: str = "thermal_resistance"
     ua_is_equivalent: bool = False
     wet_coil_diagnostics: dict | None = None
+    thermal_topology_model: str | None = None
+    n_thermal_sections: int | None = None
+    inter_section_mixing: str | None = None
+    LMTD_countercurrent: float | None = None
+    F_equivalent: float | None = None
 
     @property
     def ua_margin(self) -> float:
@@ -1103,7 +1108,10 @@ def run_simulation(
             UA_process=UA_process,
         )
 
+        from core.heat_transfer.topology_reporting import dry_topology_diagnostics
         return HXSimulationResult(
+            **dry_topology_diagnostics(flow_arrangement, inside.T_in, outside.T_in,
+                T_out_inside, T_out_outside, abs(q)/UA_process),
             converged=converged,
             iterations=iterations,
             residual_q_rel=residual_q_rel,

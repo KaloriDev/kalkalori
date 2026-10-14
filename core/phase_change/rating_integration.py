@@ -15,6 +15,7 @@ from core.heat_transfer.internal_dispatch import straight_friction_evaluator
 
 import math
 from dataclasses import replace
+from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
 from core.heat_transfer.outside_dispatch import DEFAULT_FINNED_DP_PROVIDER, DEFAULT_FINNED_HT_PROVIDER
@@ -911,6 +912,7 @@ def _apply_inside_condensation_to_rating(
     )
     return replace(
         wet_rating_result,
+        **NO_DRY_TOPOLOGY_DIAGNOSTICS,
         overdesign_factor=surface_margin_factor,
         ua_margin=surface_margin_factor,
         A_required=A_required,

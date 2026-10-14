@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeSurfaceType
@@ -878,6 +879,7 @@ def _apply_legacy_outside(
     return replace(
         dry_result,
         converged=solution.converged,
+        **NO_DRY_TOPOLOGY_DIAGNOSTICS,
         iterations=solution.iterations,
         T_mean_inside=T_mean_inside,
         T_mean_outside=T_mean_outside,

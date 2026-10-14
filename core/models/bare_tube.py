@@ -421,6 +421,11 @@ class HXResult:
     fouling_resistance_outside: float = 0.0  # [m² K/W], gross outer area
     resistance_fouling_inside: float = 0.0  # [K/W], installed geometry
     resistance_fouling_outside: float = 0.0  # [K/W], installed geometry
+    thermal_topology_model: str | None = None
+    n_thermal_sections: int | None = None
+    inter_section_mixing: str | None = None
+    LMTD_countercurrent: float | None = None
+    F_equivalent: float | None = None
 
     @property
     def tube_surface_type(self) -> TubeSurfaceType:
@@ -1212,7 +1217,12 @@ class BareTubeHeatExchanger:
                 geometry_warnings=geometry_warnings,
             )
 
+        from core.heat_transfer.topology_reporting import dry_topology_diagnostics
+        topology_diagnostics = dry_topology_diagnostics(flow_arrangement,
+            hot_stream.inlet_temperature(), cold_stream.inlet_temperature(),
+            T_hot_out, T_cold_out, abs(Q)/UA)
         return HXResult(
+            **topology_diagnostics,
             A_i=A_i,
             A_o=A_o,
             A_frontal=A_frontal,

@@ -174,6 +174,11 @@ class HXRatingResult:
     ua_reporting_basis: str = "thermal_resistance"
     ua_is_equivalent: bool = False
     wet_coil_diagnostics: dict | None = None
+    thermal_topology_model: str | None = None
+    n_thermal_sections: int | None = None
+    inter_section_mixing: str | None = None
+    LMTD_countercurrent: float | None = None
+    F_equivalent: float | None = None
 
     @property
     def UA_process(self) -> float:
@@ -745,7 +750,10 @@ def run_rating(
         )
         Q_achievable = simulation_result.q
 
+    from core.heat_transfer.topology_reporting import dry_topology_diagnostics
     return HXRatingResult(
+        **dry_topology_diagnostics(flow_arrangement, inside.T_in, outside.T_in,
+            inside.T_out, outside.T_out, closed_balance.Q/UA_req),
         overdesign_factor=overdesign_factor,
         ua_margin=ua_margin,
         A_o=A_o,
