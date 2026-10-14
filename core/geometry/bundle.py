@@ -162,16 +162,16 @@ class TubeBundle:
       number, heat-transfer coefficient, and pressure drop. Individual real
       passes may contain slightly different integer tube counts; an explicit
       circuit/pass map remains future scope.
-    - ``n_passes_transverse`` describes circuit topology only (how the total
+    - ``n_passes_transverse`` describes circuit topology (how the total
       tube-side passes are grouped into longitudinal sections of the outside
-      tube bank). It does not alter total heat-transfer area or outside-flow
-      geometry. Row counts need not divide evenly between sections; the 0D
+      tube bank). RESET row numbering can change tube count when section
+      boundaries change; CONTINUOUS counts remain independent. Row counts
+      need not divide evenly between sections; the 0D
       model uses the effective average ``n_rows / n_sections_longitudinal``.
     - ``flow_arrangement="auto"`` maps a single longitudinal section to
       crossflow and multiple single-transverse-pass sections to counterflow.
-      Intermediate multi-pass/multi-section circuits use a global/lumped 0D
-      crossflow approximation; section-wise coupling remains future
-      segmented/distributed-model scope.
+      Intermediate multi-pass/multi-section circuits use equal-UA crossflow
+      sections in countercurrent series, with complete mixing between sections.
     - ``n_tubes_total`` (v0.7.10) is the exact integer tube count, computed
       from the alternating odd/even row pattern -- not
       ``n_rows * n_tubes_per_row``. When rows partition exactly between
@@ -203,7 +203,7 @@ class TubeBundle:
             object.__setattr__(self, "row_parity_mode", RowParityMode(self.row_parity_mode))
         except (ValueError, TypeError) as exc:
             raise ValueError("row_parity_mode must be 'continuous' or 'reset'.") from exc
-        if self.n_rows <= 0:
+        if isinstance(self.n_rows, bool) or not isinstance(self.n_rows, int) or self.n_rows <= 0:
             raise ValueError("n_rows must be a positive integer.")
         if not math.isfinite(self.n_tubes_per_row) or self.n_tubes_per_row <= 0.0:
             raise ValueError("n_tubes_per_row must be positive and finite.")
@@ -216,7 +216,7 @@ class TubeBundle:
             raise ValueError(
                 "pitch_transverse and pitch_longitudinal must be positive and finite."
             )
-        if self.n_passes_tube <= 0:
+        if isinstance(self.n_passes_tube, bool) or not isinstance(self.n_passes_tube, int) or self.n_passes_tube <= 0:
             raise ValueError("n_passes_tube must be a positive integer.")
         if self.layout.lower() not in ("inline", "staggered"):
             raise ValueError("layout must be 'inline' or 'staggered'.")
@@ -241,7 +241,7 @@ class TubeBundle:
             )
 
         if self.n_passes_transverse is not None:
-            if self.n_passes_transverse <= 0:
+            if isinstance(self.n_passes_transverse, bool) or not isinstance(self.n_passes_transverse, int) or self.n_passes_transverse <= 0:
                 raise ValueError("n_passes_transverse must be a positive integer.")
             if self.n_passes_transverse > self.n_passes_tube:
                 raise ValueError(
@@ -430,12 +430,13 @@ class TubeBundle:
 
     @property
     def flow_arrangement_resolved(self) -> str:
-        """Resolve the global 0D flow arrangement from circuit topology.
+        """Compatibility arrangement label (local crossflow for sectioned AUTO).
 
         Explicit arrangements always win. AUTO maps one longitudinal section
         to crossflow, multiple sections with one transverse pass each to
         counterflow, and intermediate multi-pass/multi-section circuits to a
-        global/lumped 0D crossflow approximation.
+        countercurrent series of crossflow cells. Dry solvers use
+        ``thermal_topology_resolved`` to retain that section coupling.
         """
         arrangement = self.flow_arrangement.lower()
         if arrangement != "auto":
@@ -445,6 +446,12 @@ class TubeBundle:
         if self.n_passes_transverse_resolved == 1:
             return "counterflow"
         return "crossflow"
+
+    @property
+    def thermal_topology_resolved(self):
+        """Canonical dry law, including the internal sectioned AUTO descriptor."""
+        from core.geometry._thermal_topology import resolve_thermal_topology
+        return resolve_thermal_topology(self)
 
     @property
     def topology_warnings(self) -> tuple[ModelWarning, ...]:
@@ -458,10 +465,10 @@ class TubeBundle:
                     code="FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION",
                     message=(
                         "TubeBundle circuit contains multiple transverse passes "
-                        "and multiple longitudinal sections; the current 0D "
-                        "model uses a global/lumped 0D crossflow approximation. "
-                        "Exact section-wise coupling requires a future segmented/"
-                        "distributed model."
+                        "and multiple longitudinal sections; the dry model uses "
+                        "equal-UA crossflow sections in countercurrent series, "
+                        "with complete inter-section mixing. Unequal section UA "
+                        "and exact circuit maps require a future distributed model."
                     ),
                     source="tube_bundle_geometry",
                     severity="warning",

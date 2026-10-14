@@ -119,6 +119,8 @@ def forward_wet_process(
         raise EnhancementUnsupportedError(
             "enhancement_phase_change_unsupported: outside wet-coil adapter"
         )
+    from core.geometry._thermal_topology import reject_phase_change_topology
+    reject_phase_change_topology(hx.bundle, flow_arrangement)
     flow = flow_arrangement or hx.bundle.flow_arrangement_resolved
     bundle = replace(hx.bundle, flow_arrangement=flow)
     cap = detect_phase_change_capability(outside.provider)

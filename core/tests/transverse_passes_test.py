@@ -359,8 +359,8 @@ def test_intermediate_auto_topology_exposes_model_warning() -> None:
     assert warning.source == "tube_bundle_geometry"
     assert "multiple transverse passes" in warning.message
     assert "multiple longitudinal sections" in warning.message
-    assert "global/lumped 0D crossflow" in warning.message
-    assert "section-wise coupling" in warning.message
+    assert "equal-UA crossflow sections" in warning.message
+    assert "complete inter-section mixing" in warning.message
     assert bundle.geometry_warnings == bundle.topology_warnings
     assert bundle.warnings == bundle.topology_warnings
 

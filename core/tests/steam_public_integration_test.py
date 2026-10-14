@@ -120,32 +120,16 @@ def test_simulation_public_transitions_use_typed_steam_result(inside, expected_p
     }
 
 
-def test_steam_heater_propagates_only_bundle_auto_topology_warning():
+def test_steam_heater_rejects_new_auto_topology_and_preserves_explicit_override():
     warning_code = "FLOW_ARRANGEMENT_AUTO_MULTIPASS_APPROXIMATION"
-    results = {
-        arrangement: _hx(
-            n_rows=18,
-            n_tubes_per_row=18,
-            n_passes_tube=18,
-            n_passes_transverse=6,
-            flow_arrangement=arrangement,
-        ).simulate(_inside_sim(quality_in=1.0), _outside_sim())
-        for arrangement in ("auto", "counterflow")
-    }
-
-    auto_codes = [
-        warning.code for warning in results["auto"].inside_phase_change.warnings
-    ]
-    explicit_codes = {
-        warning.code
-        for warning in results["counterflow"].inside_phase_change.warnings
-    }
-
-    assert auto_codes.count(warning_code) == 1
-    assert warning_code not in explicit_codes
-    assert warning_code in {
-        warning.code for warning in results["auto"].warnings or ()
-    }
+    hx = _hx(n_rows=18, n_tubes_per_row=18, n_passes_tube=18,
+             n_passes_transverse=6, flow_arrangement="auto")
+    with pytest.raises(ValueError, match="dry single-phase"):
+        hx.simulate(_inside_sim(quality_in=1.0), _outside_sim())
+    explicit = hx.simulate(_inside_sim(quality_in=1.0), _outside_sim(),
+                           flow_arrangement="counterflow")
+    assert explicit.inside_phase_change.active
+    assert warning_code not in {w.code for w in explicit.warnings or ()}
 
 
 def test_superheated_steam_remaining_superheated_is_detected_without_condensation():

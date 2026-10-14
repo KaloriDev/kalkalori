@@ -83,6 +83,18 @@ class PureSteamOutsideNotSupportedError(RuntimeError):
     warning_code = WC.PURE_STEAM_OUTSIDE_NOT_SUPPORTED
 
 
+def _phase_change_exchanger(hx, flow_arrangement):
+    """Keep explicit method overrides authoritative in legacy zone solvers."""
+    from copy import copy
+    from core.geometry._thermal_topology import reject_phase_change_topology, resolve_thermal_topology
+    reject_phase_change_topology(hx.bundle, flow_arrangement)
+    if flow_arrangement is None:
+        return hx
+    selected = copy(hx)
+    selected.bundle = replace(hx.bundle, flow_arrangement=resolve_thermal_topology(hx.bundle, flow_arrangement))
+    return selected
+
+
 def translate_saturation_crossing_error(inside, exc: ValueError, outside=None) -> None:
     """Translate dry-solver saturation ambiguity into controlled scope errors."""
     state = getattr(inside, "water_steam_state", None)
@@ -410,6 +422,7 @@ def apply_water_evaporation_simulation(
     settings: PhaseChangeSettings,
 ):
     """Run public Simulation for an IAPWS tube stream heated from outside."""
+    hx = _phase_change_exchanger(hx, flow_arrangement)
     if not math.isfinite(surface_margin) or surface_margin < 0.0:
         raise ValueError("surface_margin must be a non-negative finite value.")
     if not iterate:
@@ -525,6 +538,7 @@ def apply_water_steam_simulation(
         raise ValueError("surface_margin must be a non-negative finite value.")
     if not iterate:
         raise ValueError("Pure-steam multi-zone calculation requires iterate=True.")
+    hx = _phase_change_exchanger(hx, flow_arrangement)
     solve_kwargs = dict(
         inlet_state=inside.water_steam_state,
         mass_flow_steam=inside.m_dot,
@@ -642,6 +656,7 @@ def apply_water_steam_rating(
             "Steam Rating requires an explicit duty or outlet state; an "
             "effectiveness-only target is not supported for a phase-changing stream."
         )
+    hx = _phase_change_exchanger(hx, flow_arrangement)
     if inside.m_dot is None and outside.m_dot is None:
         raise ValueError(
             "Steam Rating with unknown steam mass flow requires a known "
@@ -794,6 +809,7 @@ def apply_water_evaporation_rating(
     settings: PhaseChangeSettings,
 ):
     """Run public Rating for an IAPWS tube stream heated from outside."""
+    hx = _phase_change_exchanger(hx, flow_arrangement)
     if not math.isfinite(over_specified_tolerance) or over_specified_tolerance < 0.0:
         raise ValueError("over_specified_tolerance must be non-negative and finite.")
     if effectiveness is not None:

@@ -262,6 +262,7 @@ def apply_phase_change(
     finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     settings: PhaseChangeSettings | None = None,
     skip_inside_pure_steam_guard: bool = False,
+    flow_arrangement=None,
 ):
     """Return a new ``HXSimulationResult`` with phase-change results applied.
 
@@ -334,6 +335,10 @@ def apply_phase_change(
     )
 
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=iterate)
+
+    if inside_auto_possible or outside_auto_possible:
+        from core.geometry._thermal_topology import reject_phase_change_topology
+        reject_phase_change_topology(hx.bundle, flow_arrangement)
 
     if inside_auto_possible:
         return _apply_inside_condensation(
@@ -418,6 +423,7 @@ def apply_phase_change(
     result = route_outside_wet(
         hx, inside, outside, mode="simulation", settings=settings,
         force_candidate=True, surface_margin=dry_result.surface_margin,
+        flow_arrangement=flow_arrangement,
         iterate=iterate, euler_provider=euler_provider,
         finned_heat_transfer_provider=finned_heat_transfer_provider,
         finned_pressure_drop_provider=finned_pressure_drop_provider,

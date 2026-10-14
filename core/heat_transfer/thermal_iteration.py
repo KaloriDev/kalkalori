@@ -883,8 +883,8 @@ def solve_iterative_thermal_state(
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
     )
-    if uses_bundle_flow_arrangement:
-        flow_arrangement = hx.bundle.flow_arrangement_resolved
+    from core.geometry._thermal_topology import resolve_thermal_topology
+    flow_arrangement = resolve_thermal_topology(hx.bundle, flow_arrangement)
 
     bundle = hx.bundle
     A_o = bundle.total_outer_area

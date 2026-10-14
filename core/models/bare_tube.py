@@ -792,8 +792,8 @@ class BareTubeHeatExchanger:
         topology_warnings = (
             self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
         )
-        if uses_bundle_flow_arrangement:
-            flow_arrangement = self.bundle.flow_arrangement_resolved
+        from core.geometry._thermal_topology import resolve_thermal_topology
+        flow_arrangement = resolve_thermal_topology(self.bundle, flow_arrangement)
 
         if m_dot_tube_side <= 0.0:
             raise ValueError("m_dot_tube_side must be positive.")
@@ -1523,6 +1523,7 @@ class BareTubeHeatExchanger:
         return apply_phase_change(
             self, inside, outside, dry_result,
             iterate=iterate,
+            flow_arrangement=flow_arrangement,
             euler_provider=euler_provider,
             finned_heat_transfer_provider=finned_heat_transfer_provider,
             finned_pressure_drop_provider=finned_pressure_drop_provider,

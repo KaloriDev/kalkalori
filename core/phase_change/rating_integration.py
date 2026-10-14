@@ -388,6 +388,10 @@ def apply_phase_change_to_rating(
     # check_single_active_side never fires here (iterate=True always).
     check_single_active_side(inside_auto_possible, outside_auto_possible, iterate=True)
 
+    if inside_auto_possible or outside_auto_possible:
+        from core.geometry._thermal_topology import reject_phase_change_topology
+        reject_phase_change_topology(hx.bundle, flow_arrangement)
+
     if inside_auto_possible:
         return _apply_inside_condensation_to_rating(
             hx,
