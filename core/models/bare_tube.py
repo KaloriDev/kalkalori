@@ -791,8 +791,8 @@ class BareTubeHeatExchanger:
 
     ) -> HXResult:
         # Use the arrangement resolved from bundle circuiting if not provided.
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         uses_bundle_flow_arrangement = flow_arrangement is None
         topology_warnings = (
             self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -1355,8 +1355,8 @@ class BareTubeHeatExchanger:
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
         self = self._for_enhancement_call(tube_side_enhancement, enhancement_operation_context)
@@ -1639,8 +1639,8 @@ class BareTubeHeatExchanger:
         ``m_dot = Q_required / (h_in - h_out_target)``. See
         ``core.phase_change.steam_integration.apply_water_steam_rating``.
         """
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
@@ -1788,8 +1788,8 @@ class BareTubeHeatExchanger:
         See ``core.heat_transfer.thermal_iteration.solve_iterative_thermal_state``
         for the full algorithm, convergence controls and result fields.
         """
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.heat_transfer.thermal_iteration import solve_iterative_thermal_state
 
         return solve_iterative_thermal_state(

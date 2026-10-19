@@ -811,8 +811,8 @@ def run_simulation(
     ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
     before computing duty/outlet temperatures; see the module docstring.
     """
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
     uses_bundle_flow_arrangement = flow_arrangement is None
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()

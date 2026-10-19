@@ -109,6 +109,9 @@ from core.common.warnings import (
 )
 
 __all__ = [
+    "ThinPlateFinEfficiency2D",
+    "ThinPlateFinEfficiencyResult",
+    "FinEfficiencyConvergenceError",
     # NTU
     "effectiveness_ntu",
     "heat_duty_from_effectiveness",

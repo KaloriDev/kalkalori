@@ -57,6 +57,13 @@ class ThinPlateFinEfficiencyResult:
     def fin_efficiency(self):
         return self.eta_fin
 
+    @property
+    def tip_temperature_ratio(self):
+        """Minimum temperature ratio along the rectangular adiabatic edge."""
+        stride = 2*self.angular_cells_per_sector + 1
+        start = self.radial_cells*stride
+        return min(self.quarter_theta[start:start+stride])
+
 
 @dataclass(frozen=True)
 class ThinPlateFinEfficiency2D:

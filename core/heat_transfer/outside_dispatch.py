@@ -20,8 +20,10 @@ from typing import TYPE_CHECKING, Any
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
 from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.fin_efficiency import FinEfficiencyResult, annular_fin_efficiency
+from core.heat_transfer.thin_plate_fin import ThinPlateFinEfficiency2D, ThinPlateFinEfficiencyResult
 from core.heat_transfer.finned_tube_outside import (
     BriggsYoung1963Provider,
     FinnedTubeHeatTransferProvider,
@@ -156,11 +158,21 @@ class ThermalResistanceNetwork:
     resistance_total: float
     UA: float
     U_gross_outside: float
-    fin_efficiency_result: FinEfficiencyResult | None = None
+    fin_efficiency_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | None = None
     fouling_resistance_inside: float = 0.0
     fouling_resistance_outside: float = 0.0
     resistance_fouling_inside: float = 0.0
     resistance_fouling_outside: float = 0.0
+
+    @property
+    def A_physical(self) -> float:
+        """Geometric outside surface, including a fin's outer edge [m2]."""
+        return self.area_outside_geometric
+
+    @property
+    def A_effective(self) -> float:
+        """Outside area used by the declared conduction/edge model [m2]."""
+        return self.area_outside_effective
 
 
 @dataclass(frozen=True)
@@ -351,9 +363,13 @@ def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
                 "TubeSurfaceType.CIRCULAR_FINNED requires CircularFinnedTube geometry."
             )
         return TubeSurfaceType.CIRCULAR_FINNED
+    if value is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        if not isinstance(bundle.tube, RectangularFinnedEllipticalTube):
+            raise TypeError("RECTANGULAR_INDIVIDUAL_FINNED requires RectangularFinnedEllipticalTube geometry.")
+        return value
     raise TypeError(
         "Tube geometry must expose a supported TubeSurfaceType; supported values "
-        "are PLAIN and CIRCULAR_FINNED."
+        "are PLAIN, CIRCULAR_FINNED and RECTANGULAR_INDIVIDUAL_FINNED."
     )
 
 
@@ -370,8 +386,8 @@ def evaluate_outside_thermal(
 ) -> OutsideThermalDispatchResult:
     """Evaluate the dry outside film coefficient for the declared surface."""
 
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(bundle.tube, 'Automatic outside bank HTC')
     surface = tube_surface_type(bundle)
     if surface is TubeSurfaceType.PLAIN:
         _reject_finned_provider_on_plain(
@@ -459,8 +475,8 @@ def evaluate_outside_hydraulics(
 ) -> OutsideBankHydraulicResult:
     """Evaluate the three-state outside hydraulics for the declared surface."""
 
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(bundle.tube, 'Automatic outside bank pressure drop')
     surface = tube_surface_type(bundle)
     if surface is TubeSurfaceType.PLAIN:
         _reject_finned_provider_on_plain(
@@ -582,6 +598,7 @@ def calculate_resistance_network(
     resistance_core_wall: float,
     fouling_resistance_inside: float | None = None,
     fouling_resistance_outside: float | None = None,
+    fin_efficiency_model: ThinPlateFinEfficiency2D | None = None,
 ) -> ThermalResistanceNetwork:
     """Build core terms and the full topology-correct outside resistance.
 
@@ -596,6 +613,12 @@ def calculate_resistance_network(
     areas respectively. ``resistance_inside`` includes inside fouling;
     ``resistance_outside`` includes common lumped outside fouling before
     the root/contact/fin path. Explicit fouling contributions are [K/W].
+
+    A rectangular-finned ellipse uses h -> 2D eta(h) -> effective face area
+    in this same network, with an ideal isothermal contact. Its physical
+    outer-edge area is reported in the gross/geometric area, but conducts
+    no heat to the fluid under the adiabatic-edge model. Prescribing a film
+    coefficient here does not certify an automatic bank correlation.
     """
 
     for name, value in (
@@ -615,7 +638,9 @@ def calculate_resistance_network(
     fouling_o = normalize_fouling_resistance(fouling_resistance_outside, "fouling_resistance_outside")
     resistance_fi, resistance_fo = fouling_i / area_i, fouling_o / area_gross
     resistance_i += resistance_fi
-    fin_result: FinEfficiencyResult | None = None
+    fin_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | None = None
+    if fin_efficiency_model is not None and surface is not TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        raise ValueError("fin_efficiency_model applies only to rectangular-individual-finned elliptical tubes.")
 
     if surface is TubeSurfaceType.PLAIN:
         area_primary = area_gross
@@ -641,6 +666,25 @@ def calculate_resistance_network(
         # Preserve the exact historical bare-tube value instead of producing
         # a numerically equivalent reciprocal round trip.
         outside_alpha_effective_gross = outside_alpha_physical
+    elif surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        tube = bundle.tube
+        fin_result = (fin_efficiency_model or ThinPlateFinEfficiency2D()).evaluate(tube, outside_alpha_physical)
+        area_primary = bundle.total_primary_outside_area
+        area_fin = bundle.total_fin_area  # physical faces AND adiabatic edge
+        area_geometric = bundle.total_outer_geometric_area
+        eta_fin = fin_result.eta_fin
+        area_effective = tube.effective_outside_area(eta_fin) * bundle.n_tubes_total
+        eta_overall = area_effective / area_gross
+        conductance_primary = outside_alpha_physical * area_primary
+        conductance_fin = outside_alpha_physical * eta_fin * tube.area_fin_faces * bundle.n_tubes_total
+        resistance_root = resistance_contact = common_root_contact = 0.0
+        contact_input_mode = "ideal_isothermal"
+        fin_contact_efficiency_input = None
+        fin_contact_efficiency_effective = 1.0
+        contact_resistance_equivalent_areal = contact_resistance_used = 0.0
+        contact_area = tube.area_contact * bundle.n_tubes_total
+        contact_area_basis = "elliptical_perimeter_times_fin_thickness_times_count"
+        contact_topology = "ideal_isothermal_fin_base"
     else:
         tube = bundle.tube
         assert isinstance(tube, CircularFinnedTube)
