@@ -35,7 +35,16 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.1)
+## Current Capabilities (v0.9.2)
+
+- Finned non-circular foundation: `RectangularIndividualFin` composes with
+  `EllipticalTube` through `RectangularFinnedEllipticalTube`. Exact physical
+  surface components and deterministic `ThinPlateFinEfficiency2D` conduction
+  feed effective area into the common thermal resistance network for a
+  prescribed physical film coefficient. This surface has **no public
+  predictive outside HTC, bank pressure drop or row correction**;
+  automatic Rating/Simulation refuses it explicitly. See the
+  [geometry, physics and limitations guide](docs/rectangular_finned_ellipse.md).
 
 - Smooth mathematical `EllipticalTube` geometry with exact perimeter and
   hydraulic diameter, explicit fully developed laminar Darcy friction and H1

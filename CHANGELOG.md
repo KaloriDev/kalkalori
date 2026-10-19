@@ -5,6 +5,30 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.2] — Finned non-circular geometry and conduction foundation
+
+- Added frozen `RectangularIndividualFin` / `RectangularFinnedEllipticalTube`
+  composition with explicit enclosure, pitch, dimension and material checks.
+  Analytical surface accounting distinguishes exposed tube, both fin faces,
+  outer edge, buried contact and the elliptical aperture.
+- Added independent `ThinPlateFinEfficiency2D` using NumPy/SciPy sparse P1
+  conduction, an isothermal elliptical contact and an adiabatic rectangular
+  edge. Deterministic body-fitted meshes, measured refinement, area error,
+  residual, heat balance and bounded mesh/solution caches are exposed.
+- The existing resistance network now evaluates physical h -> eta(h) ->
+  effective area. Fin efficiency reduces only the broad-face contribution;
+  the physical film coefficient is preserved and edge convection excluded.
+- Automatic outside HTC, outside hydraulics and full Rating/Simulation
+  explicitly reject this surface: no applicable public predictive model or
+  N_rows correction has been implemented. No commercial presets, calibration,
+  contact resistance, wet fin model or substitute circular/bare correlation
+  was added. Existing v0.9.1 numerical models are retained.
+- Added analytical geometry, insulated straight-fin, symmetry, convergence,
+  energy and network tests. Implementation references are the freely
+  accessible primary CET (2020) and CC BY Energies (2021) publications.
+  See [scope and source provenance](docs/rectangular_finned_ellipse.md) and
+  [numerical validation](docs/validation/finned_foundation_v092.md).
+
 ## [0.9.1] — Topology-aware N-section counter-crossflow
 
 - Added `RowParityMode` / `row_parity_mode`: `reset` preserves legacy module

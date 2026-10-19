@@ -35,9 +35,9 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.9.1`
+**Current version:** `v0.9.2`
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
-**Active public line:** `0.9.x` — smooth elliptical foundation and dry thermal topology
+**Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
 **Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
 0D sensible/phase-change balance and source-profile wet-coil approximation,
@@ -51,6 +51,19 @@ and distributed thermal resolution remain future work.
 ---
 
 ## Roadmap Overview
+
+### v0.9.2 — Finned non-circular foundation (implemented)
+
+- Individual rectangular transverse fins on an existing elliptical tube.
+- Exact physical surface accounting and deterministic 2D fin conduction.
+- Physical h -> eta(h) -> effective area in the common resistance network.
+- Public predictive outside HTC, outside bank pressure loss and N_rows
+  correction for this surface remain source-closure work. No correlation
+  fallback or empirical calibration is supplied.
+- Contact resistance, outer-edge convection, nonuniform h, variable k,
+  radiation, 3D conduction and wet rectangular fins remain future variants.
+
+See [the public foundation guide](rectangular_finned_ellipse.md).
 
 ---
 

@@ -6,6 +6,26 @@ property libraries as implementation references.
 This document lists the main references used by the current computational core.
 Short reference notes are also included directly in the relevant source files.
 
+## v0.9.2 thin-plate fin foundation: free primary sources
+
+- Taler, D.; Marcinkowski, M. (2020), *Calculating the Efficiency of Complex
+  Shaped Fins*, Chemical Engineering Transactions 81, 1333-1338,
+  [DOI 10.3303/CET2081223](https://doi.org/10.3303/CET2081223).
+  [Free publisher PDF](https://www.aidic.it/cet/20/81/223.pdf), accessible
+  without payment on 2026-10-19. Copyright AIDIC Servizi S.r.l.; no article,
+  prose, figures or external code are redistributed.
+- Marcinkowski, M.; Taler, D. (2021), *Calculating the Efficiency of
+  Complex-Shaped Fins*, Energies 14(3), 577,
+  [publisher article / DOI 10.3390/en14030577](https://www.mdpi.com/1996-1073/14/3/577).
+  Open access under CC BY 4.0, verified on 2026-10-19. Sections 2-3 provide
+  the governing thin-plate problem, assumptions and area-average efficiency.
+
+KalKalori's numerical implementation and geometric accounting are independent
+GPL-3.0-only code. These sources support fin conduction, **not** a predictive
+outside-film HTC, pressure drop or bank-row correction for the new surface.
+The sources cited by these articles were not imported as implementation
+requirements. See [scope](rectangular_finned_ellipse.md).
+
 ---
 
 ## Heat Exchanger Theory and ε-NTU Method
