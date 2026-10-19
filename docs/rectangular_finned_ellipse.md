@@ -169,3 +169,13 @@ diameter or arbitrary fin-factor substitute is allowed. Ribeiro prediction
 is deferred pending source closure of flow-area, diameter and applicability
 definitions. Contact resistance, convective edges, variable h/k, radiation,
 3D and wet rectangular fins require separate documented model variants.
+
+The [second-series targeted source closure](validation/finned_ellipse_source_closure_v092.md)
+checked Tang--Du--Zeng (2019), Zhao--Yang (2016), Ribeiro--Andrade (2004),
+the Ribeiro thesis record, and the audit's Chiu--Lin--Jang (2007) hydraulic
+candidate on 2026-10-19. Tang's full free publisher PDF provides a physical-h
+Nu equation and fixed N=2 scope, but its flow construction and mapping to
+individual rectangular fins remain incomplete. No candidate closed a complete
+predictive model for this geometry. The existing applicability refusals remain;
+the requested full thermal-hydraulic v0.9.2 release is not complete. The note
+records exact recovered equations, missing definitions and retrieval limits.

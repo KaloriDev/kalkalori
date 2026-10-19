@@ -28,6 +28,12 @@ The project follows **Semantic Versioning (SemVer)**:
   accessible primary CET (2020) and CC BY Energies (2021) publications.
   See [scope and source provenance](docs/rectangular_finned_ellipse.md) and
   [numerical validation](docs/validation/finned_foundation_v092.md).
+- Recorded the second-series [targeted free-source closure](docs/validation/finned_ellipse_source_closure_v092.md).
+  The full free Tang (2019) paper closes the Nu equation and fixed N=2 scope,
+  but not all bank geometry/flow/property definitions; the checked sources do
+  not close a predictive hydraulic model. No new empirical model or normal
+  rectangular-finned-ellipse Rating/Simulation support is claimed. Completion
+  of the requested thermal-hydraulic release remains blocked on these sources.
 
 ## [0.9.1] — Topology-aware N-section counter-crossflow
 

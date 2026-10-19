@@ -503,6 +503,19 @@ public equations, with exact capacity-ratio limits and an independently
 derived inverse. No upstream code or source PDFs are redistributed.
 See [assumptions, equations and validation](thermal_topology.md).
 
+## Rectangular-finned ellipse candidates: source closure pending
+
+The [targeted v0.9.2 source-closure record](validation/finned_ellipse_source_closure_v092.md)
+links the free primary material checked on 2026-10-19: Tang, Du and Zeng
+(2019), DOI 10.11949/0438-1157.20190527; Zhao and Yang (2016), DOI
+10.11908/j.issn.0253-374x.2016.02.020; Ribeiro Jr. and Andrade (2004), DOI
+10.1590/S0104-66322004000200025; the UFMG Ribeiro thesis catalogue; and
+Chiu, Lin and Jang (Clima 2007). It distinguishes retrieved full papers from
+abstract/catalogue-only evidence and records each missing model definition.
+These candidates have not supplied a complete predictive model for public
+rectangular-finned-ellipse dispatch. The current implementation authorities
+for geometry/conduction remain those listed in the surface guide.
+
 ## Private Reference Sources
 
 Project source policy: built-in engineering correlations must be independently
