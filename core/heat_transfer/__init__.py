@@ -8,6 +8,11 @@ This package contains low-level, reusable building blocks.
 """
 
 from .ntu import effectiveness_ntu, heat_duty_from_effectiveness
+from .thin_plate_fin import (
+    ThinPlateFinEfficiency2D,
+    ThinPlateFinEfficiencyResult,
+    FinEfficiencyConvergenceError,
+)
 
 from .streams import (
     EnergyStream,
