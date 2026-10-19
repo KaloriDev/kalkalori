@@ -18,6 +18,7 @@ from .finned_tube import (
     EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD,
 )
 from .elliptical_tube import EllipticalTube
+from .rectangular_finned_tube import RectangularIndividualFin, RectangularFinnedEllipticalTube
 from .applicability import TubeGeometryApplicabilityError
 from .bundle import TubeBundle, TubePathType, RowParityMode
 
@@ -53,6 +54,8 @@ __all__ = [
     "BaseTube",
     "BareTube",
     "EllipticalTube",
+    "RectangularIndividualFin",
+    "RectangularFinnedEllipticalTube",
     "TubeGeometryApplicabilityError",
     "CircularFinnedTube",
     "TubeOrientation",
