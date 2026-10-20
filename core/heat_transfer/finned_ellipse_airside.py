@@ -6,12 +6,13 @@ user-authorized 2026-10-20 source package; no claim of free full-text access.
 Eq.20 excludes fin conduction. Eq.18 is diagnostic only. Flow normalization
 is a separately identified engineering reconstruction, not a printed equation.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.applicability import TubeGeometryApplicabilityError
 from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
+from core.heat_transfer.airside_correction import AirsideCorrection, AirsideCorrectionProvider
 
 
 ZHAO2017_CITATION = (
@@ -171,10 +172,13 @@ class Zhao2017AirsideResult:
 class Zhao2017AirsideModel:
     """Authorized engineering baseline; extrapolate with warnings by default."""
     strict_source_domain: bool = False
+    correction_provider: AirsideCorrectionProvider | None = None
 
     def __post_init__(self):
         if not isinstance(self.strict_source_domain, bool):
             raise TypeError('strict_source_domain must be boolean.')
+        if self.correction_provider is not None and not callable(getattr(self.correction_provider,'correct',None)):
+            raise TypeError('correction_provider must implement correct(base_result, *, bundle, props).')
 
     def evaluate(self, bundle, m_dot, props):
         flow = zhao2017_flow(bundle,m_dot,props)
@@ -196,5 +200,15 @@ class Zhao2017AirsideModel:
         h = f.j_prime*props.rho*props.cp*flow.reference_velocity/flow.prandtl_number**(2/3)
         dp = f.friction_factor*props.rho*flow.reference_velocity**2/2*(bundle.total_outer_area/flow.average_passage_area)
         _positive(h_film=h, pressure_estimate=dp)
-        return Zhao2017AirsideResult(flow,f,h,h,dp,dp,tuple(warnings),bundle.total_outer_area,
-                                    f.extrapolated_parameters+flow.geometry_extrapolation)
+        baseline = Zhao2017AirsideResult(flow,f,h,h,dp,dp,tuple(warnings),bundle.total_outer_area,
+                                        f.extrapolated_parameters+flow.geometry_extrapolation)
+        if self.correction_provider is None:
+            return baseline
+        correction = self.correction_provider.correct(baseline,bundle=bundle,props=props)
+        if not isinstance(correction,AirsideCorrection):
+            raise TypeError('Airside correction provider must return AirsideCorrection.')
+        corrected_h,corrected_dp=correction.apply(h,dp)
+        notice=make_warning(code='airside_correction_applied',source='airside_correction',severity='info',
+            message='Explicit airside correction: '+correction.provenance)
+        return replace(baseline,h_film=corrected_h,pressure_drop=corrected_dp,
+                       correction_provenance=correction.provenance,warnings=baseline.warnings+(notice,))
