@@ -1,5 +1,11 @@
 # Rectangular-finned ellipse: targeted source closure for v0.9.2
 
+Historical decision under the 2026-10-19 free-source-only requirement. The
+2026-10-20 explicit authorization of supplied Zhao transcriptions and graded
+engineering reconstructions supersedes the implementation stop for that
+baseline; it does not change the access findings recorded below. See the
+[current implementation evidence](zhao2017_v092.md).
+
 Access checked: **2026-10-19**. Decision: **NOT READY for predictive bank
 implementation**. No new empirical model or Rating/Simulation capability is
 claimed. The requested final-release acceptance case remains blocked.

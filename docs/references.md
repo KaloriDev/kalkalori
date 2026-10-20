@@ -503,7 +503,25 @@ public equations, with exact capacity-ratio limits and an independently
 derived inverse. No upstream code or source PDFs are redistributed.
 See [assumptions, equations and validation](thermal_topology.md).
 
-## Rectangular-finned ellipse candidates: source closure pending
+## Rectangular-finned ellipse: Zhao engineering baseline and source grades
+
+Zhao, L.; Gu, X.; Gao, L.; Yang, Z. (2017). *Numerical study on airside
+thermal-hydraulic performance of rectangular finned elliptical tube heat
+exchanger with large row number in turbulent flow regime*. International
+Journal of Heat and Mass Transfer 114, 1314–1330.
+[DOI 10.1016/j.ijheatmasstransfer.2017.06.049](https://doi.org/10.1016/j.ijheatmasstransfer.2017.06.049).
+
+The project explicitly authorized the supplied equation transcriptions on
+2026-10-20. Eqs.18–20 and definitions were provided with visual evidence;
+the diameter inference and passage-area reconstruction remain separately
+identified project assumptions. Free full-text access is not asserted.
+No source figures, article text, PDFs or external implementation are included.
+See [equations, source grades and limits](rectangular_finned_ellipse.md) and
+[numerical evidence](validation/zhao2017_v092.md). This baseline is not a
+claim that every rectangular-finned ellipse has experimentally validated
+thermal/hydraulic support.
+
+### Earlier free-source candidates
 
 The [targeted v0.9.2 source-closure record](validation/finned_ellipse_source_closure_v092.md)
 links the free primary material checked on 2026-10-19: Tang, Du and Zeng
@@ -512,9 +530,9 @@ links the free primary material checked on 2026-10-19: Tang, Du and Zeng
 10.1590/S0104-66322004000200025; the UFMG Ribeiro thesis catalogue; and
 Chiu, Lin and Jang (Clima 2007). It distinguishes retrieved full papers from
 abstract/catalogue-only evidence and records each missing model definition.
-These candidates have not supplied a complete predictive model for public
-rectangular-finned-ellipse dispatch. The current implementation authorities
-for geometry/conduction remain those listed in the surface guide.
+Those candidates did not close a complete predictive model under the earlier
+free-source-only decision. The current Zhao baseline follows the separate
+2026-10-20 authorization; geometry/conduction authorities remain unchanged.
 
 ## Private Reference Sources
 
@@ -523,6 +541,9 @@ reproducible from legally and freely accessible source material. Models
 requiring paywalled publications, licensed datasets, proprietary software or
 manufacturer-confidential information are integrated through external
 providers. This is a project rule, not an interpretation of copyright law.
+The explicitly authorized Zhao-2017 transcription/reconstruction described
+above is a scoped project-policy exception; it does not establish free access
+or authorize importing other inaccessible source models.
 M&B Part I/II are reserved as sources for a future private external provider;
 neither their implementation nor manufacturer physics is included in the
 new enhancement module. Existing bibliographic entries below and elsewhere

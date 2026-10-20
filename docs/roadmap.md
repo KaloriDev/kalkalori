@@ -39,7 +39,8 @@ Interpretation in KalKalori:
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
 **Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
-**Scope:** Bare and circular-finned tube heat exchangers, forced external flow,
+**Scope:** Bare/circular-finned exchangers and the explicitly reconstructed dry
+Zhao rectangular-finned-ellipse baseline, forced external flow,
 0D sensible/phase-change balance and source-profile wet-coil approximation,
 tube-bank hydraulic balance,
 local nozzle/chamber/tube-sheet/return losses, unified surface-margin reporting,
@@ -52,14 +53,21 @@ and distributed thermal resolution remain future work.
 
 ## Roadmap Overview
 
-### v0.9.2 — Finned non-circular foundation (implemented)
+### v0.9.2 — Rectangular-finned elliptical engineering baseline (implemented)
 
 - Individual rectangular transverse fins on an existing elliptical tube.
 - Exact physical surface accounting and deterministic 2D fin conduction.
 - Physical h -> eta(h) -> effective area in the common resistance network.
-- Public predictive outside HTC, outside bank pressure loss and N_rows
-  correction for this surface remain source-closure work. No correlation
-  fallback or empirical calibration is supplied.
+- Zhao-2017 Eq.20 physical h and Eq.19 f with inferred diameter and explicit
+  reconstructed passage normalization. Dry Rating/Simulation uses the common
+  network and a finite source-domain pressure estimate, not a certified
+  bank-only irreversible loss. No circular fallback or hidden calibration.
+- Source N=6–10; other positive counts calculate with extrapolation warnings.
+  Optional strict mode rejects out-of-domain cases. Simplified-fin warnings
+  and one neutral h/pressure correction hook retain visible provenance.
+- Explicit FD laminar H1 and confocal wall models support the internal ellipse
+  path. Turbulent/developing internal ellipse and tube-sheet loss models remain
+  outside the supported normal path.
 - Contact resistance, outer-edge convection, nonuniform h, variable k,
   radiation, 3D conduction and wet rectangular fins remain future variants.
 
@@ -309,7 +317,7 @@ smooth laminar Darcy friction, fully developed H1 internal heat transfer and
 explicit exact confocal wall resistance. Model diagnostics retain assumptions
 and public provenance; circular-only paths reject ellipse geometry explicitly.
 
-Automatic elliptical-bank Rating/Simulation remains unsupported because
+Automatic bare-ellipse-bank Rating/Simulation remains unsupported because
 validated outside HTC and hydraulic models are unavailable. This milestone
 does not enable fins, inserts, phase change, wet ellipse, T/H2, or
 developing/turbulent ellipse flow. See [the foundation guide](elliptical_tubes.md).

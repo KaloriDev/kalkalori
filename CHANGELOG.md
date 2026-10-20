@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [0.9.2] — Finned non-circular geometry and conduction foundation
+## [0.9.2] — Rectangular-finned elliptical baseline and conduction
 
 - Added frozen `RectangularIndividualFin` / `RectangularFinnedEllipticalTube`
   composition with explicit enclosure, pitch, dimension and material checks.
@@ -18,22 +18,35 @@ The project follows **Semantic Versioning (SemVer)**:
 - The existing resistance network now evaluates physical h -> eta(h) ->
   effective area. Fin efficiency reduces only the broad-face contribution;
   the physical film coefficient is preserved and edge convection excluded.
-- Automatic outside HTC, outside hydraulics and full Rating/Simulation
-  explicitly reject this surface: no applicable public predictive model or
-  N_rows correction has been implemented. No commercial presets, calibration,
-  contact resistance, wet fin model or substitute circular/bare correlation
-  was added. Existing v0.9.1 numerical models are retained.
+- Added `Zhao2017AirsideModel`: source-transcribed Eq.20 supplies physical
+  film h, Eq.19 supplies f, and Eq.18 remains a diagnostic only. An inferred
+  4A/P diameter and explicit periodic-volume passage reconstruction produce
+  velocity/Re and a finite source-domain inlet-to-outlet pressure estimate.
+  Pressure scope is typed separately from irreversible bank losses, without
+  duplicate acceleration/entry/exit terms or hidden calibration.
+- Integrated this dry baseline into normal Rating/Simulation, with current-state
+  h -> 2D eta -> effective area coupling. The internal ellipse path requires
+  explicit FD laminar H1 assumptions and confocal wall selection; unsupported
+  tube-sheet losses are omitted with a scope warning.
+- Source N=6–10 and geometric/Re bounds are diagnosed; extrapolation (including
+  N=2/4) calculates with warnings by default. Optional strict mode rejects.
+  Simplified fins always carry a source-geometry approximation warning.
+- Added one neutral `AirsideCorrectionProvider` hook with positive physical-h
+  and pressure multipliers/replacements, visible base/corrected values and
+  provenance. Provider failures propagate without fallback.
+- No wet rectangular-fin model, source-specific contact resistance, circular/
+  smooth-ellipse outside substitute or additional row correction was added.
+  Existing v0.9.1 numerical baselines are retained.
 - Added analytical geometry, insulated straight-fin, symmetry, convergence,
   energy and network tests. Implementation references are the freely
   accessible primary CET (2020) and CC BY Energies (2021) publications.
   See [scope and source provenance](docs/rectangular_finned_ellipse.md) and
   [numerical validation](docs/validation/finned_foundation_v092.md).
-- Recorded the second-series [targeted free-source closure](docs/validation/finned_ellipse_source_closure_v092.md).
-  The full free Tang (2019) paper closes the Nu equation and fixed N=2 scope,
-  but not all bank geometry/flow/property definitions; the checked sources do
-  not close a predictive hydraulic model. No new empirical model or normal
-  rectangular-finned-ellipse Rating/Simulation support is claimed. Completion
-  of the requested thermal-hydraulic release remains blocked on these sources.
+- The historical [free-source closure](docs/validation/finned_ellipse_source_closure_v092.md)
+  is preserved. The 2026-10-20 project authorization accepts supplied equation
+  transcriptions and explicitly graded engineering reconstruction for this
+  baseline; free full-text access to Zhao 2017 is not claimed. See the
+  [implementation validation](docs/validation/zhao2017_v092.md).
 
 ## [0.9.1] — Topology-aware N-section counter-crossflow
 

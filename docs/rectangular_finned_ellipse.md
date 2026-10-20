@@ -1,11 +1,13 @@
 # Rectangular individual fins on elliptical tubes (v0.9.2)
 
-This release provides a public physical foundation for a centered rectangular
-transverse fin on a mathematical elliptical tube. It supports geometry,
-analytical surface areas and deterministic 2D thin-plate fin efficiency.
-It does not supply predictive outside HTC, bank pressure drop or N_rows
-corrections for this surface. Normal Rating/Simulation rejects the geometry
-with `TubeGeometryApplicabilityError` before selecting unrelated physics.
+This release provides geometry, analytical surface areas, deterministic 2D
+fin conduction and a **Zhao-2017-based engineering air-side baseline** for
+individual rectangular fins on elliptical tubes. Normal dry Rating/Simulation
+uses physical film h, solves eta(h), and returns a finite pressure estimate.
+The equations, inferred diameter and reconstructed passage normalization have
+different evidence grades; none is silently promoted to an exact source
+definition. This is not experimental validation of every rectangular-finned
+ellipse. Prescribed-film network calculations remain available separately.
 
 ## Geometry and area definitions
 
@@ -163,19 +165,211 @@ No paid/private coefficients, calibration data or experimental provider code
 were used. Numerical evidence is recorded in
 [the validation note](validation/finned_foundation_v092.md).
 
-Public predictive outside HTC, bank pressure loss and row effects remain
-unsupported for this surface. No smooth-ellipse, circular-bank, equivalent-
-diameter or arbitrary fin-factor substitute is allowed. Ribeiro prediction
-is deferred pending source closure of flow-area, diameter and applicability
-definitions. Contact resistance, convective edges, variable h/k, radiation,
-3D and wet rectangular fins require separate documented model variants.
+The [2026-10-19 free-source decision](validation/finned_ellipse_source_closure_v092.md)
+remains a historical record. On 2026-10-20 the project explicitly authorized
+implementation using supplied Zhao/Tongji equation transcriptions and visible
+engineering reconstructions. Free access to the full Zhao paper is **not**
+asserted. No article images, full papers or external code are redistributed.
+The geometry/conduction sources above and their independent implementation
+remain unchanged. See [implementation validation](validation/zhao2017_v092.md).
 
-The [second-series targeted source closure](validation/finned_ellipse_source_closure_v092.md)
-checked Tang--Du--Zeng (2019), Zhao--Yang (2016), Ribeiro--Andrade (2004),
-the Ribeiro thesis record, and the audit's Chiu--Lin--Jang (2007) hydraulic
-candidate on 2026-10-19. Tang's full free publisher PDF provides a physical-h
-Nu equation and fixed N=2 scope, but its flow construction and mapping to
-individual rectangular fins remain incomplete. No candidate closed a complete
-predictive model for this geometry. The existing applicability refusals remain;
-the requested full thermal-hydraulic v0.9.2 release is not complete. The note
-records exact recovered equations, missing definitions and retrieval limits.
+## Zhao 2017: equations and evidence grades
+
+Zhao, Gu, Gao, Yang (2017), *Numerical study on airside thermal-hydraulic
+performance of rectangular finned elliptical tube heat exchanger with large
+row number in turbulent flow regime*, IJHMT 114, 1314–1330,
+[DOI 10.1016/j.ijheatmasstransfer.2017.06.049](https://doi.org/10.1016/j.ijheatmasstransfer.2017.06.049).
+`Zhao2017AirsideModel` uses the supplied, visually verified transcriptions:
+
+```text
+Xt=(Pt-Dt)/Dt; Xl=(Pl-Dl)/Dl; Xp=Fp/de; Xf=Ft/de
+j_eff = 1.0062*N**(-0.2045)*Xt**(-0.7268)*Xl**0.1319
+        *Xp**0.1381*Xf**0.1495*Re**(-0.4408)       # Eq.18
+f = 1.3549*N**(-0.0591)*Xt**(-0.9114)*Xl**0.4709
+    *Xp**0.1296*Xf**0.0438*Re**(-0.3164)          # Eq.19
+j_prime = 0.2*N**(-0.2160)*Xt**(-0.82)*Xl**0.1361
+          *Xp**0.0043*Xf**(-0.0578)*Re**(-0.3326) # Eq.20
+h_film = j_prime*rho*cp*u_m/Pr**(2/3)
+```
+
+Eq.20 excludes fin thermal resistance. Eq.18 includes it and is **diagnostic
+only**. The source Colburn definition is inverted to obtain physical film h;
+only the common resistance network applies eta and effective area.
+
+The source nominal geometry is a 36×14 mm ellipse with a 55×26 mm fin envelope,
+small holes, positioning tabs and clipped corners. Source tubes/fins were
+carbon steel; Eq.18 diagnostics retain that source-material context. The public
+geometry is a full ideal rectangle. Every calculation carries
+`source_geometry_simplified_rectangular_fin`; positive fin conductivity is a
+user input, never a carbon-steel whitelist. The canonical major axis and fin
+width are parallel to air flow. Other cross-section orientations reject.
+Fin envelopes must not overlap and tube gaps must be positive.
+
+| Parameter | Source fit interval |
+|---|---|
+| Xt | 0.93–1.50 |
+| Xl | 0.56–0.78 |
+| Xp | 0.10–0.52 |
+| Xf | 0.01–0.03 |
+| Re_de | 5500–23800 |
+| N_rows | 6–10 |
+
+The supplied regression campaign used frontal CFD velocities 3.5–12.5 m/s.
+The callable source-domain checks use the printed normalized ratios and Re/N
+intervals above; this campaign description is not an independently validated
+extension to other fluids, materials or property temperatures.
+
+The default model calculates outside these intervals with explicit
+`zhao2017_extrapolated_*` warnings and no clipping. N=2/4 is therefore an
+**extrapolated baseline**, not a newly supported experimental row law.
+`Zhao2017AirsideModel(strict_source_domain=True)` rejects out-of-domain ratios,
+Re/N and nominal geometry/layout extrapolation. The simplified-fin caveat
+remains even for nominal dimensions. No extra N multiplier is applied: N
+already enters Eqs.18–20 and actual physical bundle area. Tube-side pass count
+does not enter any air-side correlation or physical surface scaling.
+
+### Source-inferred diameter and reconstructed velocity
+
+The package identifies `de=4*Se/P_ellipse` as **source-derived/inferred**, not a
+printed Zhao formula. `Se` is the actual elliptical aperture area; the existing
+accurate outer perimeter is reused. For 36×14 mm, de=0.019218003478794744 m.
+
+The average passage is an **engineering reconstruction** on one periodic cell:
+
+```text
+Sg = Pt*Fp
+Savg = Sg - ((Fp-Ft)*Se + Ft*Wx*Wy)/Pl
+sigma_avg = Savg/Sg
+Aa = bundle.frontal_flow_area*sigma_avg
+u_frontal = m_dot/(rho*bundle.frontal_flow_area)
+u_m = m_dot/(rho*Aa)
+Re_de = rho*u_m*de/mu; Pr = cp*mu/k
+```
+
+Wx/Wy are actual fin width along/across flow. Neither Aa nor de is replaced by
+a circular-bank throat or a nominal circular diameter. The separate sensitivity
+estimate `sigma_throat=(Pt*Fp-(Fp-Ft)*Dt-Ft*Wy)/(Pt*Fp)` and
+`u_max_est=u_frontal/sigma_throat` do not drive the correlations.
+Nonfinite/nonpositive passage area, properties or mass flow reject.
+
+Zhao's CFD used constant air properties at an average flow-field temperature.
+The normal 0D engine's mean bulk state approximates that convention. Each
+thermal iteration recomputes h and eta from its current state; cached numerical
+fin meshes/results remain in use. Hydraulic inlet/midpoint/outlet diagnostics
+retain their respective properties, while the source pressure estimate uses
+the arithmetic-temperature midpoint, without a new axial integration law.
+
+### Pressure estimate and the existing result contract
+
+The source definition `f=2*DeltaP*Aa/(rho*u_m**2*A)` gives:
+
+```text
+DeltaP_estimate = f*(rho*u_m**2/2)*(A_physical/Aa)
+```
+
+Physical exposed area, including geometric edges, is used, never eta-reduced
+area. This is `source_domain_inlet_to_outlet_estimate`, with
+`validated_bank_irreversible=False`. No separate acceleration, entrance/exit,
+duct or extra row contribution is added. The input package reports an unresolved
+normalization signal of roughly 735 Pa versus 404.49 Pa for one nine-row source
+case; this is not silently fitted away or presented as a validated fixture.
+
+Normal `outside_dp_total` returns the finite estimate.
+`outside_tube_bank_hydraulic.midpoint.airside_result` exposes its raw/corrected
+values and provenance. The legacy `dp_drag` slot aliases this estimate; it must
+not be read as a separately validated form/irreversible drag.
+`outside_side_pressure_drop.flow_path` is a
+`SourceDomainPressureEstimateResult`, not an irreversible-loss stage path.
+Its compatibility totals carry the estimate and `components_resolved=False`;
+zero additional dynamic/local terms mean none was added, not a measured physical
+decomposition. Combining this estimate with explicit irreversible local-loss
+assemblies is rejected. Ordinary circular pressure-path semantics are unchanged.
+
+## Normal dry Simulation and Rating
+
+Automatic bare-ellipse bank models remain unavailable. For the finned source
+baseline, inside physics must also be chosen explicitly. The currently
+integrated ellipse path uses declared smooth, fully developed laminar H1 flow
+and exact **confocal** wall conduction. No circular turbulent/entrance/exit
+correlation is substituted. Tube-side pressure reports distributed friction and
+bulk acceleration with a warning that tube-sheet losses were not evaluated.
+Other inner contours, internal developing/turbulent flow, inserts, phase change
+and wet rectangular fins require separate models and remain unsupported.
+
+```python
+import math
+from core.geometry import (
+    EllipticalTube, RectangularIndividualFin, RectangularFinnedEllipticalTube,
+    TubeBundle,
+)
+from core.heat_transfer import EllipticalFlowAssumptions, TubeWallModel
+from core.models.bare_tube import BareTubeHeatExchanger
+from core.models.simulation import HXSideInput
+from core.models.heat_balance import BalanceSideSpec
+from core.properties import ConstantPropertyProvider
+from core.properties.common import FluidTransportProperties
+
+ai = .0175
+bi = math.sqrt(ai**2 - (.018**2 - .007**2))  # explicitly confocal inner contour
+core = EllipticalTube(.018, .007, ai, bi, 1., 1., 45., roughness_inner=0.)
+tube = RectangularFinnedEllipticalTube(
+    core, RectangularIndividualFin(.055, .026, .0003, .004, 45.))
+bundle = TubeBundle(tube, 8, 6, .031, .060, 'staggered', 2,
+                    flow_arrangement='counterflow')  # explicit 0D thermal topology
+hx = BareTubeHeatExchanger(
+    bundle,
+    elliptical_flow_assumptions=EllipticalFlowAssumptions(
+        regime='laminar', development='fully_developed',
+        thermal_boundary_condition='H1'),
+    tube_wall_model=TubeWallModel.CONFOCAL_EXACT,
+)
+liquid = ConstantPropertyProvider(FluidTransportProperties(
+    rho=1000., mu=.02, k=.6, cp=4200.))
+air = ConstantPropertyProvider(FluidTransportProperties(
+    rho=1.2, mu=1.85e-5, k=.026, cp=1006.))
+inside = HXSideInput(provider=liquid, m_dot=1., T_in=360., p=300000.)
+outside = HXSideInput(provider=air, m_dot=1.7, T_in=300., p=101325.)
+simulation = hx.simulate(inside, outside)
+rating = hx.rate(
+    BalanceSideSpec(provider=liquid, m_dot=1., T_in=360.,
+                    T_out=simulation.T_out_inside, p=300000.),
+    BalanceSideSpec(provider=air, m_dot=1.7, T_in=300.,
+                    T_out=simulation.T_out_outside, p=101325.),
+    include_simulation=False,
+)
+d = simulation.finned_tube_diagnostics
+print(simulation.q, simulation.UA, simulation.outside_dp_total)
+print(d.outside_alpha_physical, d.eta_fin, d.A_outside_geometric, d.A_effective)
+print(d.airside_result.flow, d.airside_result.extrapolated_parameters)
+```
+
+This is a synthetic numerical example with an explicit thermal-topology and
+FD internal-flow assumption, not a reconstruction of a measured exchanger.
+The geometry and operating point fit the source air-side ratios, with the
+always-present simplified-fin and flow-normalization caveats.
+
+## Optional neutral correction hook
+
+Configure one dependency-injected object through `Zhao2017AirsideModel`:
+
+```python
+from core.heat_transfer import AirsideCorrection, Zhao2017AirsideModel
+
+class ExampleCorrection:
+    def correct(self, base_result, *, bundle, props):
+        return AirsideCorrection(
+            provenance='user_supplied_example', h_film_multiplier=1.05,
+            pressure_drop_multiplier=1.10)
+
+model = Zhao2017AirsideModel(correction_provider=ExampleCorrection())
+# Pass airside_model=model to BareTubeHeatExchanger(...).
+```
+
+Without a provider the public baseline works on its own. Each channel can have
+one positive multiplier or replacement (`h_film_replacement`,
+`pressure_drop_replacement`), never both. h is corrected **before** eta;
+pressure is corrected on the final estimate. `h_film_base`, `h_film`,
+`pressure_drop_base`, `pressure_drop` and `correction_provenance` remain visible.
+Providers must be deterministic for a given state; exceptions/invalid responses
+propagate without fallback. There is no runtime name discovery or global hook.
+These example multipliers are API demonstrations, not calibration coefficients.

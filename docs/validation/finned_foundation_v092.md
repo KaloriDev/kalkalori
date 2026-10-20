@@ -1,5 +1,10 @@
 # v0.9.2 finned foundation validation
 
+Historical first-series evidence. The later Zhao engineering baseline and
+normal-workflow integration are documented in [the current validation
+record](zhao2017_v092.md). Source-gap statements and test counts below describe
+the original foundation at its recorded HEAD, not the completed later baseline.
+
 Implementation base: merged public `main` / tag `v0.9.1`,
 `36031d2de6a8f2d747c6929b4d386bf68df8cfff` (PR #28).
 The six subsequent experimental provider commits are not ancestors of this
