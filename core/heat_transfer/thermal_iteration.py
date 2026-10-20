@@ -449,8 +449,8 @@ def _evaluate_local_wall_state(
     finned_heat_transfer_provider: object = DEFAULT_FINNED_HT_PROVIDER,
 ) -> _LocalWallEvaluation:
     """Evaluate correlations and the resistance split at one fixed bulk pair."""
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
     from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 
     bundle = hx.bundle
@@ -500,6 +500,7 @@ def _evaluate_local_wall_state(
     )
     if enhancement is None:
         internal = internal_heat_transfer_diagnostics(
+            assumptions=hx.elliptical_flow_assumptions,
             m_dot=m_dot_inside,
             tube=tube,
             flow_area=bundle.internal_flow_area_per_pass,
@@ -517,6 +518,7 @@ def _evaluate_local_wall_state(
         Pr_s = outside_prandtl_number(wall_o.cp, wall_o.mu, wall_o.k)
 
     outside_dispatch = evaluate_outside_thermal(
+        airside_model=hx.airside_model,
         bundle=bundle,
         m_dot=m_dot_outside,
         props=to_outside_fluid_props(bulk_o),

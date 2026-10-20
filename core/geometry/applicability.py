@@ -28,8 +28,7 @@ def require_circular_tube(tube, model: str) -> None:
 def require_automatic_outside_bank(tube, model: str) -> None:
     """Reject source gaps before evaluating any surrogate bank physics."""
     if getattr(tube, 'surface_type', None) is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
-        raise TubeGeometryApplicabilityError(
-            f"{model}: rectangular-individual-finned elliptical outside-bank physics "
-            "has no applicable public HTC or pressure-drop model. "
-            "Geometry and prescribed-film fin efficiency are supported separately.")
+        # Source-specific model selection/geometry validation belongs to the
+        # outside dispatcher. This is not circular or smooth-ellipse physics.
+        return
     require_circular_tube(tube, model)

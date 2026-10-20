@@ -8,6 +8,11 @@ This package contains low-level, reusable building blocks.
 """
 
 from .ntu import effectiveness_ntu, heat_duty_from_effectiveness
+from .finned_ellipse_airside import (
+    Zhao2017AirsideModel, Zhao2017AirsideResult, Zhao2017Flow,
+    Zhao2017Factors, zhao2017_factors, zhao2017_flow,
+)
+from .airside_correction import AirsideCorrection, AirsideCorrectionProvider
 from .thin_plate_fin import (
     ThinPlateFinEfficiency2D,
     ThinPlateFinEfficiencyResult,
@@ -109,6 +114,9 @@ from core.common.warnings import (
 )
 
 __all__ = [
+    "Zhao2017AirsideModel", "Zhao2017AirsideResult", "Zhao2017Flow",
+    "Zhao2017Factors", "zhao2017_factors", "zhao2017_flow",
+    "AirsideCorrection", "AirsideCorrectionProvider",
     "ThinPlateFinEfficiency2D",
     "ThinPlateFinEfficiencyResult",
     "FinEfficiencyConvergenceError",

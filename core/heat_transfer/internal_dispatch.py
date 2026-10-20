@@ -13,6 +13,9 @@ from core.pressure_drop.straight_sections import darcy_friction_factor, darcy_fr
 def internal_heat_transfer_diagnostics(*, tube, m_dot, flow_area, props,
                                      T_bulk=None, T_wall=None, L_heated=None,
                                      assumptions=None):
+    from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
+    if isinstance(tube,RectangularFinnedEllipticalTube):
+        tube=tube.core_tube
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
         from core.heat_transfer.elliptical_internal import elliptical_h1_heat_transfer
         return elliptical_h1_heat_transfer(tube,m_dot,props,assumptions=assumptions,flow_area=flow_area)
@@ -30,6 +33,9 @@ def internal_heat_transfer_coefficient(**kwargs):
 
 
 def internal_friction(*, tube, reynolds, relative_roughness=None, assumptions=None):
+    from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
+    if isinstance(tube,RectangularFinnedEllipticalTube):
+        tube=tube.core_tube
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
         from core.geometry.applicability import TubeGeometryApplicabilityError
         if relative_roughness not in (None,0.):
@@ -42,8 +48,11 @@ def internal_friction(*, tube, reynolds, relative_roughness=None, assumptions=No
             darcy_friction_factor_method(reynolds, relative_roughness))
 
 
-def straight_friction_evaluator(tube):
+def straight_friction_evaluator(tube, *, assumptions=None):
     """Bind geometry once; hydraulic points evaluate the selected law first."""
+    if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL and assumptions is not None:
+        return lambda reynolds, roughness: internal_friction(
+            tube=tube,reynolds=reynolds,relative_roughness=roughness,assumptions=assumptions)
     require_circular_tube(tube, "Automatic tube-bundle friction and entrance/exit losses")
     return lambda reynolds, roughness: internal_friction(
         tube=tube, reynolds=reynolds, relative_roughness=roughness)

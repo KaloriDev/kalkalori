@@ -97,3 +97,30 @@ def test_invalid_geometry_and_orientation_are_hard_errors():
 def test_conductivity_changes_no_airside_correlation():
     b=source_bundle(); modified=replace(b,tube=replace(b.tube,fin=replace(b.tube.fin,thermal_conductivity=200.)))
     assert Zhao2017AirsideModel().evaluate(b,1.7,AIR)==Zhao2017AirsideModel().evaluate(modified,1.7,AIR)
+
+
+def test_rows_scale_exactly_once_and_never_use_tube_pass_count():
+    model=Zhao2017AirsideModel()
+    a=model.evaluate(source_bundle(8),1.7,AIR)
+    b=model.evaluate(source_bundle(6),1.7,AIR)
+    assert b.h_film/a.h_film==pytest.approx((6/8)**(-.216))
+    assert b.pressure_drop/a.pressure_drop==pytest.approx((6/8)**(1-.0591))
+    assert model.evaluate(source_bundle(8,1),1.7,AIR)==a
+
+
+def test_pitch_and_thickness_update_source_flow_and_physical_surface():
+    from core.heat_transfer.outside_dispatch import calculate_resistance_network
+    b=source_bundle()
+    results=[]
+    for fin in (b.tube.fin,replace(b.tube.fin,axial_pitch=.006),replace(b.tube.fin,thickness=.0006)):
+        bundle=replace(b,tube=replace(b.tube,fin=fin))
+        r=Zhao2017AirsideModel().evaluate(bundle,1.7,AIR)
+        n=calculate_resistance_network(bundle=bundle,alpha_inside=500.,outside_alpha_physical=r.h_film,resistance_core_wall=.001)
+        assert n.A_physical==bundle.total_outer_area
+        assert n.A_effective==pytest.approx(bundle.n_tubes_total*bundle.tube.effective_outside_area(n.fin_efficiency))
+        assert n.conductance_primary_outside+n.conductance_fin_outside==pytest.approx(r.h_film*n.A_effective)
+        results.append((r,n))
+    a,sparse,thick=results
+    assert sparse[1].A_physical<a[1].A_physical
+    assert thick[0].flow.sigma_average<a[0].flow.sigma_average
+    assert thick[1].fin_efficiency>a[1].fin_efficiency

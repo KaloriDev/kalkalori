@@ -114,16 +114,15 @@ def invoke(fn, **overrides):
 
 
 @pytest.mark.parametrize('fn', [evaluate_outside_thermal, evaluate_outside_hydraulics])
-def test_unsupported_outside_models_refuse_before_property_or_provider_access(fn):
-    with pytest.raises(TubeGeometryApplicabilityError, match='rectangular.*no applicable public'):
-        invoke(fn, bundle=bundle())
+def test_unsupported_orientation_refuses_before_property_or_provider_access(fn):
+    b=bundle()
+    bad=replace(b,tube=replace(b.tube,core_tube=replace(b.tube.core_tube,orientation_angle=.2)))
+    with pytest.raises(TubeGeometryApplicabilityError, match='parallel to flow'):
+        invoke(fn, bundle=bad)
 
 
-def test_all_normal_workflows_explicitly_refuse_the_source_gap():
+def test_generic_circular_throat_is_still_unavailable_for_rectangular_fins():
     hx = BareTubeHeatExchanger(bundle())
-    for fn in (hx.solve, hx.solve_thermal_state, hx.rate, hx.simulate, run_rating, run_simulation):
-        with pytest.raises(TubeGeometryApplicabilityError, match='rectangular.*no applicable public'):
-            invoke(fn, **({'hx': hx} if 'hx' in inspect.signature(fn).parameters else {}))
     for name in ('minimum_free_flow_gap', 'minimum_free_flow_area'):
         # Do not create a surrogate A_min/diameter definition for this surface.
         with pytest.raises(TubeGeometryApplicabilityError):

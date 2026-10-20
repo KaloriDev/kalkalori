@@ -25,7 +25,11 @@ ZHAO2017_DOMAIN = (
 
 def _positive(**values):
     for name, value in values.items():
-        if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+        try:
+            valid = not isinstance(value,bool) and math.isfinite(value) and value>0
+        except TypeError:
+            valid = False
+        if not valid:
             raise ValueError(f'{name} must be positive and finite [SI].')
 
 
@@ -100,13 +104,8 @@ class Zhao2017Flow:
     passage_area_basis: str = 'periodic_streamwise_volume_average_engineering_reconstruction'
 
 
-def zhao2017_flow(bundle, m_dot, props):
-    """Reconstruct average open passage from actual geometry, with continuity.
-
-    This is NOT the source's printed free-area formula or a circular-bank
-    throat. Source Fs/pitch and fin details follow the authorized package.
-    No pass count, tube length or total tube count enters dimensionless ratios.
-    """
+def validate_zhao2017_geometry(bundle):
+    """Reject unsupported physical geometry before any property evaluation."""
     tube = bundle.tube
     if not isinstance(tube, RectangularFinnedEllipticalTube):
         raise TubeGeometryApplicabilityError('Zhao2017 requires RectangularFinnedEllipticalTube.')
@@ -118,6 +117,21 @@ def zhao2017_flow(bundle, m_dot, props):
     Wx, Wy, Ft, Fp = fin.outer_width, fin.outer_height, fin.thickness, fin.axial_pitch
     if Pt <= Dt or Pl <= Dl or Pt < Wy or Pl < Wx:
         raise TubeGeometryApplicabilityError('Zhao2017 reconstruction requires positive tube gaps and nonoverlapping fin envelopes.')
+    return tube
+
+
+def zhao2017_flow(bundle, m_dot, props):
+    """Reconstruct average open passage from actual geometry, with continuity.
+
+    This is NOT the source's printed free-area formula or a circular-bank
+    throat. Source Fs/pitch and fin details follow the authorized package.
+    No pass count, tube length or total tube count enters dimensionless ratios.
+    """
+    tube=validate_zhao2017_geometry(bundle)
+    core,fin=tube.core_tube,tube.fin
+    Dl,Dt=2*core.outer_semi_major_axis,2*core.outer_semi_minor_axis
+    Pt,Pl=bundle.pitch_transverse,bundle.pitch_longitudinal
+    Wx,Wy,Ft,Fp=fin.outer_width,fin.outer_height,fin.thickness,fin.axial_pitch
     _positive(m_dot=m_dot, rho=props.rho, mu=props.mu, cp=props.cp, k=props.k,
               frontal_area=bundle.frontal_flow_area)
     Se = tube.aperture_area_per_fin
@@ -166,6 +180,11 @@ class Zhao2017AirsideResult:
     pressure_scope: str = 'source_domain_inlet_to_outlet_estimate'
     pressure_model: str = 'zhao2017_source_normalization_reconstructed'
     validated_bank_irreversible: bool = False
+
+    @property
+    def within_source_domain(self):
+        """Source ratios/nominal envelope, with the explicit simplified-fin caveat."""
+        return not self.extrapolated_parameters
 
 
 @dataclass(frozen=True)
