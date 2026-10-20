@@ -24,14 +24,24 @@ class RectangularIndividualFin:
     thickness: float
     axial_pitch: float
     thermal_conductivity: float
+    fin_turbulator_count: int | None = None
 
     def __post_init__(self):
-        for name in self.__dataclass_fields__:
+        for name in ('outer_width', 'outer_height', 'thickness',
+                     'axial_pitch', 'thermal_conductivity'):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive and finite [SI].")
         if self.axial_pitch <= self.thickness:
             raise ValueError("Fin axial_pitch must exceed thickness.")
+        count = self.fin_turbulator_count
+        if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 0):
+            raise ValueError('fin_turbulator_count must be None or a nonnegative integer.')
+
+    @property
+    def effective_fin_turbulator_count(self) -> int:
+        """Count per individual fin; unspecified means smooth, without correction."""
+        return 0 if self.fin_turbulator_count is None else self.fin_turbulator_count
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 from dataclasses import replace
 import pytest
 
-from core.heat_transfer.airside_correction import AirsideCorrection
+from core.heat_transfer.airside_correction import AirsideCorrection, MultiplicativeAirsideCorrection
 from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel
 from core.heat_transfer.outside_dispatch import calculate_resistance_network
 from core.tests.zhao2017_fixtures import source_bundle, AIR
@@ -66,3 +66,30 @@ def test_provider_errors_and_wrong_return_do_not_fallback():
         def correct(self,*args,**kwargs): return None
     with pytest.raises(TypeError,match='AirsideCorrection'):
         Zhao2017AirsideModel(correction_provider=Wrong()).evaluate(source_bundle(),1.7,AIR)
+
+
+@pytest.mark.parametrize('ht,dp',[(1.,1.),(1.08,1.),(1.,1.20),(1.08,1.20)])
+def test_generic_multiplicative_provider_independent_channels_and_eta(ht,dp):
+    b=source_bundle()
+    b=replace(b,tube=replace(b.tube,fin=replace(b.tube.fin,fin_turbulator_count=10)))
+    base=Zhao2017AirsideModel().evaluate(b,1.7,AIR)
+    provider=MultiplicativeAirsideCorrection(ht,dp,provenance='synthetic_engineering_input')
+    r=Zhao2017AirsideModel(correction_provider=provider).evaluate(b,1.7,AIR)
+    assert r.h_film_base==base.h_film and r.pressure_drop_base==base.pressure_drop
+    assert r.h_film==ht*base.h_film and r.pressure_drop==dp*base.pressure_drop
+    assert r.correction_applied==(ht!=1. or dp!=1.)
+    assert r.correction_provenance=='synthetic_engineering_input'
+    n=calculate_resistance_network(bundle=b,alpha_inside=500.,
+        outside_alpha_physical=r.h_film,resistance_core_wall=.001)
+    old=calculate_resistance_network(bundle=b,alpha_inside=500.,
+        outside_alpha_physical=base.h_film,resistance_core_wall=.001)
+    assert (n.fin_efficiency==old.fin_efficiency) if ht==1. else (n.fin_efficiency<old.fin_efficiency)
+    assert n.outside_alpha_physical==r.h_film
+    assert n.conductance_primary_outside+n.conductance_fin_outside==pytest.approx(r.h_film*n.A_effective)
+
+
+@pytest.mark.parametrize('field',['h_film_multiplier','pressure_drop_multiplier'])
+@pytest.mark.parametrize('value',[None,0.,-1.,True,float('nan'),float('inf'),'1.08'])
+def test_generic_multiplicative_provider_rejects_invalid_factors(field,value):
+    with pytest.raises((ValueError,TypeError)):
+        MultiplicativeAirsideCorrection(**{field:value})

@@ -20,6 +20,22 @@ ellipse with a positive ligament on both principal axes. Tangent, zero-ligament
 domains are excluded. The rectangle follows the tube's crossflow rotation;
 the hole is concentric and aligned with the rectangle.
 
+Optional `fin_turbulator_count: int | None = None` describes the number of
+disturbance features **per individual fin**. Omitted/None normalizes to 0 via
+`effective_fin_turbulator_count`; zero means no explicit turbulators. Any
+nonnegative integer is accepted, including 4, 8 and 10; booleans, floats,
+strings and negative counts are rejected. Old five-argument construction and
+serialized definitions without this field remain valid. Frozen dataclass
+equality/hash includes the raw count; None and 0 have identical physics.
+
+The count alone changes neither ideal-rectangle area/conduction nor the Zhao
+correlations. Positive counts calculate with the same baseline and an
+informational `fin_turbulators_present_uncorrected` diagnostic unless an
+explicit provider changes h or pressure. Omission/None/0 adds no diagnostic.
+No universal or source-validated count-to-HTC/pressure law is claimed for 4,
+10 or other counts. Future external providers can inspect the fin metadata;
+empirical factors remain model configuration, separate from geometry.
+
 Let W, H, t, p denote the fin dimensions, a and b the outer ellipse semi-axes,
 P its existing exact elliptic-integral perimeter and L the active tube length.
 The periodic 0D convention uses the fractional fin count n = L/p. It excludes
@@ -373,3 +389,22 @@ pressure is corrected on the final estimate. `h_film_base`, `h_film`,
 Providers must be deterministic for a given state; exceptions/invalid responses
 propagate without fallback. There is no runtime name discovery or global hook.
 These example multipliers are API demonstrations, not calibration coefficients.
+
+For constant independent factors, the generic immutable provider avoids a
+custom adapter:
+
+```python
+from core.heat_transfer import MultiplicativeAirsideCorrection, Zhao2017AirsideModel
+
+model = Zhao2017AirsideModel(correction_provider=MultiplicativeAirsideCorrection(
+    h_film_multiplier=1.0, pressure_drop_multiplier=1.0,
+    provenance='explicit_engineering_input'))
+```
+
+Both defaults are 1.0. Factors must be finite and positive; None, zero,
+negative and boolean factors are rejected. They are independent engineering
+inputs, never derived from count. Result diagnostics expose normalized
+`fin_turbulator_count` and `correction_applied` (whether either base value
+actually changed), alongside the existing base/corrected values/provenance.
+Physical h is corrected before eta, and the pressure scope remains the
+source-domain estimate. Contact-efficiency semantics are unchanged.

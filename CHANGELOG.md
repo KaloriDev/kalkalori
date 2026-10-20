@@ -7,6 +7,12 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [0.9.2] — Rectangular-finned elliptical baseline and conduction
 
+- Added optional per-fin `fin_turbulator_count` metadata: omitted/None/0 has
+  identical physics, and any nonnegative integer is accepted without an
+  automatic enhancement law. Positive uncorrected counts remain executable.
+- Added generic `MultiplicativeAirsideCorrection` through the existing neutral
+  provider contract, with independent positive h/pressure factors defaulting
+  to 1.0. Normalized count and actual correction status are visible in results.
 - Added frozen `RectangularIndividualFin` / `RectangularFinnedEllipticalTube`
   composition with explicit enclosure, pitch, dimension and material checks.
   Analytical surface accounting distinguishes exposed tube, both fin faces,

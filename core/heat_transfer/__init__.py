@@ -12,7 +12,7 @@ from .finned_ellipse_airside import (
     Zhao2017AirsideModel, Zhao2017AirsideResult, Zhao2017Flow,
     Zhao2017Factors, zhao2017_factors, zhao2017_flow,
 )
-from .airside_correction import AirsideCorrection, AirsideCorrectionProvider
+from .airside_correction import AirsideCorrection, AirsideCorrectionProvider, MultiplicativeAirsideCorrection
 from .thin_plate_fin import (
     ThinPlateFinEfficiency2D,
     ThinPlateFinEfficiencyResult,
@@ -116,7 +116,7 @@ from core.common.warnings import (
 __all__ = [
     "Zhao2017AirsideModel", "Zhao2017AirsideResult", "Zhao2017Flow",
     "Zhao2017Factors", "zhao2017_factors", "zhao2017_flow",
-    "AirsideCorrection", "AirsideCorrectionProvider",
+    "AirsideCorrection", "AirsideCorrectionProvider", "MultiplicativeAirsideCorrection",
     "ThinPlateFinEfficiency2D",
     "ThinPlateFinEfficiencyResult",
     "FinEfficiencyConvergenceError",

@@ -46,3 +46,25 @@ class AirsideCorrectionProvider(Protocol):
     def correct(self, base_result: Any, *, bundle: Any, props: Any) -> AirsideCorrection:
         """Return corrections at the supplied constitutive state, before eta."""
         ...
+
+
+@dataclass(frozen=True)
+class MultiplicativeAirsideCorrection:
+    """Explicit, independent engineering multipliers using the existing contract.
+
+    No geometry/count-to-factor law is implied. The model applies physical h
+    before fin efficiency and pressure to the final source estimate.
+    """
+    h_film_multiplier: float = 1.0
+    pressure_drop_multiplier: float = 1.0
+    provenance: str = 'explicit_multiplicative_adjustment'
+
+    def __post_init__(self):
+        if self.h_film_multiplier is None or self.pressure_drop_multiplier is None:
+            raise ValueError('Multipliers must be finite and positive, not None.')
+        self.correct(None, bundle=None, props=None)  # Shared correction validation.
+
+    def correct(self, base_result, *, bundle, props) -> AirsideCorrection:
+        return AirsideCorrection(provenance=self.provenance,
+            h_film_multiplier=self.h_film_multiplier,
+            pressure_drop_multiplier=self.pressure_drop_multiplier)

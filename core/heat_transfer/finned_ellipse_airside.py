@@ -180,6 +180,12 @@ class Zhao2017AirsideResult:
     pressure_scope: str = 'source_domain_inlet_to_outlet_estimate'
     pressure_model: str = 'zhao2017_source_normalization_reconstructed'
     validated_bank_irreversible: bool = False
+    fin_turbulator_count: int = 0
+
+    @property
+    def correction_applied(self) -> bool:
+        """Whether an explicit provider changed either physical result channel."""
+        return self.h_film != self.h_film_base or self.pressure_drop != self.pressure_drop_base
 
     @property
     def within_source_domain(self):
@@ -220,14 +226,20 @@ class Zhao2017AirsideModel:
         dp = f.friction_factor*props.rho*flow.reference_velocity**2/2*(bundle.total_outer_area/flow.average_passage_area)
         _positive(h_film=h, pressure_estimate=dp)
         baseline = Zhao2017AirsideResult(flow,f,h,h,dp,dp,tuple(warnings),bundle.total_outer_area,
-                                        f.extrapolated_parameters+flow.geometry_extrapolation)
-        if self.correction_provider is None:
-            return baseline
-        correction = self.correction_provider.correct(baseline,bundle=bundle,props=props)
-        if not isinstance(correction,AirsideCorrection):
-            raise TypeError('Airside correction provider must return AirsideCorrection.')
-        corrected_h,corrected_dp=correction.apply(h,dp)
-        notice=make_warning(code='airside_correction_applied',source='airside_correction',severity='info',
-            message='Explicit airside correction: '+correction.provenance)
-        return replace(baseline,h_film=corrected_h,pressure_drop=corrected_dp,
-                       correction_provenance=correction.provenance,warnings=baseline.warnings+(notice,))
+            f.extrapolated_parameters+flow.geometry_extrapolation,
+            fin_turbulator_count=bundle.tube.fin.effective_fin_turbulator_count)
+        result = baseline
+        if self.correction_provider is not None:
+            correction = self.correction_provider.correct(baseline,bundle=bundle,props=props)
+            if not isinstance(correction,AirsideCorrection):
+                raise TypeError('Airside correction provider must return AirsideCorrection.')
+            corrected_h,corrected_dp=correction.apply(h,dp)
+            notice=make_warning(code='airside_correction_applied',source='airside_correction',severity='info',
+                message='Explicit airside correction: '+correction.provenance)
+            result=replace(baseline,h_film=corrected_h,pressure_drop=corrected_dp,
+                correction_provenance=correction.provenance,warnings=baseline.warnings+(notice,))
+        if result.fin_turbulator_count > 0 and not result.correction_applied:
+            notice=make_warning(code='fin_turbulators_present_uncorrected',source='fin_geometry',severity='info',
+                message='Fin turbulator count is metadata only; the unchanged Zhao baseline has no count-specific correction or validation.')
+            result=replace(result,warnings=result.warnings+(notice,))
+        return result
