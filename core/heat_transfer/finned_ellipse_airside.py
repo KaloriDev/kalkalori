@@ -11,6 +11,7 @@ import math
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.applicability import TubeGeometryApplicabilityError
+from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
 
 
 ZHAO2017_CITATION = (
@@ -73,3 +74,127 @@ def zhao2017_factors(*, n_rows, reynolds, Xt, Xl, Xp, Xf,
                *Xp**.0043*Xf**(-.0578)*reynolds**(-.3326))
     _positive(j_effective=j_effective, j_prime=j_prime, friction_factor=friction)
     return Zhao2017Factors(j_effective, j_prime, friction, outside, warnings)
+
+
+@dataclass(frozen=True)
+class Zhao2017Flow:
+    reference_diameter: float
+    frontal_area: float
+    average_passage_area: float
+    periodic_gross_section: float
+    periodic_average_open_section: float
+    sigma_average: float
+    sigma_throat: float
+    face_velocity: float
+    reference_velocity: float
+    maximum_velocity_estimate: float
+    reynolds_number: float
+    prandtl_number: float
+    Xt: float
+    Xl: float
+    Xp: float
+    Xf: float
+    geometry_extrapolation: tuple[str, ...]
+    diameter_basis: str = 'ellipse_4area_over_perimeter_source_inferred'
+    passage_area_basis: str = 'periodic_streamwise_volume_average_engineering_reconstruction'
+
+
+def zhao2017_flow(bundle, m_dot, props):
+    """Reconstruct average open passage from actual geometry, with continuity.
+
+    This is NOT the source's printed free-area formula or a circular-bank
+    throat. Source Fs/pitch and fin details follow the authorized package.
+    No pass count, tube length or total tube count enters dimensionless ratios.
+    """
+    tube = bundle.tube
+    if not isinstance(tube, RectangularFinnedEllipticalTube):
+        raise TubeGeometryApplicabilityError('Zhao2017 requires RectangularFinnedEllipticalTube.')
+    core, fin = tube.core_tube, tube.fin
+    if not math.isclose(math.remainder(core.orientation_angle, math.pi), 0., abs_tol=1e-12):
+        raise TubeGeometryApplicabilityError('Zhao2017 reconstruction requires major axis parallel to flow.')
+    Dl, Dt = 2*core.outer_semi_major_axis, 2*core.outer_semi_minor_axis
+    Pt, Pl = bundle.pitch_transverse, bundle.pitch_longitudinal
+    Wx, Wy, Ft, Fp = fin.outer_width, fin.outer_height, fin.thickness, fin.axial_pitch
+    if Pt <= Dt or Pl <= Dl or Pt < Wy or Pl < Wx:
+        raise TubeGeometryApplicabilityError('Zhao2017 reconstruction requires positive tube gaps and nonoverlapping fin envelopes.')
+    _positive(m_dot=m_dot, rho=props.rho, mu=props.mu, cp=props.cp, k=props.k,
+              frontal_area=bundle.frontal_flow_area)
+    Se = tube.aperture_area_per_fin
+    de = 4*Se/core.outside_perimeter
+    Sg = Pt*Fp
+    Savg = Sg - ((Fp-Ft)*Se + Ft*Wx*Wy)/Pl
+    sigma = Savg/Sg
+    sigma_throat = (Sg - (Fp-Ft)*Dt - Ft*Wy)/Sg
+    if not (math.isfinite(sigma) and 0 < sigma <= 1
+            and math.isfinite(sigma_throat) and 0 < sigma_throat <= 1):
+        raise TubeGeometryApplicabilityError('Zhao2017 reconstruction leaves no positive finite open flow area.')
+    Aa = bundle.frontal_flow_area*sigma
+    u_fr = m_dot/(props.rho*bundle.frontal_flow_area)
+    um = m_dot/(props.rho*Aa)
+    Re = props.rho*um*de/props.mu
+    Pr = props.cp*props.mu/props.k
+    _positive(de=de, Aa=Aa, u_frontal=u_fr, u_m=um, Re=Re, Pr=Pr)
+    mismatches = tuple(name for name, value, source in (
+        ('tube_major',Dl,.036),('tube_minor',Dt,.014),
+        ('fin_width',Wx,.055),('fin_height',Wy,.026))
+        if not math.isclose(value,source,rel_tol=1e-10))
+    if bundle.layout.lower() != 'staggered':
+        mismatches += ('layout',)
+    return Zhao2017Flow(de,bundle.frontal_flow_area,Aa,Sg,Savg,sigma,sigma_throat,
+        u_fr,um,u_fr/sigma_throat,Re,Pr,(Pt-Dt)/Dt,(Pl-Dl)/Dl,Fp/de,Ft/de,mismatches)
+
+
+@dataclass(frozen=True)
+class Zhao2017AirsideResult:
+    """Physical h and source-domain pressure estimate; no eta is applied here."""
+    flow: Zhao2017Flow
+    factors: Zhao2017Factors
+    h_film_base: float
+    h_film: float
+    pressure_drop_base: float
+    pressure_drop: float
+    warnings: tuple[ModelWarning, ...]
+    physical_area: float
+    extrapolated_parameters: tuple[str, ...]
+    correction_provenance: str = 'none'
+    method: str = 'zhao2017_reconstructed'
+    citation: str = ZHAO2017_CITATION
+    equations: tuple[int, ...] = (18,19,20)
+    equation_basis: str = 'source_exact_user_supplied_transcription'
+    property_basis: str = 'caller_bulk_state; engine_mean_approximates_CFD_average_flow_field'
+    pressure_scope: str = 'source_domain_inlet_to_outlet_estimate'
+    pressure_model: str = 'zhao2017_source_normalization_reconstructed'
+    validated_bank_irreversible: bool = False
+
+
+@dataclass(frozen=True)
+class Zhao2017AirsideModel:
+    """Authorized engineering baseline; extrapolate with warnings by default."""
+    strict_source_domain: bool = False
+
+    def __post_init__(self):
+        if not isinstance(self.strict_source_domain, bool):
+            raise TypeError('strict_source_domain must be boolean.')
+
+    def evaluate(self, bundle, m_dot, props):
+        flow = zhao2017_flow(bundle,m_dot,props)
+        f = zhao2017_factors(n_rows=bundle.n_rows, reynolds=flow.reynolds_number,
+            Xt=flow.Xt,Xl=flow.Xl,Xp=flow.Xp,Xf=flow.Xf,
+            strict_source_domain=self.strict_source_domain)
+        if flow.geometry_extrapolation and self.strict_source_domain:
+            raise TubeGeometryApplicabilityError('Zhao2017 source geometry exceeded: '+', '.join(flow.geometry_extrapolation))
+        warnings = list(f.warnings)
+        warnings.append(make_warning(code='source_geometry_simplified_rectangular_fin',source='zhao2017',
+            message='Source fin has holes, positioning tabs and clipped corners; calculation uses an ideal full rectangle.'))
+        warnings.append(make_warning(code='zhao2017_reconstructed_normalization',source='zhao2017',
+            message='Diameter is source-inferred 4A/P; passage area/velocity are an engineering reconstruction; caller bulk properties approximate the CFD mean state.'))
+        warnings.append(make_warning(code='zhao2017_pressure_scope',source='zhao2017',
+            message='Pressure is a reconstructed source-domain inlet-to-outlet estimate; bank-only irreversible equivalence and entry/exit/acceleration decomposition are not established. No separate losses are added.'))
+        if flow.geometry_extrapolation:
+            warnings.append(make_warning(code='zhao2017_geometry_extrapolation',source='zhao2017',
+                message='Zhao2017 geometry extrapolation: '+', '.join(flow.geometry_extrapolation)))
+        h = f.j_prime*props.rho*props.cp*flow.reference_velocity/flow.prandtl_number**(2/3)
+        dp = f.friction_factor*props.rho*flow.reference_velocity**2/2*(bundle.total_outer_area/flow.average_passage_area)
+        _positive(h_film=h, pressure_estimate=dp)
+        return Zhao2017AirsideResult(flow,f,h,h,dp,dp,tuple(warnings),bundle.total_outer_area,
+                                    f.extrapolated_parameters+flow.geometry_extrapolation)
