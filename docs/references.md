@@ -534,6 +534,22 @@ Those candidates did not close a complete predictive model under the earlier
 free-source-only decision. The current Zhao baseline follows the separate
 2026-10-20 authorization; geometry/conduction authorities remain unchanged.
 
+## Turbulent ellipse and nonconfocal wall extension
+
+The explicitly selected turbulent ellipse extension uses Yang et al. (2018),
+FHMT 11, 7, [DOI 10.5098/hmt.11.7](https://www.techscience.com/fhmt/v11n1/53399)
+(CC BY 4.0), Eq.18/Table 4; and Nikitin & Yakhot (2005), JFM 532, 141–164,
+[DOI 10.1017/S0022112005003964](https://doi.org/10.1017/S0022112005003964),
+Eqs.3.2/3.5, read in the
+[author-hosted full text](https://www.researchgate.net/publication/231908645_Direct_numerical_simulation_of_turbulent_flow_in_elliptical_ducts).
+Source equations, bounded implementation and the friction extrapolation are
+separately described in [the model guide](elliptical_turbulent.md).
+The nonconfocal wall solver independently implements the standard Laplace
+weak form documented by the
+[DOLFINx tutorial](https://jsdokken.com/dolfinx-tutorial/chapter1/fundamentals.html)
+(CC BY 4.0); it does not reuse tutorial implementation or require FEniCS.
+No source PDF, figure, external implementation or private geometry is included.
+
 ## Private Reference Sources
 
 Project source policy: built-in engineering correlations must be independently

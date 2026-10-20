@@ -7,9 +7,10 @@ from dataclasses import dataclass
 class EllipticalFlowAssumptions:
     """Caller-declared physics, not an inferred transition/entry criterion.
 
-    Supply regime='laminar', development='fully_developed'. HTC additionally
-    requires thermal_boundary_condition='H1'. No universal ellipse transition
-    Reynolds number is established by the analytical solution.
+    Supply development='fully_developed'. The exact laminar HTC requires
+    regime='laminar', thermal_boundary_condition='H1'. Yang 2018 requires
+    regime='turbulent', thermal_boundary_condition='T' and enforces its own
+    Re/shape bounds. Neither declaration establishes universal transition.
     """
     regime: str
     development: str

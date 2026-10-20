@@ -17,6 +17,10 @@ def internal_heat_transfer_diagnostics(*, tube, m_dot, flow_area, props,
     if isinstance(tube,RectangularFinnedEllipticalTube):
         tube=tube.core_tube
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
+        if getattr(assumptions, 'regime', None) == 'turbulent':
+            from core.heat_transfer.elliptical_turbulent import elliptical_turbulent_heat_transfer
+            return elliptical_turbulent_heat_transfer(
+                tube,m_dot,props,assumptions=assumptions,flow_area=flow_area,L_heated=L_heated)
         from core.heat_transfer.elliptical_internal import elliptical_h1_heat_transfer
         return elliptical_h1_heat_transfer(tube,m_dot,props,assumptions=assumptions,flow_area=flow_area)
     require_circular_tube(tube, "Internal circular HTC")
@@ -39,7 +43,11 @@ def internal_friction(*, tube, reynolds, relative_roughness=None, assumptions=No
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
         from core.geometry.applicability import TubeGeometryApplicabilityError
         if relative_roughness not in (None,0.):
-            raise TubeGeometryApplicabilityError('Exact elliptical friction is smooth-only.')
+            raise TubeGeometryApplicabilityError('Elliptical friction is smooth-only.')
+        if getattr(assumptions, 'regime', None) == 'turbulent':
+            from core.heat_transfer.elliptical_turbulent import elliptical_turbulent_friction
+            result=elliptical_turbulent_friction(tube,reynolds,assumptions=assumptions)
+            return result.f_darcy,result.metadata.model_id
         from core.heat_transfer.elliptical_internal import elliptical_laminar_friction
         result=elliptical_laminar_friction(tube,reynolds,assumptions=assumptions)
         return result.f_darcy,result.metadata.model_id

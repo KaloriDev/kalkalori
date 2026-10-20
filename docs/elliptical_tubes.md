@@ -1,5 +1,10 @@
 # Smooth elliptical tubes — v0.9.0
 
+This page records the original v0.9.0 foundation. For the explicit v0.9.2
+smooth turbulent models, nonconfocal numerical walls and dry finned-engine
+integration, see [turbulent ellipse and wall extension](elliptical_turbulent.md)
+and [rectangular-finned workflow](rectangular_finned_ellipse.md).
+
 KalKalori 0.9.0 exposes geometry and standalone transport calculations for a
 true mathematical ellipse. It supports exact fully developed smooth laminar
 Darcy friction, fully developed H1 internal heat transfer and explicitly

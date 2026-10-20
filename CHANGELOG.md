@@ -7,6 +7,14 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [0.9.2] — Rectangular-finned elliptical baseline and conduction
 
+- Added explicitly selected smooth fully developed turbulent ellipse HTC
+  (Yang 2018 Eq.18/Table 4), geometry-adjusted Prandtl friction with an explicit
+  engineering extrapolation warning, and P1 Laplace resistance between actual
+  nonconfocal elliptical contours. Source bounds, model metadata, mesh
+  convergence and limitations are documented in
+  [the ellipse extension](docs/elliptical_turbulent.md). Existing laminar H1,
+  exact confocal and circular selections retain their previous equations.
+
 - Added optional per-fin `fin_turbulator_count` metadata: omitted/None/0 has
   identical physics, and any nonnegative integer is accepted without an
   automatic enhancement law. Positive uncorrected counts remain executable.
@@ -31,7 +39,7 @@ The project follows **Semantic Versioning (SemVer)**:
   Pressure scope is typed separately from irreversible bank losses, without
   duplicate acceleration/entry/exit terms or hidden calibration.
 - Integrated this dry baseline into normal Rating/Simulation, with current-state
-  h -> 2D eta -> effective area coupling. The internal ellipse path requires
+  h -> 2D eta -> effective area coupling. The initial internal ellipse path used
   explicit FD laminar H1 assumptions and confocal wall selection; unsupported
   tube-sheet losses are omitted with a scope warning.
 - Source N=6–10 and geometric/Re bounds are diagnosed; extrapolation (including

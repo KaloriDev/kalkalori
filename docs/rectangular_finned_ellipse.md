@@ -305,11 +305,13 @@ assemblies is rejected. Ordinary circular pressure-path semantics are unchanged.
 
 Automatic bare-ellipse bank models remain unavailable. For the finned source
 baseline, inside physics must also be chosen explicitly. The currently
-integrated ellipse path uses declared smooth, fully developed laminar H1 flow
-and exact **confocal** wall conduction. No circular turbulent/entrance/exit
-correlation is substituted. Tube-side pressure reports distributed friction and
+integrated ellipse path supports declared smooth, fully developed laminar H1
+with exact **confocal** wall conduction. The additional explicit
+[turbulent T and numerical nonconfocal wall models](elliptical_turbulent.md)
+support bounded Yang 2018 HTC and diagnosed engineering friction. No circular
+HTC/entrance/exit correlation is substituted. Tube-side pressure reports distributed friction and
 bulk acceleration with a warning that tube-sheet losses were not evaluated.
-Other inner contours, internal developing/turbulent flow, inserts, phase change
+Other contour families, internal developing/transition flow, inserts, phase change
 and wet rectangular fins require separate models and remain unsupported.
 
 ```python

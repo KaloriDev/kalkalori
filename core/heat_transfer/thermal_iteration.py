@@ -206,6 +206,7 @@ class ThermalIterationDiagnostics:
     outside_Nu_base: float
     outside_Nu_corrected: float
     outside_wall_property_correction: float
+    inside_model_metadata: object | None = None
 
 
 @dataclass(frozen=True)
@@ -1101,6 +1102,7 @@ def solve_iterative_thermal_state(
         outside_Nu_base=final["outside_Nu_base"],
         outside_Nu_corrected=final["outside_Nu_corrected"],
         outside_wall_property_correction=final["outside_wall_property_correction"],
+        inside_model_metadata=getattr(internal_diag, 'model_metadata', None),
     )
 
     return IterativeThermalState(
