@@ -14,7 +14,14 @@ ellipse. Prescribed-film network calculations remain available separately.
 `RectangularFinnedEllipticalTube(core_tube, fin)` composes the existing frozen
 `EllipticalTube` with a frozen `RectangularIndividualFin`. Fin inputs are
 `outer_width`, `outer_height`, `thickness`, `axial_pitch` [m] and
-`thermal_conductivity` [W/(m K)]. All must be finite and positive; pitch must
+`thermal_conductivity` [W/(m K)]. Width is transverse (perpendicular to air
+flow), height is streamwise (parallel at zero tube angle): the source physical
+55x26 mm fin uses `outer_width=.026`, `outer_height=.055`. This is an intentional
+pre-release semantic correction; migrate old positional and serialized values
+by swapping them. Internal source axes use Wx=height and Wy=width. Pt=.02667
+and Pl=.060 give .00067 transverse and .005 streamwise clearance.
+See [API migration and CASE options](elliptical_api_v092.md).
+All must be finite and positive; pitch must
 exceed thickness. The rectangle must strictly enclose the tube's outer
 ellipse with a positive ligament on both principal axes. Tangent, zero-ligament
 domains are excluded. The rectangle follows the tube's crossflow rotation;
@@ -24,8 +31,9 @@ Optional `fin_turbulator_count: int | None = None` describes the number of
 disturbance features **per individual fin**. Omitted/None normalizes to 0 via
 `effective_fin_turbulator_count`; zero means no explicit turbulators. Any
 nonnegative integer is accepted, including 4, 8 and 10; booleans, floats,
-strings and negative counts are rejected. Old five-argument construction and
-serialized definitions without this field remain valid. Frozen dataclass
+strings and negative counts are rejected. Five-argument construction and
+serialized definitions without the count field remain supported; width/height
+values must follow the current engineering convention. Frozen dataclass
 equality/hash includes the raw count; None and 0 have identical physics.
 
 The count alone changes neither ideal-rectangle area/conduction nor the Zhao
@@ -145,7 +153,7 @@ from core.heat_transfer import ThinPlateFinEfficiency2D
 from core.heat_transfer.outside_dispatch import calculate_resistance_network
 
 core = EllipticalTube(.012, .006, .010, .004, 2., 1.8, 40.)
-fin = RectangularIndividualFin(.040, .030, .0004, .003, 200.)
+fin = RectangularIndividualFin(.030, .040, .0004, .003, 200.)
 tube = RectangularFinnedEllipticalTube(core, fin)
 bundle = TubeBundle(tube, 4, 6, .060, .060, "inline", 2)
 result = ThinPlateFinEfficiency2D().evaluate(tube, h=80.)
@@ -218,7 +226,7 @@ carbon steel; Eq.18 diagnostics retain that source-material context. The public
 geometry is a full ideal rectangle. Every calculation carries
 `source_geometry_simplified_rectangular_fin`; positive fin conductivity is a
 user input, never a carbon-steel whitelist. The canonical major axis and fin
-width are parallel to air flow. Other cross-section orientations reject.
+height are parallel to air flow. Other cross-section orientations reject.
 Fin envelopes must not overlap and tube gaps must be positive.
 
 | Parameter | Source fit interval |
@@ -262,7 +270,7 @@ u_m = m_dot/(rho*Aa)
 Re_de = rho*u_m*de/mu; Pr = cp*mu/k
 ```
 
-Wx/Wy are actual fin width along/across flow. Neither Aa nor de is replaced by
+Wx=fin.outer_height and Wy=fin.outer_width are streamwise/transverse extents. Neither Aa nor de is replaced by
 a circular-bank throat or a nominal circular diameter. The separate sensitivity
 estimate `sigma_throat=(Pt*Fp-(Fp-Ft)*Dt-Ft*Wy)/(Pt*Fp)` and
 `u_max_est=u_frontal/sigma_throat` do not drive the correlations.
@@ -303,12 +311,12 @@ assemblies is rejected. Ordinary circular pressure-path semantics are unchanged.
 
 ## Normal dry Simulation and Rating
 
-Automatic bare-ellipse bank models remain unavailable. For the finned source
-baseline, inside physics must also be chosen explicitly. The currently
-integrated ellipse path supports declared smooth, fully developed laminar H1
-with exact **confocal** wall conduction. The additional explicit
-[turbulent T and numerical nonconfocal wall models](elliptical_turbulent.md)
-support bounded Yang 2018 HTC and diagnosed engineering friction. No circular
+Automatic bare-ellipse bank models remain unavailable. The finned source
+baseline automatically selects analytical laminar H1 or Yang turbulent T from
+actual inner-contour Re; transition remains explicitly unsupported. Wall
+selection is automatic for general and confocal contours. The
+[turbulent T and numerical wall guide](elliptical_turbulent.md) describes source
+extrapolation, strict policy and engineering friction. No circular
 HTC/entrance/exit correlation is substituted. Tube-side pressure reports distributed friction and
 bulk acceleration with a warning that tube-sheet losses were not evaluated.
 Other contour families, internal developing/transition flow, inserts, phase change
@@ -320,7 +328,6 @@ from core.geometry import (
     EllipticalTube, RectangularIndividualFin, RectangularFinnedEllipticalTube,
     TubeBundle,
 )
-from core.heat_transfer import EllipticalFlowAssumptions, TubeWallModel
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.simulation import HXSideInput
 from core.models.heat_balance import BalanceSideSpec
@@ -331,16 +338,10 @@ ai = .0175
 bi = math.sqrt(ai**2 - (.018**2 - .007**2))  # explicitly confocal inner contour
 core = EllipticalTube(.018, .007, ai, bi, 1., 1., 45., roughness_inner=0.)
 tube = RectangularFinnedEllipticalTube(
-    core, RectangularIndividualFin(.055, .026, .0003, .004, 45.))
+    core, RectangularIndividualFin(.026, .055, .0003, .004, 45.))
 bundle = TubeBundle(tube, 8, 6, .031, .060, 'staggered', 2,
                     flow_arrangement='counterflow')  # explicit 0D thermal topology
-hx = BareTubeHeatExchanger(
-    bundle,
-    elliptical_flow_assumptions=EllipticalFlowAssumptions(
-        regime='laminar', development='fully_developed',
-        thermal_boundary_condition='H1'),
-    tube_wall_model=TubeWallModel.CONFOCAL_EXACT,
-)
+hx = BareTubeHeatExchanger(bundle)  # automatic internal/wall/airside selection
 liquid = ConstantPropertyProvider(FluidTransportProperties(
     rho=1000., mu=.02, k=.6, cp=4200.))
 air = ConstantPropertyProvider(FluidTransportProperties(
@@ -362,7 +363,7 @@ print(d.airside_result.flow, d.airside_result.extrapolated_parameters)
 ```
 
 This is a synthetic numerical example with an explicit thermal-topology and
-FD internal-flow assumption, not a reconstruction of a measured exchanger.
+automatically recorded FD laminar H1 model assumption, not a reconstruction of a measured exchanger.
 The geometry and operating point fit the source air-side ratios, with the
 always-present simplified-fin and flow-normalization caveats.
 
@@ -380,7 +381,8 @@ class ExampleCorrection:
             pressure_drop_multiplier=1.10)
 
 model = Zhao2017AirsideModel(correction_provider=ExampleCorrection())
-# Pass airside_model=model to BareTubeHeatExchanger(...).
+# Advanced direct use: BareTubeHeatExchanger(bundle, airside_model=model).
+# In notebook CASES: 'options': {'airside_model': model}.
 ```
 
 Without a provider the public baseline works on its own. Each channel can have

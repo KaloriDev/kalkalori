@@ -16,7 +16,7 @@ from core.heat_transfer.thin_plate_fin import (
 def geometry():
     return RectangularFinnedEllipticalTube(
         EllipticalTube(.012, .006, .010, .004, 2., 1.8, 40.),
-        RectangularIndividualFin(.040, .030, .0004, .003, 200.))
+        RectangularIndividualFin(.030, .040, .0004, .003, 200.))
 
 
 def straight_mesh(nx):
@@ -117,7 +117,7 @@ def test_symmetry_and_no_spurious_transverse_straight_fin_gradient():
     # independently assembled angular/radial nodes reflected in x=y.
     t = geometry()
     t = replace(t, core_tube=replace(t.core_tube, outer_semi_minor_axis=.012),
-                fin=replace(t.fin, outer_height=.040))
+                fin=replace(t.fin, outer_width=.040))
     r = ThinPlateFinEfficiency2D().evaluate(t, 80.)
     count = (r.radial_cells+1)*(2*r.angular_cells_per_sector+1)
     theta = np.array(r.quarter_theta[:count]).reshape(r.radial_cells+1, -1)

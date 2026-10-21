@@ -114,7 +114,8 @@ def validate_zhao2017_geometry(bundle):
         raise TubeGeometryApplicabilityError('Zhao2017 reconstruction requires major axis parallel to flow.')
     Dl, Dt = 2*core.outer_semi_major_axis, 2*core.outer_semi_minor_axis
     Pt, Pl = bundle.pitch_transverse, bundle.pitch_longitudinal
-    Wx, Wy, Ft, Fp = fin.outer_width, fin.outer_height, fin.thickness, fin.axial_pitch
+    fin_streamwise_extent, fin_transverse_extent = fin.outer_height, fin.outer_width
+    Wx, Wy, Ft, Fp = fin_streamwise_extent, fin_transverse_extent, fin.thickness, fin.axial_pitch
     if Pt <= Dt or Pl <= Dl or Pt < Wy or Pl < Wx:
         raise TubeGeometryApplicabilityError('Zhao2017 reconstruction requires positive tube gaps and nonoverlapping fin envelopes.')
     return tube
@@ -131,7 +132,8 @@ def zhao2017_flow(bundle, m_dot, props):
     core,fin=tube.core_tube,tube.fin
     Dl,Dt=2*core.outer_semi_major_axis,2*core.outer_semi_minor_axis
     Pt,Pl=bundle.pitch_transverse,bundle.pitch_longitudinal
-    Wx,Wy,Ft,Fp=fin.outer_width,fin.outer_height,fin.thickness,fin.axial_pitch
+    fin_streamwise_extent,fin_transverse_extent=fin.outer_height,fin.outer_width
+    Wx,Wy,Ft,Fp=fin_streamwise_extent,fin_transverse_extent,fin.thickness,fin.axial_pitch
     _positive(m_dot=m_dot, rho=props.rho, mu=props.mu, cp=props.cp, k=props.k,
               frontal_area=bundle.frontal_flow_area)
     Se = tube.aperture_area_per_fin
@@ -151,7 +153,7 @@ def zhao2017_flow(bundle, m_dot, props):
     _positive(de=de, Aa=Aa, u_frontal=u_fr, u_m=um, Re=Re, Pr=Pr)
     mismatches = tuple(name for name, value, source in (
         ('tube_major',Dl,.036),('tube_minor',Dt,.014),
-        ('fin_width',Wx,.055),('fin_height',Wy,.026))
+        ('fin_height',Wx,.055),('fin_width',Wy,.026))
         if not math.isclose(value,source,rel_tol=1e-10))
     if bundle.layout.lower() != 'staggered':
         mismatches += ('layout',)

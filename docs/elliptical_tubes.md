@@ -1,16 +1,18 @@
-# Smooth elliptical tubes — v0.9.0
+# Smooth elliptical tubes - v0.9.2
 
-This page records the original v0.9.0 foundation. For the explicit v0.9.2
+This page describes the analytical foundation with current v0.9.2 geometry semantics. For the v0.9.2
 smooth turbulent models, nonconfocal numerical walls and dry finned-engine
 integration, see [turbulent ellipse and wall extension](elliptical_turbulent.md)
 and [rectangular-finned workflow](rectangular_finned_ellipse.md).
 
-KalKalori 0.9.0 exposes geometry and standalone transport calculations for a
-true mathematical ellipse. It supports exact fully developed smooth laminar
-Darcy friction, fully developed H1 internal heat transfer and explicitly
-selected confocal wall resistance. Automatic elliptical-bank Rating and
-Simulation remain unsupported because outside-bank HTC and hydraulics have
-not been established.
+KalKalori exposes independent elliptical contours, analytical fully developed
+laminar Darcy friction/H1 HTC, turbulent Yang T, and automatic compatible wall
+conduction. Dry rectangular-finned ellipse Rating/Simulation uses Zhao 2017
+outside physics. Bare-ellipse outside-bank Rating/Simulation remains unsupported.
+Normal internal dispatch uses actual inner-contour Re; source properties remain
+in result metadata. Advanced direct analytical calls below retain explicit
+assumption controls for model verification. See the
+[API cleanup and migration guide](elliptical_api_v092.md).
 
 ## Geometry and public constructor
 
@@ -37,7 +39,13 @@ be finite and positive; active `length_effective` cannot exceed hydraulic
 
 Inner and outer contours are specified independently. Subtracting the same
 amount from both semi-axes does not define a constant-normal-thickness wall.
-There is no inferred thickness, nor a `D_i`/`D_o` equivalent-diameter alias.
+`EllipticalTube.from_nominal_wall` accepts an outer ellipse and nominal wall
+thickness and subtracts that thickness from each semi-axis. Thus 36x14x1.5 mm
+has nominal inner full axes 33x11 mm. The approximation represents ordinary
+engineering constant nominal thickness; an exact constant-normal offset of an
+ellipse is not an ellipse. No exact normal-distance measurement is implied.
+Independent contours need not be confocal. Internal flow uses only the actual
+inner contour, roughness and fluid state. There is no `D_i`/`D_o` alias.
 
 With `m = 1 - (b/a)**2` and `E = scipy.special.ellipe(m)`, each exact perimeter
 is `P = 4*a*E`. SciPy takes the **parameter m**, whereas some references write
@@ -98,7 +106,7 @@ distributed = elliptical_distributed_pressure_drop(
 wall = tube_wall_resistance_diagnostics(
     tube, n_tubes=1, model=TubeWallModel.CONFOCAL_EXACT,
 )
-assert core.__version__ == "0.9.0"
+assert core.__version__ == "0.9.2"
 assert htc.model_metadata.thermal_boundary_condition == "H1"
 assert distributed.local_losses_included is False
 ```
@@ -158,7 +166,9 @@ rules; use `BareTube` for existing circular workflows.
 
 ## Confocal wall conduction
 
-Explicitly select `TubeWallModel.CONFOCAL_EXACT` for ellipse wall calculations.
+Omitted wall selection uses numerical conduction for general contours and the
+exact solution for confocal contours. `TubeWallModel.CONFOCAL_EXACT` remains an
+advanced explicit override.
 The model requires:
 
 ```text
@@ -173,8 +183,8 @@ The implementation evaluates the logarithm with `log1p` for narrow gaps.
 
 The exact solution assumes steady conduction, constant conductivity,
 isothermal inner/outer contour surfaces and negligible end effects. Concentric
-contours need not be confocal. Non-confocal walls fail explicitly; there is no
-thin-wall approximation because normal thickness has not been supplied.
+contours need not be confocal. A forced exact override rejects nonconfocal walls; automatic selection uses
+the existing numerical solution. No thin-wall conduction approximation is added.
 `WallResistanceResult` records model ID `elliptical_confocal_wall_exact`,
 references, assumptions and `approximation=False`. The equal-axis limit
 recovers cylindrical resistance while the existing circular expression stays
@@ -209,7 +219,7 @@ definition. No single interchangeable equivalent diameter is exposed.
 
 Ellipse geometry is rejected before current circular equations in:
 
-- automatic exchanger solve, wall-state solve, Rating and Simulation;
+- bare-ellipse outside-bank exchanger solve, wall-state solve, Rating and Simulation;
 - outside-bank HTC, Euler/pressure drop and circular diagonal-gap velocity;
 - tube-side enhancement routing, including twisted tape, wire coil and
   clearance corrections;
@@ -218,8 +228,9 @@ Ellipse geometry is rejected before current circular equations in:
 - `CircularFinnedTube` and annular-fin calculations;
 - automatic circular entrance/exit total hydraulics.
 
-Developing/turbulent internal models, T/H2, arbitrary walls, fins, inserts,
-phase change and wet elliptical operation remain unsupported. No isolated
+Developing internal models, laminar T/H2, inserts, phase change and wet
+elliptical operation remain unsupported. Turbulent T, general elliptical walls
+and rectangular fins are covered by the linked v0.9.2 extension. No isolated
 ellipse correlation is implemented, and an isolated-cylinder model would
 require a separate standalone boundary; it cannot supply bank Rating.
 

@@ -13,10 +13,10 @@ from core.geometry import (EllipticalTube, RectangularIndividualFin,
 def tube():
     return RectangularFinnedEllipticalTube(
         EllipticalTube(.012, .006, .010, .004, 2., 1.8, 40.),
-        RectangularIndividualFin(.040, .030, .0004, .003, 200.))
+        RectangularIndividualFin(.030, .040, .0004, .003, 200.))
 
 
-@pytest.mark.parametrize('name', ['outer_width', 'outer_height', 'thickness',
+@pytest.mark.parametrize('name', ['outer_height', 'outer_width', 'thickness',
                                   'axial_pitch', 'thermal_conductivity'])
 @pytest.mark.parametrize('value', [0., -1., float('nan'), float('inf')])
 def test_fin_inputs(name, value):
@@ -26,7 +26,7 @@ def test_fin_inputs(name, value):
 
 def test_enclosure_and_spacing():
     t = tube()
-    for fin in (replace(t.fin, outer_width=.024), replace(t.fin, outer_height=.010)):
+    for fin in (replace(t.fin, outer_height=.024), replace(t.fin, outer_width=.010)):
         with pytest.raises(ValueError, match='enclose'):
             replace(t, fin=fin)
     for pitch in (.0004, .0003):

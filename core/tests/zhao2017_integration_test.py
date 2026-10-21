@@ -100,12 +100,9 @@ def test_iteration_refreshes_h_eta_and_applies_configured_correction():
     assert d.conductance_fin_outside+d.conductance_primary_outside==pytest.approx(d.outside_alpha_physical*d.A_effective)
 
 
-def test_no_implicit_inside_assumptions_wall_model_or_wrong_orientation():
+def test_automatic_inside_and_wall_models_and_wrong_orientation():
     hx,a,b=context()
-    with pytest.raises(TubeGeometryApplicabilityError,match='EllipticalFlowAssumptions'):
-        BareTubeHeatExchanger(hx.bundle).simulate(a,b)
-    with pytest.raises(TubeGeometryApplicabilityError,match='CONFOCAL_EXACT'):
-        BareTubeHeatExchanger(hx.bundle,elliptical_flow_assumptions=ASSUMPTIONS).simulate(a,b)
+    assert BareTubeHeatExchanger(hx.bundle).simulate(a,b).q==hx.simulate(a,b).q
     bad=replace(hx.bundle,tube=replace(hx.bundle.tube,core_tube=replace(hx.bundle.tube.core_tube,orientation_angle=.2)))
     with pytest.raises(TubeGeometryApplicabilityError,match='parallel to flow'):
         BareTubeHeatExchanger(bad,elliptical_flow_assumptions=ASSUMPTIONS,tube_wall_model=TubeWallModel.CONFOCAL_EXACT).simulate(a,b)

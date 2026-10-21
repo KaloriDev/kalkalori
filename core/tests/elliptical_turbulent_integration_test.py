@@ -20,9 +20,7 @@ def context():
     core=replace(b.tube.core_tube,inner_semi_major_axis=.015,
                  inner_semi_minor_axis=.005)
     b=replace(b,tube=replace(b.tube,core_tube=core))
-    hx=BareTubeHeatExchanger(b,
-        elliptical_flow_assumptions=EllipticalFlowAssumptions('turbulent','fully_developed','T'),
-        tube_wall_model=TubeWallModel.ELLIPTICAL_NUMERICAL)
+    hx=BareTubeHeatExchanger(b)
     liquid=ConstantPropertyProvider(FluidTransportProperties(rho=1000.,mu=.0005,k=.65,cp=4200.))
     mass=24000*.0005*b.internal_flow_area_per_pass/core.hydraulic_diameter
     a=HXSideInput(provider=liquid,m_dot=mass,T_in=360.,p=500000.)
@@ -63,4 +61,4 @@ def test_confocal_guard_and_out_of_range_turbulent_flow_remain_errors():
     hx.tube_wall_model=TubeWallModel.CONFOCAL_EXACT
     with pytest.raises(TubeGeometryApplicabilityError,match='not confocal'): hx.simulate(a,b)
     hx.tube_wall_model=TubeWallModel.ELLIPTICAL_NUMERICAL
-    with pytest.raises(TubeGeometryApplicabilityError,match='Eq.18'): hx.simulate(replace(a,m_dot=a.m_dot/10),b)
+    with pytest.raises(TubeGeometryApplicabilityError,match='transition'): hx.simulate(replace(a,m_dot=a.m_dot/8),b)

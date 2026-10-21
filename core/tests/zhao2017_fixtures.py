@@ -10,7 +10,7 @@ def source_bundle(n_rows=8, n_passes=2):
     ai = .0175
     bi = math.sqrt(ai*ai-(.018**2-.007**2))
     core = EllipticalTube(.018,.007,ai,bi,1.,1.,45.,roughness_inner=0.)
-    tube = RectangularFinnedEllipticalTube(core,RectangularIndividualFin(.055,.026,.0003,.004,45.))
+    tube = RectangularFinnedEllipticalTube(core,RectangularIndividualFin(.026, .055,.0003,.004,45.))
     return TubeBundle(tube,n_rows,6,.031,.060,'staggered',n_passes,flow_arrangement='counterflow')
 
 

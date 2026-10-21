@@ -6,21 +6,29 @@ does not change dimensions, fluids, required duty or mass flows. Existing
 laminar H1, exact confocal and circular models retain their previous equations.
 
 ```python
-from core.heat_transfer import EllipticalFlowAssumptions, TubeWallModel
 from core.models.bare_tube import BareTubeHeatExchanger
 
-hx = BareTubeHeatExchanger(
-    bundle,
-    elliptical_flow_assumptions=EllipticalFlowAssumptions(
-        regime='turbulent', development='fully_developed',
-        thermal_boundary_condition='T'),
-    tube_wall_model=TubeWallModel.ELLIPTICAL_NUMERICAL,
-)
+hx = BareTubeHeatExchanger(bundle)
 ```
 
-Normal `rate` and `simulate` use these selections. No circular HTC, circular
-entrance/exit law or thin-wall formula is substituted. The outside model and
-its source/reconstruction limits are independent of this internal extension.
+Normal `rate` and `simulate` infer internal physics from actual inner-contour
+Reynolds number: Re < 2300 selects analytical fully developed laminar H1;
+2300 <= Re < 4000 raises an unsupported-transition error; Re >= 4000 selects
+Yang 2018 turbulent T, subject to its existing shape and smoothness guards.
+These are conservative implementation dispatch thresholds, not a universal
+experimental transition criterion. No circular fallback is used.
+
+`EllipticalFlowAssumptions` remains an advanced direct-model API for H1/T
+verification, development and constitutive assumptions. Normal STAGES do not
+contain it. Selected development/BC and source assumptions remain in result
+metadata. An advanced declaration cannot bypass physical dispatch guards.
+
+Wall selection is automatic: general/nonconfocal contours use the existing
+numerical Laplace solution; contours satisfying confocal equality use the
+exact solution. No axes are changed. `tube_wall_model` and `airside_model`
+constructor arguments remain advanced low-level controls; notebook CASE
+configuration supplies them under `options`. See
+[configuration and migration](elliptical_api_v092.md).
 
 ## Internal heat transfer
 
@@ -37,10 +45,15 @@ Nu = C*(0.02979*Re**0.8 - 8.5626)*Pr**0.4
 h_inside = Nu*k_fluid/Dh
 ```
 
-Here `P_inner` means the actual inner wetted perimeter. The implemented Reynolds
-interval is 10,000–120,000, inclusive, with only 1e-12 relative arithmetic
-tolerance at endpoints. The higher-Re Eq.19 and transition blending are not
-implemented. Table 4 gives:
+Here `P_inner` means the actual inner wetted perimeter. The source Reynolds
+interval is 10,000-120,000, inclusive, with 1e-12 arithmetic endpoint tolerance.
+By default Eq.18 evaluates the actual Re outside that interval when Re >= 4000
+and emits `yang2018_re_extrapolation` with actual Re, bounds and direction.
+Re is never clipped. Eq.19 and transition blending are not implemented.
+`strict_source_domain=True` on the direct provider, internal dispatch or
+exchanger rejects outside the source interval. In CASE configuration this
+flag is an `options` entry and controls Yang; Zhao has its own model flag.
+Table 4 gives:
 
 | Inner ai/bi | C |
 |---|---:|
@@ -58,7 +71,7 @@ wall temperature **T** and fully developed flow. It uses length 100 Dh and
 discusses development after about 60 Dh. The implementation warns for heated
 length below 60 Dh; a longer duct does not certify a fully developed inlet or
 make a developing average equivalent to the source's local developed HTC.
-The caller must justify the declared developed approximation. No entrance
+The fully developed approximation remains visible as model metadata. No entrance
 or wall-property correction is applied. The source discusses water and checks
 other fluids, but supplies no universal Pr applicability interval. Positive
 Pr is required, and this lack of validation bounds is explicitly diagnosed.
@@ -93,9 +106,9 @@ the existing circular friction implementation.
 
 **Source DNS only covers Re_Dh=6000 and bi/ai=0.67, 0.5.** Application to other
 Re or axis ratios is an explicitly warned engineering extrapolation. The API
-is bounded to Re_Dh 4,000–120,000 and ai/bi 1–5; these are explicit
+requires Re_Dh >= 4,000 and ai/bi 1-5; these are explicit
 implementation limits, not a new validation claim or universal transition
-criterion. Positive roughness and undeclared/developing flow remain errors.
+criterion. Positive roughness and explicitly incompatible/developing assumptions remain errors.
 The model ID is `elliptical_jones_prandtl_turbulent_engineering` and metadata
 always says `approximation=True`.
 
@@ -129,7 +142,7 @@ than returning an unverified answer. Geometry-normalized immutable scalar
 solutions use a bounded cache; k, length and physical tube count scale R.
 
 ```python
-from core.heat_transfer import tube_wall_resistance_diagnostics
+from core.heat_transfer import TubeWallModel, tube_wall_resistance_diagnostics
 
 wall = tube_wall_resistance_diagnostics(
     core_elliptical_tube, n_tubes=bundle.n_tubes_total,
@@ -141,7 +154,7 @@ The result carries `elliptical_wall_laplace_P1`, `approximation=True`, mesh
 resolution, measured relative resistance change, area error, residual and heat
 balance error. Refinement change is an error indicator, not a rigorous bound
 or an allowance for unknown physical contact conditions. `CONFOCAL_EXACT`
-continues to reject nonconfocal contours; no implicit numerical fallback exists.
+is available as an advanced exact override and rejects nonconfocal contours. Omitted selection automatically uses the compatible model.
 
 ## Verification and limits
 

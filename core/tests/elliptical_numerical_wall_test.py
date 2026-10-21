@@ -64,7 +64,7 @@ def test_bad_solver_controls(kw):
     with pytest.raises(ValueError): elliptical_wall_solution(ellipse(),**kw)
 
 
-def test_no_implicit_numerical_wall_or_circular_rerouting():
-    with pytest.raises(TubeGeometryApplicabilityError,match='explicit'): tube_wall_resistance(ellipse())
+def test_automatic_numerical_wall_without_circular_rerouting():
+    assert tube_wall_resistance(ellipse())==result(ellipse()).resistance
     with pytest.raises(TubeGeometryApplicabilityError,match='cylindrical'):
         result(BareTube(.02,.024,2.,1.8,40.))

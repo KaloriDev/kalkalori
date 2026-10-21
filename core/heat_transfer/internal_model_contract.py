@@ -5,12 +5,12 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EllipticalFlowAssumptions:
-    """Caller-declared physics, not an inferred transition/entry criterion.
+    """Advanced direct-model verification; normal dispatch supplies these.
 
     Supply development='fully_developed'. The exact laminar HTC requires
     regime='laminar', thermal_boundary_condition='H1'. Yang 2018 requires
     regime='turbulent', thermal_boundary_condition='T' and enforces its own
-    Re/shape bounds. Neither declaration establishes universal transition.
+    shape/source policy. Geometry-based dispatch also checks physical regime.
     """
     regime: str
     development: str

@@ -40,11 +40,13 @@ def test_circle_limit_preserves_original_circular_formula():
     assert wall(ellipse,24)==pytest.approx(expected,rel=1e-14)
 
 
-def test_nonconfocal_and_implicit_wall_selection_rejected():
+def test_nonconfocal_forced_exact_rejected_and_automatic_models_succeed():
     tube=replace(confocal(),inner_semi_minor_axis=confocal().inner_semi_minor_axis*.9)
     with pytest.raises(TubeGeometryApplicabilityError,match='confocal'): wall(tube)
-    for model in (None,TubeWallModel.CYLINDRICAL,'thin_wall'):
-        with pytest.raises(TubeGeometryApplicabilityError,match='explicit'):
+    assert tube_wall_resistance_diagnostics(tube).model_id=='elliptical_wall_laplace_P1'
+    assert tube_wall_resistance(confocal())==wall(confocal())
+    for model in (TubeWallModel.CYLINDRICAL,'thin_wall'):
+        with pytest.raises(TubeGeometryApplicabilityError):
             tube_wall_resistance(confocal(),model=model)
 
 

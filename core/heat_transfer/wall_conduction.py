@@ -50,6 +50,7 @@ def _numerical_wall_result(tube, n_tubes):
 
 
 def tube_wall_resistance_diagnostics(tube, *, n_tubes=1, model=None):
+    model = select_tube_wall_model(tube, model)
     resistance=tube_wall_resistance(tube,n_tubes=n_tubes,model=model)
     if model == TubeWallModel.ELLIPTICAL_NUMERICAL:
         return _numerical_wall_result(tube,n_tubes)
@@ -66,6 +67,7 @@ def tube_wall_resistance_diagnostics(tube, *, n_tubes=1, model=None):
 
 
 def tube_wall_resistance(tube, *, n_tubes=1, model=None):
+    model = select_tube_wall_model(tube, model)
     if isinstance(n_tubes, bool) or not isinstance(n_tubes, int) or n_tubes <= 0:
         raise ValueError("n_tubes must be a positive integer.")
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
@@ -73,7 +75,7 @@ def tube_wall_resistance(tube, *, n_tubes=1, model=None):
             return _numerical_wall_result(tube,n_tubes).resistance
         if model != TubeWallModel.CONFOCAL_EXACT:
             raise TubeGeometryApplicabilityError(
-                "Elliptical wall conduction requires explicit CONFOCAL_EXACT or "
+                "Elliptical wall conduction requires CONFOCAL_EXACT or "
                 "ELLIPTICAL_NUMERICAL selection; thin-wall conduction is unsupported."
             )
         return confocal_wall_resistance(tube, n_tubes=n_tubes)
@@ -93,6 +95,26 @@ def tube_wall_resistance(tube, *, n_tubes=1, model=None):
     # Preserve the historical circular expression AND evaluation order.
     # Cylindrical steady Laplace solution; no equivalent diameter substitution.
     return math.log(Do / Di) / (2.0 * math.pi * k * L_eff * n_tubes)
+
+
+def select_tube_wall_model(tube, model=None):
+    """General ellipses use the existing numerical solution automatically.
+
+    Confocal contours admit the exact solution; no flow dimension is changed.
+    An explicit incompatible override is rejected by its physical model.
+    """
+    if model is not None:
+        try:
+            return TubeWallModel(model)
+        except (ValueError, TypeError) as exc:
+            raise TubeGeometryApplicabilityError(f'Unknown wall model: {model!r}') from exc
+    if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
+        try:
+            confocal_wall_resistance(tube)
+        except TubeGeometryApplicabilityError:
+            return TubeWallModel.ELLIPTICAL_NUMERICAL
+        return TubeWallModel.CONFOCAL_EXACT
+    return TubeWallModel.CYLINDRICAL
 
 
 def confocal_wall_resistance(tube, *, n_tubes=1):

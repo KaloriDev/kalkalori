@@ -100,8 +100,9 @@ class ThinPlateFinEfficiency2D:
         if not math.isfinite(h) or h < 0:
             raise ValueError("h must be non-negative and finite.")
         core, fin = tube.core_tube, tube.fin
+        fin_streamwise_extent, fin_transverse_extent = fin.outer_height, fin.outer_width
         return _evaluate_cached(core.outer_semi_major_axis, core.outer_semi_minor_axis,
-                                fin.outer_width, fin.outer_height, fin.thickness,
+                                fin_streamwise_extent, fin_transverse_extent, fin.thickness,
                                 fin.thermal_conductivity, h, self)
 
 

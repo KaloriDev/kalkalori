@@ -45,7 +45,7 @@ def test_no_invented_shape_coefficient(ratio):
     with pytest.raises(TubeGeometryApplicabilityError,match='Table 4'): htc(tube(ratio))
 
 
-@pytest.mark.parametrize('re',[9999.,120001.,2300.])
+@pytest.mark.parametrize('re',[3999.,2300.,100.])
 def test_re_bounds_no_automatic_fallback(re):
     with pytest.raises(TubeGeometryApplicabilityError,match='Eq.18'): htc(re=re)
 

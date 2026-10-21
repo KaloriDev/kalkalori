@@ -501,6 +501,7 @@ def _evaluate_local_wall_state(
     )
     if enhancement is None:
         internal = internal_heat_transfer_diagnostics(
+            strict_source_domain=hx.strict_source_domain,
             assumptions=hx.elliptical_flow_assumptions,
             m_dot=m_dot_inside,
             tube=tube,

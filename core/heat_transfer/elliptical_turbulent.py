@@ -2,7 +2,8 @@
 """Explicit smooth, fully developed turbulent ellipse engineering models.
 
 HTC: Yang et al. (2018), Eq.18 and Table 4, doi:10.5098/hmt.11.7
-(CC BY 4.0). Only the 10,000--120,000 branch is implemented.
+(CC BY 4.0). The 10,000--120,000 source branch extrapolates with warnings
+within the implemented turbulent regime (Re >= 4000).
 Friction: Nikitin & Yakhot (2005), Eqs.3.2,3.5,
 doi:10.1017/S0022112005003964. Their DNS checks b/a=.67,.5 at Re=6000;
 other operating points are engineering extrapolations, not DNS validation.
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 import math
 from scipy.optimize import brentq
 
-from core.common.warnings import make_warning
+from core.common.warnings import ModelWarning, make_warning
 from core.geometry.applicability import TubeGeometryApplicabilityError
 from core.geometry.elliptical_tube import EllipticalTube
 from core.heat_transfer.internal_model_contract import EllipticalFlowAssumptions, InternalModelMetadata
@@ -20,6 +21,15 @@ HTC_MODEL_ID = 'elliptical_yang2018_turbulent_T'
 FRICTION_MODEL_ID = 'elliptical_jones_prandtl_turbulent_engineering'
 YANG_REFERENCE = 'https://www.techscience.com/fhmt/v11n1/53399'
 FRICTION_REFERENCE = 'https://doi.org/10.1017/S0022112005003964'
+
+
+@dataclass(frozen=True)
+class YangReExtrapolationWarning(ModelWarning):
+    """Source-domain diagnostics, including machine-readable actual inputs."""
+    reynolds: float
+    source_lower: float
+    source_upper: float
+    direction: str
 
 
 def _positive(**values):
@@ -60,10 +70,10 @@ def _metadata(htc):
         area_basis='actual_inside_perimeter_times_active_length' if htc else 'actual_unblocked_inside_flow_area',
         applicability_assumptions=(
             'smooth straight duct; constant-property Newtonian no-slip flow',
-            'fully developed state declared by caller; no entrance correction',
+            'fully developed source assumption; no entrance correction',
             *(('10000 <= Re_Dh <= 120000', 'a/b = 1.5, 2, 2.5 or 3 <= a/b <= 5',
                'constant wall temperature CFD correlation; no universal Pr bounds established by source') if htc else
-              ('4000 <= Re_Dh <= 120000 and 1 <= a/b <= 5: implementation bounds, not validation',
+              ('Re_Dh >= 4000 and 1 <= a/b <= 5: implementation bounds, not validation',
                'DNS comparison only at Re_Dh=6000, b/a=.67,.5; other points extrapolate',
                'Darcy factor uses Jones modified Re; pressure gradient retains actual Dh')),
         ), approximation=True,
@@ -99,8 +109,8 @@ def elliptical_turbulent_friction(tube, reynolds, *, assumptions):
     _validate(tube, assumptions)
     _positive(reynolds=reynolds)
     ratio=1./tube.inside_aspect_ratio
-    if not (_in_range(reynolds,4000,120000) and ratio <= 5.+1e-12):
-        raise TubeGeometryApplicabilityError('Turbulent ellipse friction implementation requires 4000<=Re_Dh<=120000 and 1<=a/b<=5.')
+    if reynolds < 4000 or ratio > 5.+1e-12:
+        raise TubeGeometryApplicabilityError('Turbulent ellipse friction implementation requires Re_Dh>=4000 and 1<=a/b<=5.')
     # Dimensionless version of Eq.3.5, avoiding squared dimensional axes.
     beta=tube.inside_aspect_ratio
     dh_a=tube.hydraulic_diameter/tube.inner_semi_major_axis
@@ -113,8 +123,13 @@ def elliptical_turbulent_friction(tube, reynolds, *, assumptions):
     return EllipticalTurbulentFrictionResult(f,reynolds,modified,tube.hydraulic_diameter,_metadata(False),warnings)
 
 
-def elliptical_turbulent_heat_transfer(tube, m_dot, props, *, assumptions, flow_area=None, L_heated=None):
+def elliptical_turbulent_heat_transfer(tube, m_dot, props, *, assumptions=None, flow_area=None,
+                                      L_heated=None, strict_source_domain=False):
     """Yang Eq.18; no circular length/wall-property corrections or fallback."""
+    if not isinstance(strict_source_domain, bool):
+        raise TypeError('strict_source_domain must be boolean.')
+    if assumptions is None:
+        assumptions = EllipticalFlowAssumptions('turbulent', 'fully_developed', 'T')
     _validate(tube, assumptions, htc=True)
     from core.heat_transfer.internal_flow import InternalHeatTransferDiagnostics
     area=tube.flow_area if flow_area is None else flow_area
@@ -124,17 +139,25 @@ def elliptical_turbulent_heat_transfer(tube, m_dot, props, *, assumptions, flow_
     dh=tube.hydraulic_diameter
     re=props.rho*v*dh/props.mu
     pr=props.cp*props.mu/props.k
-    if not _in_range(re,10000,120000):
-        raise TubeGeometryApplicabilityError('Yang 2018 Eq.18 requires 10000<=Re_Dh<=120000; no transition/high-Re fallback.')
+    if re < 4000:
+        raise TubeGeometryApplicabilityError('Yang 2018 Eq.18 requires turbulent Re_Dh>=4000; laminar/transition flow is unsupported by this provider.')
+    extrapolated = not _in_range(re,10000,120000)
+    if extrapolated and strict_source_domain:
+        raise TubeGeometryApplicabilityError('Yang 2018 Eq.18 strict source domain requires 10000<=Re_Dh<=120000.')
     c=_shape_factor(1./tube.inside_aspect_ratio)
     nu=c*(.02979*re**.8-8.5626)*pr**.4
     alpha=nu*props.k/dh
     warnings=[make_warning(
         code='elliptical_yang2018_CFD_assumptions', source=HTC_MODEL_ID, severity='warning',
         message='Yang 2018 is a fully developed constant-wall-temperature CFD fit, evaluated at bulk properties. Its use in a 0D exchanger is an engineering approximation; source does not establish universal Pr bounds. No entrance or variable-wall correction is applied.')]
+    if extrapolated:
+        direction = 'below' if re < 10000 else 'above'
+        warnings.append(YangReExtrapolationWarning(code='yang2018_re_extrapolation', source=HTC_MODEL_ID,
+            severity='warning', reynolds=re, source_lower=10000., source_upper=120000., direction=direction,
+            message=f'Yang 2018 turbulent elliptical-tube correlation extrapolated {direction} source Reynolds range: Re_Dh={re:.12g}, source lower=10000, source upper=120000; no clipping.'))
     if length/dh < 60:
         warnings.append(make_warning(code='elliptical_yang2018_short_duct',source=HTC_MODEL_ID,severity='warning',
-            message='Heated length is below 60 Dh, the source development guidance; the declared fully developed state needs independent justification.'))
+            message='Heated length is below 60 Dh, the source development guidance; the fully developed model assumption may be weak/extrapolated.'))
     # Carry hydraulic approximation scope into normal combined result warnings.
     warnings.extend(elliptical_turbulent_friction(tube,re,assumptions=assumptions).warnings)
     return InternalHeatTransferDiagnostics(

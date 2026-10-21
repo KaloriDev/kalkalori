@@ -21,7 +21,7 @@ from core.models.simulation import run_simulation
 def bundle():
     tube = RectangularFinnedEllipticalTube(
         EllipticalTube(.012, .006, .010, .004, 2., 1.8, 40.),
-        RectangularIndividualFin(.040, .030, .0004, .003, 200.))
+        RectangularIndividualFin(.030, .040, .0004, .003, 200.))
     return TubeBundle(tube, 4, 6, .060, .060, 'inline', 2)
 
 

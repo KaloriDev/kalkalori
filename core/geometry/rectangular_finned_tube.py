@@ -17,7 +17,11 @@ from core.geometry.tube import BaseTube, TubeCrossSectionFamily, TubeSurfaceType
 
 @dataclass(frozen=True)
 class RectangularIndividualFin:
-    """Constant-thickness individual fin; dimensions [m], conductivity [W/m/K]."""
+    """Dimensions [m], conductivity [W/m/K].
+
+    Width is transverse to air flow; height is streamwise at zero tube angle.
+    The rectangle and ellipse rotate together for nonzero orientation_angle.
+    """
 
     outer_width: float
     outer_height: float
@@ -64,8 +68,8 @@ class RectangularFinnedEllipticalTube(BaseTube):
             raise TypeError("core_tube must be an EllipticalTube.")
         if not isinstance(self.fin, RectangularIndividualFin):
             raise TypeError("fin must be a RectangularIndividualFin.")
-        if (self.fin.outer_width <= 2 * self.core_tube.outer_semi_major_axis
-                or self.fin.outer_height <= 2 * self.core_tube.outer_semi_minor_axis):
+        if (self.fin.outer_height <= 2 * self.core_tube.outer_semi_major_axis
+                or self.fin.outer_width <= 2 * self.core_tube.outer_semi_minor_axis):
             raise ValueError("Fin rectangle must strictly enclose the ellipse with a positive ligament.")
         for value in (self.area_outer, self.area_primary_outside, self.area_fin_faces,
                       self.area_contact, self.fin_face_area_one_side):
@@ -164,8 +168,10 @@ class RectangularFinnedEllipticalTube(BaseTube):
     def projected_blocking_area_per_length(self):
         """Exact periodic orthographic blockage, not a bank minimum flow area."""
         angle = self.core_tube.orientation_angle
-        rectangle_width = (self.fin.outer_width * abs(math.sin(angle))
-                           + self.fin.outer_height * abs(math.cos(angle)))
+        fin_streamwise_extent = self.fin.outer_height
+        fin_transverse_extent = self.fin.outer_width
+        rectangle_width = (fin_streamwise_extent * abs(math.sin(angle))
+                           + fin_transverse_extent * abs(math.cos(angle)))
         fraction = self.fin.thickness / self.fin.axial_pitch
         return ((1 - fraction) * self.core_tube.projected_blocking_area_per_length
                 + fraction * rectangle_width)

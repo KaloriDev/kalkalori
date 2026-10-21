@@ -670,6 +670,7 @@ class BareTubeHeatExchanger:
         airside_model=None,
         elliptical_flow_assumptions=None,
         tube_wall_model=None,
+        strict_source_domain=False,
     ):
         """Configure thermal fouling [m² K/W] on inner/gross outer areas.
 
@@ -693,6 +694,9 @@ class BareTubeHeatExchanger:
         self.airside_model = airside_model
         self.elliptical_flow_assumptions = elliptical_flow_assumptions
         self.tube_wall_model = None if tube_wall_model is None else TubeWallModel(tube_wall_model)
+        if not isinstance(strict_source_domain, bool):
+            raise TypeError('strict_source_domain must be boolean.')
+        self.strict_source_domain = strict_source_domain
         self._tube_side_enhancement = tube_side_enhancement
         self._enhancement_operation_context = None
         self._fouling_resistance_inside = normalize_fouling_resistance(
@@ -893,6 +897,7 @@ class BareTubeHeatExchanger:
         )
         if enhancement is None:
             v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = internal_heat_transfer_coefficient(
+                strict_source_domain=self.strict_source_domain,
                 assumptions=self.elliptical_flow_assumptions,
                 m_dot=m_dot_tube_side,
                 tube=self.bundle.tube,
@@ -1150,7 +1155,7 @@ class BareTubeHeatExchanger:
             warnings_list.extend(self.bundle.tube.geometry_warnings)
 
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
-        if enhancement is None and self.elliptical_flow_assumptions is None and Re_i < 2300.0:
+        if enhancement is None and self.bundle.tube.cross_section_family.value == 'circular' and Re_i < 2300.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_laminar_regime",
@@ -1159,7 +1164,7 @@ class BareTubeHeatExchanger:
                     severity="info",
                 )
             )
-        elif enhancement is None and self.elliptical_flow_assumptions is None and 2300.0 <= Re_i <= 4000.0:
+        elif enhancement is None and self.bundle.tube.cross_section_family.value == 'circular' and 2300.0 <= Re_i <= 4000.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_transition_regime",

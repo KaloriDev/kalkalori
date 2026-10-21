@@ -7,6 +7,31 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [0.9.2] — Rectangular-finned elliptical baseline and conduction
 
+- **Potentially breaking pre-release v0.9.2 semantic correction:** rectangular
+  fin width is transverse and height is streamwise. Swap old width/height
+  values (including positional and serialized configurations); the physical
+  55x26 mm fin now has width 26 mm / height 55 mm. Zhao, projection, enclosure
+  and fin meshes preserve the previous physical orientation.
+- Simplified automatic elliptical internal dispatch by actual inner-contour Re:
+  laminar H1 below 2300, explicit unsupported transition 2300-4000, turbulent
+  Yang T from 4000 with existing shape/smoothness guards. Direct advanced
+  `EllipticalFlowAssumptions` remains available; normal STAGES omit it.
+- Added `EllipticalTube.from_nominal_wall`: 36x14x1.5 mm gives nominal inner
+  33x11 mm, an engineering approximation distinct from exact normal offset.
+  Nonconfocal tubes are ordinary inputs and internal flow is contour-only.
+- Automatic wall selection uses numerical Laplace conduction for general
+  contours and exact conduction for confocal contours; forced incompatible
+  exact selection still rejects. No flow dimensions or coefficients change.
+- Yang source-Re exceedance within the turbulent regime now calculates actual
+  Re with `yang2018_re_extrapolation` (bounds and direction); explicit
+  `strict_source_domain=True` rejects. The engineering friction upper cap
+  is removed with its approximation warning preserved.
+- Shared notebook model/provider overrides move from STAGES to CASE `options`:
+  `tube_wall_model`, `airside_model`, optional Yang `strict_source_domain`.
+  Options are local and do not mutate shared stages. Zhao remains the normal
+  rectangular-fin default; baseline correction factors remain 1.0/1.0.
+  See [migration guide](docs/elliptical_api_v092.md).
+
 - Added explicitly selected smooth fully developed turbulent ellipse HTC
   (Yang 2018 Eq.18/Table 4), geometry-adjusted Prandtl friction with an explicit
   engineering extrapolation warning, and P1 Laplace resistance between actual
