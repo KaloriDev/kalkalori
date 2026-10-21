@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from core.geometry.applicability import require_circular_tube, tube_cross_section_family, TubeGeometryApplicabilityError
 from core.geometry.tube import TubeCrossSectionFamily
+from core.heat_transfer.elliptical_wall import EllipticalWallConvergence
 
 # Relative error in focal-square equality, scaled by the largest semi-axis
 # squared. This is floating-point tolerance, not a manufacturing allowance.
@@ -14,6 +15,7 @@ CONFOCAL_RELATIVE_TOLERANCE = 1.0e-12
 class TubeWallModel(str, Enum):
     CYLINDRICAL = "cylindrical"
     CONFOCAL_EXACT = "confocal_exact"
+    ELLIPTICAL_NUMERICAL = "elliptical_numerical"
 
 
 @dataclass(frozen=True)
@@ -26,8 +28,32 @@ class WallResistanceResult:
     approximation: bool = False
 
 
+@dataclass(frozen=True, kw_only=True)
+class EllipticalNumericalWallResult(WallResistanceResult):
+    convergence: 'EllipticalWallConvergence'
+
+
+def _numerical_wall_result(tube, n_tubes):
+    from core.heat_transfer.elliptical_wall import elliptical_wall_solution
+    solution=elliptical_wall_solution(tube)
+    resistance=1/(solution.unit_conductance*tube.wall_k*tube.length_effective*n_tubes)
+    if not math.isfinite(resistance) or resistance<=0:
+        raise ValueError('Numerical wall resistance must be positive and representable [K/W].')
+    return EllipticalNumericalWallResult(
+        resistance=resistance,model_id='elliptical_wall_laplace_P1',geometry_family='elliptical',
+        source_references=('https://jsdokken.com/dolfinx-tutorial/chapter1/fundamentals.html',),
+        assumptions=('independent P1 weak Laplace solve; concentric coaxial ellipse contours',
+                     'constant conductivity; isothermal inner/outer contours',
+                     'quarter-section symmetry; negligible axial conduction and end effects',
+                     'measured mesh convergence, not a certified continuum error bound'),
+        approximation=True,convergence=solution)
+
+
 def tube_wall_resistance_diagnostics(tube, *, n_tubes=1, model=None):
+    model = select_tube_wall_model(tube, model)
     resistance=tube_wall_resistance(tube,n_tubes=n_tubes,model=model)
+    if model == TubeWallModel.ELLIPTICAL_NUMERICAL:
+        return _numerical_wall_result(tube,n_tubes)
     family=tube_cross_section_family(tube)
     is_ellipse=family is TubeCrossSectionFamily.ELLIPTICAL
     return WallResistanceResult(
@@ -41,13 +67,16 @@ def tube_wall_resistance_diagnostics(tube, *, n_tubes=1, model=None):
 
 
 def tube_wall_resistance(tube, *, n_tubes=1, model=None):
+    model = select_tube_wall_model(tube, model)
     if isinstance(n_tubes, bool) or not isinstance(n_tubes, int) or n_tubes <= 0:
         raise ValueError("n_tubes must be a positive integer.")
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
+        if model == TubeWallModel.ELLIPTICAL_NUMERICAL:
+            return _numerical_wall_result(tube,n_tubes).resistance
         if model != TubeWallModel.CONFOCAL_EXACT:
             raise TubeGeometryApplicabilityError(
-                "Elliptical wall conduction requires explicit CONFOCAL_EXACT selection; "
-                "arbitrary/thin-wall conduction is unsupported."
+                "Elliptical wall conduction requires CONFOCAL_EXACT or "
+                "ELLIPTICAL_NUMERICAL selection; thin-wall conduction is unsupported."
             )
         return confocal_wall_resistance(tube, n_tubes=n_tubes)
     require_circular_tube(tube, "Cylindrical wall conduction")
@@ -66,6 +95,26 @@ def tube_wall_resistance(tube, *, n_tubes=1, model=None):
     # Preserve the historical circular expression AND evaluation order.
     # Cylindrical steady Laplace solution; no equivalent diameter substitution.
     return math.log(Do / Di) / (2.0 * math.pi * k * L_eff * n_tubes)
+
+
+def select_tube_wall_model(tube, model=None):
+    """General ellipses use the existing numerical solution automatically.
+
+    Confocal contours admit the exact solution; no flow dimension is changed.
+    An explicit incompatible override is rejected by its physical model.
+    """
+    if model is not None:
+        try:
+            return TubeWallModel(model)
+        except (ValueError, TypeError) as exc:
+            raise TubeGeometryApplicabilityError(f'Unknown wall model: {model!r}') from exc
+    if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
+        try:
+            confocal_wall_resistance(tube)
+        except TubeGeometryApplicabilityError:
+            return TubeWallModel.ELLIPTICAL_NUMERICAL
+        return TubeWallModel.CONFOCAL_EXACT
+    return TubeWallModel.CYLINDRICAL
 
 
 def confocal_wall_resistance(tube, *, n_tubes=1):

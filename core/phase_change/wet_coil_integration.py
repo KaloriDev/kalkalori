@@ -688,6 +688,19 @@ def _public_simulation(
 
 def route_outside_wet(hx, inside, outside, *, mode, settings, **options):
     """Global model selection shared by the public and deferred wet paths."""
+    from core.geometry.tube import TubeSurfaceType
+    if hx.bundle.tube.surface_type is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        from core.phase_change.types import PhaseChangeMode
+        from core.phase_change.capability import detect_phase_change_capability
+        if outside.phase_change_mode is PhaseChangeMode.DISABLED:
+            return None
+        if (not detect_phase_change_capability(outside.provider).capable
+                and options.get('wet_coil_provider') is None
+                and not options.get('force_candidate',False)):
+            return None
+        # A dry-capable source model does not establish wet-coil physics.
+        from core.geometry.applicability import require_circular_tube
+        require_circular_tube(hx.bundle.tube,'Wet-coil condensation')
     from core.phase_change.wet_coil_provider import dispatch_wet_coil
     return dispatch_wet_coil(hx, inside, outside, mode=mode, settings=settings, **options)
 

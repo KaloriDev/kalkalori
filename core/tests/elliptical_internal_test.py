@@ -95,16 +95,18 @@ def test_H1_identity_is_explicit(change):
         elliptical_h1_heat_transfer(ellipse(),.005,PROPS,assumptions=replace(FD,**change))
 
 
-def test_positive_roughness_and_implicit_regime_are_rejected_without_circular_fallback(monkeypatch):
+def test_positive_roughness_rejected_and_automatic_regime_never_uses_circular_fallback(monkeypatch):
     import core.heat_transfer.internal_dispatch as dispatch
     monkeypatch.setattr(dispatch,'heat_transfer_coefficient_internal_diagnostics',lambda **kw: pytest.fail('Circular HTC called'))
     monkeypatch.setattr(dispatch,'darcy_friction_factor',lambda *a: pytest.fail('Circular friction called'))
-    for tube,assumptions in ((ellipse(),None),(replace(ellipse(),roughness_inner=1e-5),FD)):
+    for tube,assumptions in ((replace(ellipse(),roughness_inner=1e-5),FD),):
         with pytest.raises(TubeGeometryApplicabilityError):
             internal_heat_transfer_diagnostics(tube=tube,m_dot=.005,flow_area=tube.flow_area,props=PROPS,assumptions=assumptions)
         with pytest.raises(TubeGeometryApplicabilityError):
             internal_friction(tube=tube,reynolds=800.,assumptions=assumptions)
-    with pytest.raises(TubeGeometryApplicabilityError): straight_friction_evaluator(ellipse())
+    assert internal_heat_transfer_diagnostics(tube=ellipse(),m_dot=.005,
+        flow_area=ellipse().flow_area,props=PROPS).model_metadata.regime=='laminar'
+    assert straight_friction_evaluator(ellipse())(800.,None)[0]>0
 
 
 def test_H1_circle_limit_does_not_change_existing_circular_T_default():

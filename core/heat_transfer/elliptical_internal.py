@@ -49,7 +49,7 @@ def _metadata(htc=False):
         area_basis=('actual_inside_perimeter_times_active_length' if htc
                     else 'actual_unblocked_inside_flow_area'),
         applicability_assumptions=('0 < inside b/a <= 1', 'smooth no-slip Newtonian fluid',
-            'constant properties', 'laminar and fully developed declared by caller; not inferred from Re',
+            'constant properties', 'laminar fully developed model; automatic dispatch requires Re_Dh<2300',
             *(('H1: constant axial heat input, uniform wall temperature around each section',
               'negligible axial conduction and viscous dissipation') if htc else ())),
     )
@@ -110,7 +110,7 @@ def elliptical_h1_heat_transfer(tube, m_dot, props, *, assumptions, flow_area=No
         length_correction=1.,wall_temperature_correction=1.,combined_correction=1.,
         alfa_base=alpha,alfa_corrected=alpha,
         warnings=[make_warning(code='elliptical_fd_H1_assumptions',source=H1_MODEL_ID,severity='info',
-            message='Laminar, fully developed H1 and constant-property assumptions are declared by the caller; no transition/entrance criterion is inferred.')],
+            message='Analytical laminar model assumes fully developed H1 and constant properties; no developing-flow correction is applied.')],
         model_metadata=_metadata(htc=True),
     )
 

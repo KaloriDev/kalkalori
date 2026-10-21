@@ -5,6 +5,88 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.2] — Rectangular-finned elliptical baseline and conduction
+
+- **Potentially breaking pre-release v0.9.2 semantic correction:** rectangular
+  fin width is transverse and height is streamwise. Swap old width/height
+  values (including positional and serialized configurations); the physical
+  55x26 mm fin now has width 26 mm / height 55 mm. Zhao, projection, enclosure
+  and fin meshes preserve the previous physical orientation.
+- Simplified automatic elliptical internal dispatch by actual inner-contour Re:
+  laminar H1 below 2300, explicit unsupported transition 2300-4000, turbulent
+  Yang T from 4000 with existing shape/smoothness guards. Direct advanced
+  `EllipticalFlowAssumptions` remains available; normal STAGES omit it.
+- Added `EllipticalTube.from_nominal_wall`: 36x14x1.5 mm gives nominal inner
+  33x11 mm, an engineering approximation distinct from exact normal offset.
+  Nonconfocal tubes are ordinary inputs and internal flow is contour-only.
+- Automatic wall selection uses numerical Laplace conduction for general
+  contours and exact conduction for confocal contours; forced incompatible
+  exact selection still rejects. No flow dimensions or coefficients change.
+- Yang source-Re exceedance within the turbulent regime now calculates actual
+  Re with `yang2018_re_extrapolation` (bounds and direction); explicit
+  `strict_source_domain=True` rejects. The engineering friction upper cap
+  is removed with its approximation warning preserved.
+- Shared notebook model/provider overrides move from STAGES to CASE `options`:
+  `tube_wall_model`, `airside_model`, optional Yang `strict_source_domain`.
+  Options are local and do not mutate shared stages. Zhao remains the normal
+  rectangular-fin default; baseline correction factors remain 1.0/1.0.
+  See [migration guide](docs/elliptical_api_v092.md).
+
+- Added explicitly selected smooth fully developed turbulent ellipse HTC
+  (Yang 2018 Eq.18/Table 4), geometry-adjusted Prandtl friction with an explicit
+  engineering extrapolation warning, and P1 Laplace resistance between actual
+  nonconfocal elliptical contours. Source bounds, model metadata, mesh
+  convergence and limitations are documented in
+  [the ellipse extension](docs/elliptical_turbulent.md). Existing laminar H1,
+  exact confocal and circular selections retain their previous equations.
+
+- Added optional per-fin `fin_turbulator_count` metadata: omitted/None/0 has
+  identical physics, and any nonnegative integer is accepted without an
+  automatic enhancement law. Positive uncorrected counts remain executable.
+- Added generic `MultiplicativeAirsideCorrection` through the existing neutral
+  provider contract, with independent positive h/pressure factors defaulting
+  to 1.0. Normalized count and actual correction status are visible in results.
+- Added frozen `RectangularIndividualFin` / `RectangularFinnedEllipticalTube`
+  composition with explicit enclosure, pitch, dimension and material checks.
+  Analytical surface accounting distinguishes exposed tube, both fin faces,
+  outer edge, buried contact and the elliptical aperture.
+- Added independent `ThinPlateFinEfficiency2D` using NumPy/SciPy sparse P1
+  conduction, an isothermal elliptical contact and an adiabatic rectangular
+  edge. Deterministic body-fitted meshes, measured refinement, area error,
+  residual, heat balance and bounded mesh/solution caches are exposed.
+- The existing resistance network now evaluates physical h -> eta(h) ->
+  effective area. Fin efficiency reduces only the broad-face contribution;
+  the physical film coefficient is preserved and edge convection excluded.
+- Added `Zhao2017AirsideModel`: source-transcribed Eq.20 supplies physical
+  film h, Eq.19 supplies f, and Eq.18 remains a diagnostic only. An inferred
+  4A/P diameter and explicit periodic-volume passage reconstruction produce
+  velocity/Re and a finite source-domain inlet-to-outlet pressure estimate.
+  Pressure scope is typed separately from irreversible bank losses, without
+  duplicate acceleration/entry/exit terms or hidden calibration.
+- Integrated this dry baseline into normal Rating/Simulation, with current-state
+  h -> 2D eta -> effective area coupling. The initial internal ellipse path used
+  explicit FD laminar H1 assumptions and confocal wall selection; unsupported
+  tube-sheet losses are omitted with a scope warning.
+- Source N=6–10 and geometric/Re bounds are diagnosed; extrapolation (including
+  N=2/4) calculates with warnings by default. Optional strict mode rejects.
+  Simplified fins always carry a source-geometry approximation warning.
+- Added one neutral `AirsideCorrectionProvider` hook with positive physical-h
+  and pressure multipliers/replacements, visible base/corrected values and
+  provenance. Provider failures propagate without fallback.
+- No wet rectangular-fin model, source-specific contact resistance, circular/
+  smooth-ellipse outside substitute or additional row correction was added.
+  Existing v0.9.1 numerical baselines are retained.
+- Added analytical geometry, insulated straight-fin, symmetry, convergence,
+  energy and network tests. Implementation references are the freely
+  accessible primary CET (2020) and CC BY Energies (2021) publications.
+  See [scope and source provenance](docs/rectangular_finned_ellipse.md) and
+  [numerical validation](docs/validation/finned_foundation_v092.md).
+- The historical [free-source closure](docs/validation/finned_ellipse_source_closure_v092.md)
+  is preserved. The 2026-10-20 project authorization accepts supplied equation
+  transcriptions and explicitly graded engineering reconstruction for this
+  baseline; free full-text access to Zhao 2017 is not claimed. See the
+  [implementation validation](docs/validation/zhao2017_v092.md).
+
 ## [0.9.1] — Topology-aware N-section counter-crossflow
 
 - Added `RowParityMode` / `row_parity_mode`: `reset` preserves legacy module

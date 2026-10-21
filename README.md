@@ -35,12 +35,28 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.1)
+## Current Capabilities (v0.9.2)
+
+- Rectangular-finned elliptical baseline: `RectangularIndividualFin` composes with
+  `EllipticalTube` through `RectangularFinnedEllipticalTube`. Exact physical
+  surface components and deterministic `ThinPlateFinEfficiency2D` conduction
+  feed effective area into the common thermal resistance network for a
+  physical film coefficient. Normal dry Rating/Simulation can select the
+  Zhao-2017 engineering baseline, with explicit inferred diameter, reconstructed
+  passage velocity, source-domain pressure estimate and source-geometry warnings.
+  The source fit covers N=6–10; other positive row counts calculate with
+  extrapolation warnings, or reject in optional strict mode. The current
+  internal ellipse path automatically selects laminar H1 or turbulent Yang T
+  from Re, with an explicit unsupported transition interval. General elliptical
+  walls use numerical conduction automatically; confocal walls admit the exact
+  solution. Yang source-Re exceedance calculates with a warning by default.
+  Fin width is transverse and height streamwise (a pre-release API correction). See the
+  [geometry, physics and limitations guide](docs/rectangular_finned_ellipse.md).
 
 - Smooth mathematical `EllipticalTube` geometry with exact perimeter and
   hydraulic diameter, explicit fully developed laminar Darcy friction and H1
-  internal heat transfer, and an explicitly selected exact confocal wall model.
-  These are standalone foundation calculations; automatic elliptical-bank
+  internal heat transfer, turbulent Yang T, and automatic numerical/exact wall selection.
+  These are standalone foundation calculations; automatic bare-ellipse-bank
   Rating/Simulation remains unsupported. See [elliptical tubes](docs/elliptical_tubes.md).
 
 - Independent inside/outside thermal fouling resistances [m² K/W] on the
@@ -125,8 +141,10 @@ and serialization**, enabling both open collaboration and commercial adoption.
   - thermal performance
   - hydraulic performance
 
-Actual outside pressure-change support is limited to the calculated plain or
-dry circular-finned tube bank. During active wet-finned condensation the
+Outside pressure-change support includes the calculated plain or dry
+circular-finned tube bank and an explicitly reconstructed Zhao source-domain
+estimate for rectangular-finned ellipses. The latter is not a validated
+bank-only irreversible loss. During active wet-finned condensation the
 reported finned-bank value is explicitly a dry pressure-drop reference, not an
 actual wet-bank pressure drop. Duct, plenum,
 casing-transition, screen, louver, damper, fan, and external-piping losses are
@@ -237,7 +255,8 @@ In short:
 KalKalori is intended to be used as a Python library.
 
 Typical usage:
-1. Define geometry (`BareTube` or `CircularFinnedTube`, then
+1. Define geometry (`BareTube`, `CircularFinnedTube` or a supported
+   `RectangularFinnedEllipticalTube` configuration, then
    `TubeBundle`)
 2. Define energy streams
 3. Solve using a heat exchanger model

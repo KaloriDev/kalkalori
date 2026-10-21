@@ -811,8 +811,8 @@ def run_simulation(
     ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
     before computing duty/outlet temperatures; see the module docstring.
     """
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
     uses_bundle_flow_arrangement = flow_arrangement is None
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -940,7 +940,7 @@ def run_simulation(
             hydraulic_wall_temperature = probe.inside_wall_temperature
 
         bundle_hydraulic = calculate_tube_bundle_hydraulics(
-            straight_friction_evaluator=straight_friction_evaluator(hx.bundle.tube),
+            **hx._internal_hydraulics_kwargs(),
             enhancement_evaluator=hydraulic_evaluator(
                 hx.tube_side_enhancement, hx.bundle, inside.provider,
                 wall_temperature=hydraulic_wall_temperature,
@@ -968,6 +968,7 @@ def run_simulation(
             tube_bundle=bundle_hydraulic,
         )
         outside_bank_hydraulic = evaluate_outside_hydraulics(
+            airside_model=hx.airside_model,
             bundle=hx.bundle,
             m_dot=outside.m_dot,
             property_provider=outside.provider,

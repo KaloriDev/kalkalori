@@ -6,6 +6,26 @@ property libraries as implementation references.
 This document lists the main references used by the current computational core.
 Short reference notes are also included directly in the relevant source files.
 
+## v0.9.2 thin-plate fin foundation: free primary sources
+
+- Taler, D.; Marcinkowski, M. (2020), *Calculating the Efficiency of Complex
+  Shaped Fins*, Chemical Engineering Transactions 81, 1333-1338,
+  [DOI 10.3303/CET2081223](https://doi.org/10.3303/CET2081223).
+  [Free publisher PDF](https://www.aidic.it/cet/20/81/223.pdf), accessible
+  without payment on 2026-10-19. Copyright AIDIC Servizi S.r.l.; no article,
+  prose, figures or external code are redistributed.
+- Marcinkowski, M.; Taler, D. (2021), *Calculating the Efficiency of
+  Complex-Shaped Fins*, Energies 14(3), 577,
+  [publisher article / DOI 10.3390/en14030577](https://www.mdpi.com/1996-1073/14/3/577).
+  Open access under CC BY 4.0, verified on 2026-10-19. Sections 2-3 provide
+  the governing thin-plate problem, assumptions and area-average efficiency.
+
+KalKalori's numerical implementation and geometric accounting are independent
+GPL-3.0-only code. These sources support fin conduction, **not** a predictive
+outside-film HTC, pressure drop or bank-row correction for the new surface.
+The sources cited by these articles were not imported as implementation
+requirements. See [scope](rectangular_finned_ellipse.md).
+
 ---
 
 ## Heat Exchanger Theory and ε-NTU Method
@@ -483,6 +503,53 @@ public equations, with exact capacity-ratio limits and an independently
 derived inverse. No upstream code or source PDFs are redistributed.
 See [assumptions, equations and validation](thermal_topology.md).
 
+## Rectangular-finned ellipse: Zhao engineering baseline and source grades
+
+Zhao, L.; Gu, X.; Gao, L.; Yang, Z. (2017). *Numerical study on airside
+thermal-hydraulic performance of rectangular finned elliptical tube heat
+exchanger with large row number in turbulent flow regime*. International
+Journal of Heat and Mass Transfer 114, 1314–1330.
+[DOI 10.1016/j.ijheatmasstransfer.2017.06.049](https://doi.org/10.1016/j.ijheatmasstransfer.2017.06.049).
+
+The project explicitly authorized the supplied equation transcriptions on
+2026-10-20. Eqs.18–20 and definitions were provided with visual evidence;
+the diameter inference and passage-area reconstruction remain separately
+identified project assumptions. Free full-text access is not asserted.
+No source figures, article text, PDFs or external implementation are included.
+See [equations, source grades and limits](rectangular_finned_ellipse.md) and
+[numerical evidence](validation/zhao2017_v092.md). This baseline is not a
+claim that every rectangular-finned ellipse has experimentally validated
+thermal/hydraulic support.
+
+### Earlier free-source candidates
+
+The [targeted v0.9.2 source-closure record](validation/finned_ellipse_source_closure_v092.md)
+links the free primary material checked on 2026-10-19: Tang, Du and Zeng
+(2019), DOI 10.11949/0438-1157.20190527; Zhao and Yang (2016), DOI
+10.11908/j.issn.0253-374x.2016.02.020; Ribeiro Jr. and Andrade (2004), DOI
+10.1590/S0104-66322004000200025; the UFMG Ribeiro thesis catalogue; and
+Chiu, Lin and Jang (Clima 2007). It distinguishes retrieved full papers from
+abstract/catalogue-only evidence and records each missing model definition.
+Those candidates did not close a complete predictive model under the earlier
+free-source-only decision. The current Zhao baseline follows the separate
+2026-10-20 authorization; geometry/conduction authorities remain unchanged.
+
+## Turbulent ellipse and nonconfocal wall extension
+
+The explicitly selected turbulent ellipse extension uses Yang et al. (2018),
+FHMT 11, 7, [DOI 10.5098/hmt.11.7](https://www.techscience.com/fhmt/v11n1/53399)
+(CC BY 4.0), Eq.18/Table 4; and Nikitin & Yakhot (2005), JFM 532, 141–164,
+[DOI 10.1017/S0022112005003964](https://doi.org/10.1017/S0022112005003964),
+Eqs.3.2/3.5, read in the
+[author-hosted full text](https://www.researchgate.net/publication/231908645_Direct_numerical_simulation_of_turbulent_flow_in_elliptical_ducts).
+Source equations, bounded implementation and the friction extrapolation are
+separately described in [the model guide](elliptical_turbulent.md).
+The nonconfocal wall solver independently implements the standard Laplace
+weak form documented by the
+[DOLFINx tutorial](https://jsdokken.com/dolfinx-tutorial/chapter1/fundamentals.html)
+(CC BY 4.0); it does not reuse tutorial implementation or require FEniCS.
+No source PDF, figure, external implementation or private geometry is included.
+
 ## Private Reference Sources
 
 Project source policy: built-in engineering correlations must be independently
@@ -490,6 +557,9 @@ reproducible from legally and freely accessible source material. Models
 requiring paywalled publications, licensed datasets, proprietary software or
 manufacturer-confidential information are integrated through external
 providers. This is a project rule, not an interpretation of copyright law.
+The explicitly authorized Zhao-2017 transcription/reconstruction described
+above is a scoped project-policy exception; it does not establish free access
+or authorize importing other inaccessible source models.
 M&B Part I/II are reserved as sources for a future private external provider;
 neither their implementation nor manufacturer physics is included in the
 new enhancement module. Existing bibliographic entries below and elsewhere

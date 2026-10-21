@@ -72,6 +72,7 @@ from core.pressure_drop.outside_pressure_drop import (
 
 from core.pressure_drop.flow_path import (
     PressureDropPathResult,
+    SourceDomainPressureEstimateResult,
     build_tube_side_pressure_drop_result,
     build_outside_pressure_drop_result,
 )
@@ -324,11 +325,13 @@ class HXOutsidePressureDropResults:
     into irreversible drag and signed dynamic-pressure change. With no
     explicitly calculated local-loss path, ``dp_local`` is ``0.0`` and
     ``dp_static_total`` equals the legacy signed ``tube_bank.dp_total``
-    pressure difference exactly.
+    pressure difference exactly. A rectangular-finned ellipse instead carries
+    SourceDomainPressureEstimateResult: its finite total is not a decomposed
+    irreversible loss; inspect pressure_basis and validated_bank_irreversible.
     """
 
     tube_bank: OutsideBankHydraulicResult | None
-    flow_path: PressureDropPathResult
+    flow_path: PressureDropPathResult | SourceDomainPressureEstimateResult
 
     @property
     def dp_core(self) -> float:
@@ -664,6 +667,10 @@ class BareTubeHeatExchanger:
         tube_side_enhancement: TubeSideEnhancement | None = None,
         fouling_resistance_inside: float | None = None,
         fouling_resistance_outside: float | None = None,
+        airside_model=None,
+        elliptical_flow_assumptions=None,
+        tube_wall_model=None,
+        strict_source_domain=False,
     ):
         """Configure thermal fouling [m² K/W] on inner/gross outer areas.
 
@@ -674,6 +681,22 @@ class BareTubeHeatExchanger:
         if tube_side_enhancement is not None and not isinstance(tube_side_enhancement, TubeSideEnhancement):
             raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
         self.bundle = bundle
+        from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel
+        from core.heat_transfer.internal_model_contract import EllipticalFlowAssumptions
+        from core.heat_transfer.wall_conduction import TubeWallModel
+        if airside_model is not None and not isinstance(airside_model,Zhao2017AirsideModel):
+            raise TypeError('airside_model must be Zhao2017AirsideModel or None.')
+        if elliptical_flow_assumptions is not None and not isinstance(elliptical_flow_assumptions,EllipticalFlowAssumptions):
+            raise TypeError('elliptical_flow_assumptions must be EllipticalFlowAssumptions or None.')
+        from core.geometry.tube import TubeCrossSectionFamily
+        if elliptical_flow_assumptions is not None and bundle.tube.cross_section_family is not TubeCrossSectionFamily.ELLIPTICAL:
+            raise ValueError('elliptical_flow_assumptions requires elliptical tube geometry.')
+        self.airside_model = airside_model
+        self.elliptical_flow_assumptions = elliptical_flow_assumptions
+        self.tube_wall_model = None if tube_wall_model is None else TubeWallModel(tube_wall_model)
+        if not isinstance(strict_source_domain, bool):
+            raise TypeError('strict_source_domain must be boolean.')
+        self.strict_source_domain = strict_source_domain
         self._tube_side_enhancement = tube_side_enhancement
         self._enhancement_operation_context = None
         self._fouling_resistance_inside = normalize_fouling_resistance(
@@ -745,7 +768,21 @@ class BareTubeHeatExchanger:
         Ref: standard conduction through cylindrical wall (heat transfer textbooks).
         """
         from core.heat_transfer.wall_conduction import tube_wall_resistance
-        return tube_wall_resistance(self.bundle.tube, n_tubes=self.bundle.n_tubes_total, model=model)
+        from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
+        tube=self.bundle.tube
+        if isinstance(tube,RectangularFinnedEllipticalTube):
+            tube=tube.core_tube
+        return tube_wall_resistance(tube, n_tubes=self.bundle.n_tubes_total,
+                                    model=self.tube_wall_model if model is None else model)
+
+    def _internal_hydraulics_kwargs(self):
+        """Exact elliptical straight friction; never borrow circular end losses."""
+        kwargs=dict(straight_friction_evaluator=straight_friction_evaluator(
+            self.bundle.tube,assumptions=self.elliptical_flow_assumptions))
+        from core.geometry.tube import TubeCrossSectionFamily
+        if self.bundle.tube.cross_section_family is TubeCrossSectionFamily.ELLIPTICAL:
+            kwargs['include_tube_end_losses']=False
+        return kwargs
 
     def solve(
         self,
@@ -791,8 +828,8 @@ class BareTubeHeatExchanger:
 
     ) -> HXResult:
         # Use the arrangement resolved from bundle circuiting if not provided.
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         uses_bundle_flow_arrangement = flow_arrangement is None
         topology_warnings = (
             self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -860,6 +897,8 @@ class BareTubeHeatExchanger:
         )
         if enhancement is None:
             v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = internal_heat_transfer_coefficient(
+                strict_source_domain=self.strict_source_domain,
+                assumptions=self.elliptical_flow_assumptions,
                 m_dot=m_dot_tube_side,
                 tube=self.bundle.tube,
                 flow_area=flow_area_pass,
@@ -895,7 +934,7 @@ class BareTubeHeatExchanger:
                 cp=tube_side_props.cp,
             )
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
-                straight_friction_evaluator=straight_friction_evaluator(self.bundle.tube),
+                **self._internal_hydraulics_kwargs(),
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
                 enhancement_evaluator=enhancement_evaluator,
@@ -914,7 +953,7 @@ class BareTubeHeatExchanger:
             T_out_hyd = T_in_hyd if tube_side_temperature_out is None else tube_side_temperature_out
             p_hyd = 101325.0 if tube_side_pressure is None else tube_side_pressure
             tube_bundle_hydraulic = calculate_tube_bundle_hydraulics(
-                straight_friction_evaluator=straight_friction_evaluator(self.bundle.tube),
+                **self._internal_hydraulics_kwargs(),
                 m_dot=m_dot_tube_side,
                 flow_area_per_pass=flow_area_pass,
                 enhancement_evaluator=enhancement_evaluator,
@@ -942,7 +981,9 @@ class BareTubeHeatExchanger:
         # --------------------------------------------------------------
         have_outside = (m_dot_outside is not None) and (outside_props is not None)
         surface = tube_surface_type(self.bundle)
-        if surface is TubeSurfaceType.CIRCULAR_FINNED and alfa_o is not None:
+        if surface is not TubeSurfaceType.PLAIN and alfa_o is not None:
+            if surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+                raise ValueError('Rectangular-finned ellipse does not accept alfa_o override; use the explicit physical-film correction before fin efficiency.')
             raise ValueError(
                 "CircularFinnedTube does not accept the bare alfa_o override: "
                 "it would decouple fin efficiency and Briggs-Young provenance "
@@ -951,6 +992,7 @@ class BareTubeHeatExchanger:
 
         if have_outside:
             outside_thermal_dispatch = evaluate_outside_thermal(
+                airside_model=self.airside_model,
                 bundle=self.bundle,
                 m_dot=m_dot_outside,
                 props=outside_props,
@@ -963,6 +1005,7 @@ class BareTubeHeatExchanger:
             alfa_o_calc = outside_thermal_dispatch.alpha_physical
             outside_warnings = list(outside_thermal_dispatch.warnings)
             outside_bank_hydraulic = evaluate_outside_hydraulics(
+                airside_model=self.airside_model,
                 bundle=self.bundle,
                 m_dot=m_dot_outside,
                 property_provider=outside_provider,
@@ -975,7 +1018,9 @@ class BareTubeHeatExchanger:
             )
             dp_o = outside_bank_hydraulic.dp_total
         else:
-            if surface is TubeSurfaceType.CIRCULAR_FINNED:
+            if surface is not TubeSurfaceType.PLAIN:
+                if surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+                    raise ValueError('Rectangular-finned ellipse requires outside mass flow and properties for the Zhao2017 baseline; alfa_o-only bypass is unsupported.')
                 raise ValueError(
                     "CircularFinnedTube dry solve requires m_dot_outside and "
                     "outside_props so Briggs-Young and Robinson-Briggs can be "
@@ -1110,7 +1155,7 @@ class BareTubeHeatExchanger:
             warnings_list.extend(self.bundle.tube.geometry_warnings)
 
         # Tube-side regime diagnostics (most internal correlations assume turbulence).
-        if enhancement is None and Re_i < 2300.0:
+        if enhancement is None and self.bundle.tube.cross_section_family.value == 'circular' and Re_i < 2300.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_laminar_regime",
@@ -1119,7 +1164,7 @@ class BareTubeHeatExchanger:
                     severity="info",
                 )
             )
-        elif enhancement is None and 2300.0 <= Re_i <= 4000.0:
+        elif enhancement is None and self.bundle.tube.cross_section_family.value == 'circular' and 2300.0 <= Re_i <= 4000.0:
             warnings_list.append(
                 make_warning(
                     code="tube_ht_transition_regime",
@@ -1355,8 +1400,8 @@ class BareTubeHeatExchanger:
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
         self = self._for_enhancement_call(tube_side_enhancement, enhancement_operation_context)
@@ -1639,8 +1684,8 @@ class BareTubeHeatExchanger:
         ``m_dot = Q_required / (h_in - h_out_target)``. See
         ``core.phase_change.steam_integration.apply_water_steam_rating``.
         """
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
@@ -1788,8 +1833,8 @@ class BareTubeHeatExchanger:
         See ``core.heat_transfer.thermal_iteration.solve_iterative_thermal_state``
         for the full algorithm, convergence controls and result fields.
         """
-        from core.geometry.applicability import require_circular_tube
-        require_circular_tube(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        from core.geometry.applicability import require_automatic_outside_bank
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
         from core.heat_transfer.thermal_iteration import solve_iterative_thermal_state
 
         return solve_iterative_thermal_state(

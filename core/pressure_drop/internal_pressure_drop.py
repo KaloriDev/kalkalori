@@ -397,6 +397,7 @@ def calculate_tube_bundle_hydraulics(
     roughness_inner: float | None = None,
     enhancement_evaluator: Callable[[TubeSideHydraulicPoint], EnhancementResult] | None = None,
     straight_friction_evaluator: Callable[[float, float | None], tuple[float, str]] | None = None,
+    include_tube_end_losses: bool = True,
     tube: Any | None = None,
     provider: Any | None = None,
     temperature_in: float | None = None,
@@ -439,7 +440,14 @@ def calculate_tube_bundle_hydraulics(
 
     The point-property arguments are a deterministic test/compatibility hook.
     Production exchanger paths pass a provider and temperatures.
+
+    Explicit ``include_tube_end_losses=False`` omits tube-sheet losses and
+    emits a scope warning. The elliptical engine path combines this with an
+    explicitly selected FD laminar friction evaluator; it does not apply
+    circular tube-sheet correlations to that geometry.
     """
+    if not isinstance(include_tube_end_losses,bool):
+        raise TypeError('include_tube_end_losses must be boolean.')
     if tube is not None:
         from core.geometry.applicability import require_circular_tube
         require_circular_tube(tube, "Automatic tube-bundle entrance/exit losses")
@@ -673,13 +681,18 @@ def calculate_tube_bundle_hydraulics(
     )
     warnings.extend(boundary_warnings)
 
-    entrance_results, exit_results, dp_tube_entrances, dp_tube_exits = _apply_tube_sheet_entrances_and_exits(
-        tube_path_type=tube_path_type,
-        n_tube_passes=n_tube_passes,
-        boundary_states=boundary_states,
-        entrance_type=entrance_type,
-        exit_type=exit_type,
-    )
+    if include_tube_end_losses:
+        entrance_results, exit_results, dp_tube_entrances, dp_tube_exits = _apply_tube_sheet_entrances_and_exits(
+            tube_path_type=tube_path_type,
+            n_tube_passes=n_tube_passes,
+            boundary_states=boundary_states,
+            entrance_type=entrance_type,
+            exit_type=exit_type,
+        )
+    else:
+        entrance_results, exit_results, dp_tube_entrances, dp_tube_exits = (), (), 0., 0.
+        warnings.append(make_warning(code='tube_end_losses_not_evaluated',source='tube_bundle_hydraulics',
+            message='Only distributed straight friction and bulk acceleration are evaluated; tube-sheet entrance/exit losses are excluded, not predicted as zero.'))
 
     dp_tube_bundle = dp_straight_tubes + dp_tube_entrances + dp_tube_exits
     if not math.isfinite(dp_tube_entrances) or dp_tube_entrances < 0.0:

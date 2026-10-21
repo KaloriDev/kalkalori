@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Cross-section applicability, independent of outside surface treatment."""
-from core.geometry.tube import TubeCrossSectionFamily
+from core.geometry.tube import TubeCrossSectionFamily, TubeSurfaceType
 
 
 class TubeGeometryApplicabilityError(ValueError):
@@ -23,3 +23,12 @@ def require_circular_tube(tube, model: str) -> None:
         raise TubeGeometryApplicabilityError(
             f"{model} supports circular tubes only; {family.value} geometry is unsupported."
         )
+
+
+def require_automatic_outside_bank(tube, model: str) -> None:
+    """Reject source gaps before evaluating any surrogate bank physics."""
+    if getattr(tube, 'surface_type', None) is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        # Source-specific model selection/geometry validation belongs to the
+        # outside dispatcher. This is not circular or smooth-ellipse physics.
+        return
+    require_circular_tube(tube, model)

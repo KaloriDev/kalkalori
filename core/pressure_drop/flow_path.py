@@ -589,6 +589,36 @@ def build_tube_side_pressure_drop_result(
 # Outside-side aggregation
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class SourceDomainPressureEstimateResult:
+    """Finite source-domain estimate, deliberately not an irreversible path.
+
+    Compatibility totals expose the estimate without creating a stage whose
+    dp_irreversible would falsely label an unresolved pressure quantity.
+    No additional acceleration or local-loss terms are applied.
+    """
+    dp_core: float
+    warnings: tuple[ModelWarning, ...]
+    pressure_basis: str = 'source_domain_inlet_to_outlet_estimate'
+    validated_bank_irreversible: bool = False
+    components_resolved: bool = False
+    groups: tuple = ()
+    dp_local: float = 0.
+    delta_dynamic_pressure_core: float = 0.
+    delta_dynamic_pressure_local: float = 0.
+
+    @property
+    def dp_total(self): return self.dp_core
+    @property
+    def dp_static_core(self): return self.dp_core
+    @property
+    def dp_static_total(self): return self.dp_core
+    @property
+    def dp_static_local(self): return 0.
+    @property
+    def delta_dynamic_pressure_total(self): return 0.
+
+
 def _tube_bank_core_stage(
     tube_bank: "OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult",
 ) -> PressureDropStageResult:
@@ -596,6 +626,8 @@ def _tube_bank_core_stage(
         FinnedTubeBankHydraulicResult,
     )
 
+    if getattr(tube_bank,'validated_bank_irreversible',True) is False:
+        raise ValueError('Source-domain pressure estimate cannot be aggregated as an irreversible bank stage.')
     is_finned = isinstance(tube_bank, FinnedTubeBankHydraulicResult)
     metadata = getattr(tube_bank, "metadata", None)
     finned_method = getattr(metadata, "method", "dedicated_provider")
@@ -660,6 +692,10 @@ def build_outside_pressure_drop_result(
             warnings=(),
         )
 
+    if getattr(tube_bank,'validated_bank_irreversible',True) is False:
+        if path is not None:
+            raise ValueError('Local irreversible paths cannot be combined with an unresolved source-domain pressure estimate.')
+        return SourceDomainPressureEstimateResult(tube_bank.dp_total,tube_bank.warnings)
     core_stage = _tube_bank_core_stage(tube_bank)
     tube_bank_group = PressureDropStageGroupResult(group_id="tube_bank", stages=(core_stage,))
 

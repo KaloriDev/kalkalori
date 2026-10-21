@@ -3,8 +3,8 @@
 
 Exact perimeter: NIST DLMF 19.30.5, https://dlmf.nist.gov/19.30#E5.
 SciPy ellipe takes m=1-(b/a)^2, not the elliptic-integral modulus.
-Inner/outer contours are concentric and coaxial; no normal wall thickness
-is inferred. Geometry alone does not certify any constitutive model.
+Inner/outer contours are concentric and coaxial, and need not be confocal.
+Nominal wall thickness is an engineering convention, not exact normal distance.
 """
 from dataclasses import dataclass
 import math
@@ -38,6 +38,25 @@ class EllipticalTube(BaseTube):
 
     surface_type: ClassVar[TubeSurfaceType] = TubeSurfaceType.PLAIN
     cross_section_family: ClassVar[TubeCrossSectionFamily] = TubeCrossSectionFamily.ELLIPTICAL
+
+    @classmethod
+    def from_nominal_wall(cls, *, outer_semi_major_axis, outer_semi_minor_axis,
+                          nominal_wall_thickness, **kwargs):
+        """Subtract nominal thickness from both semi-axes [m].
+
+        36 x 14 x 1.5 mm gives inner full axes 33 x 11 mm. These nested
+        ellipses approximate an engineering constant-thickness tube; an exact
+        constant-normal offset of an ellipse is not itself an ellipse.
+        """
+        if (isinstance(nominal_wall_thickness, bool)
+                or not math.isfinite(nominal_wall_thickness)
+                or nominal_wall_thickness <= 0):
+            raise ValueError('nominal_wall_thickness must be positive and finite [m].')
+        return cls(outer_semi_major_axis=outer_semi_major_axis,
+                   outer_semi_minor_axis=outer_semi_minor_axis,
+                   inner_semi_major_axis=outer_semi_major_axis-nominal_wall_thickness,
+                   inner_semi_minor_axis=outer_semi_minor_axis-nominal_wall_thickness,
+                   **kwargs)
 
     def __post_init__(self):
         for name in ('outer_semi_major_axis', 'outer_semi_minor_axis',

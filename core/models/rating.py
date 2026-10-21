@@ -557,8 +557,8 @@ def run_rating(
     capacity does not by itself mean the *specified* Rating problem is
     infeasible once condensation is considered.
     """
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
     uses_bundle_flow_arrangement = flow_arrangement is None
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()

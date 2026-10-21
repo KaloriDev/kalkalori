@@ -3,10 +3,11 @@
 
 """Surface-aware dry outside-side dispatch and resistance bookkeeping.
 
-This module is the integration boundary between exchanger workflows and the
-two deliberately separate outside-correlation families.  A plain tube can
+This module is the integration boundary between exchanger workflows and
+separate outside-correlation families. A plain tube can
 only reach the existing Zukauskas/Euler path; a circular-finned tube can only
-reach Briggs-Young/Robinson-Briggs.  Keeping that decision in one place
+reach Briggs-Young/Robinson-Briggs. Rectangular-finned ellipses select the
+explicit reconstructed Zhao baseline. Keeping that decision in one place
 prevents a workflow refresh from silently falling back to a bare-tube model.
 """
 
@@ -20,8 +21,10 @@ from typing import TYPE_CHECKING, Any
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
 from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.fin_efficiency import FinEfficiencyResult, annular_fin_efficiency
+from core.heat_transfer.thin_plate_fin import ThinPlateFinEfficiency2D, ThinPlateFinEfficiencyResult
 from core.heat_transfer.finned_tube_outside import (
     BriggsYoung1963Provider,
     FinnedTubeHeatTransferProvider,
@@ -43,6 +46,8 @@ from core.pressure_drop.finned_tube_pressure_drop import (
     calculate_finned_tube_bank_hydraulics,
 )
 from core.pressure_drop.outside_pressure_drop import EulerProvider
+from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel, Zhao2017AirsideResult
+from core.pressure_drop.finned_ellipse import Zhao2017BankHydraulicResult, Zhao2017HydraulicPoint, calculate_finned_ellipse_hydraulics
 
 if TYPE_CHECKING:
     from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
@@ -80,6 +85,7 @@ class OutsideThermalDispatchResult:
     alpha_physical: float
     warnings: tuple[ModelWarning, ...]
     finned_result: FinnedTubeHeatTransferResult | None = None
+    airside_result: Zhao2017AirsideResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -156,18 +162,28 @@ class ThermalResistanceNetwork:
     resistance_total: float
     UA: float
     U_gross_outside: float
-    fin_efficiency_result: FinEfficiencyResult | None = None
+    fin_efficiency_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | None = None
     fouling_resistance_inside: float = 0.0
     fouling_resistance_outside: float = 0.0
     resistance_fouling_inside: float = 0.0
     resistance_fouling_outside: float = 0.0
 
+    @property
+    def A_physical(self) -> float:
+        """Geometric outside surface, including a fin's outer edge [m2]."""
+        return self.area_outside_geometric
+
+    @property
+    def A_effective(self) -> float:
+        """Outside area used by the declared conduction/edge model [m2]."""
+        return self.area_outside_effective
+
 
 @dataclass(frozen=True)
 class FinnedTubeDiagnostics:
-    """Public, auditable circular-finned-tube thermal/hydraulic result.
+    """Public, auditable finned-tube thermal/hydraulic result.
 
-    ``outside_alpha_physical`` is the direct Briggs-Young film HTC.  The
+    ``outside_alpha_physical`` is the selected physical film HTC. The
     separately named ``outside_alpha_effective_gross`` is the generic
     gross-area coefficient reconstructed from the full outside resistance,
     including the declared contact/root topology.
@@ -246,6 +262,9 @@ class FinnedTubeDiagnostics:
     fouling_resistance_outside: float = 0.0
     resistance_fouling_inside: float = 0.0
     resistance_fouling_outside: float = 0.0
+    airside_result: Zhao2017AirsideResult | None = None
+    hydraulic_airside_result: Zhao2017AirsideResult | None = None
+    fin_efficiency_result: ThinPlateFinEfficiencyResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -335,8 +354,8 @@ class FinnedTubeDiagnostics:
         return self.outside_dp_total
 
 
-OutsideBankHydraulicResult = OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult
-OutsideBankHydraulicPoint = OutsideHydraulicPoint | FinnedTubeHydraulicPoint
+OutsideBankHydraulicResult = OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult | Zhao2017BankHydraulicResult
+OutsideBankHydraulicPoint = OutsideHydraulicPoint | FinnedTubeHydraulicPoint | Zhao2017HydraulicPoint
 
 
 def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
@@ -351,9 +370,13 @@ def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
                 "TubeSurfaceType.CIRCULAR_FINNED requires CircularFinnedTube geometry."
             )
         return TubeSurfaceType.CIRCULAR_FINNED
+    if value is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        if not isinstance(bundle.tube, RectangularFinnedEllipticalTube):
+            raise TypeError("RECTANGULAR_INDIVIDUAL_FINNED requires RectangularFinnedEllipticalTube geometry.")
+        return value
     raise TypeError(
         "Tube geometry must expose a supported TubeSurfaceType; supported values "
-        "are PLAIN and CIRCULAR_FINNED."
+        "are PLAIN, CIRCULAR_FINNED and RECTANGULAR_INDIVIDUAL_FINNED."
     )
 
 
@@ -367,12 +390,28 @@ def evaluate_outside_thermal(
     finned_heat_transfer_provider: (
         str | FinnedTubeHeatTransferProvider
     ) = DEFAULT_FINNED_HT_PROVIDER,
+    airside_model: Zhao2017AirsideModel | None = None,
 ) -> OutsideThermalDispatchResult:
     """Evaluate the dry outside film coefficient for the declared surface."""
 
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(bundle.tube, 'Automatic outside bank HTC')
     surface = tube_surface_type(bundle)
+    if surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        if euler_provider != DEFAULT_BARE_EULER_PROVIDER or finned_heat_transfer_provider != DEFAULT_FINNED_HT_PROVIDER:
+            raise IncompatibleOutsideCorrelationProviderError('Circular outside providers cannot be used with Zhao2017 ellipse physics.')
+        model=airside_model if airside_model is not None else Zhao2017AirsideModel()
+        if not isinstance(model,Zhao2017AirsideModel):
+            raise TypeError('Rectangular-finned ellipse requires Zhao2017AirsideModel.')
+        result=model.evaluate(bundle,m_dot,props)
+        flow=result.flow
+        Nu=result.h_film*flow.reference_diameter/props.k
+        return OutsideThermalDispatchResult(surface,flow.face_velocity,flow.reference_velocity,
+            flow.reynolds_number,flow.prandtl_number,Nu,result.h_film_base*flow.reference_diameter/props.k,
+            1.,result.h_film,result.warnings,
+            airside_result=result)
+    if airside_model is not None:
+        raise IncompatibleOutsideCorrelationProviderError('Zhao2017AirsideModel requires rectangular-finned ellipse geometry.')
     if surface is TubeSurfaceType.PLAIN:
         _reject_finned_provider_on_plain(
             finned_heat_transfer_provider,
@@ -456,12 +495,23 @@ def evaluate_outside_hydraulics(
     finned_pressure_drop_provider: (
         str | FinnedTubePressureDropProvider
     ) = DEFAULT_FINNED_DP_PROVIDER,
+    airside_model: Zhao2017AirsideModel | None = None,
 ) -> OutsideBankHydraulicResult:
     """Evaluate the three-state outside hydraulics for the declared surface."""
 
-    from core.geometry.applicability import require_circular_tube
-    require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
+    from core.geometry.applicability import require_automatic_outside_bank
+    require_automatic_outside_bank(bundle.tube, 'Automatic outside bank pressure drop')
     surface = tube_surface_type(bundle)
+    if surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        if euler_provider != DEFAULT_BARE_EULER_PROVIDER or finned_pressure_drop_provider != DEFAULT_FINNED_DP_PROVIDER:
+            raise IncompatibleOutsideCorrelationProviderError('Circular pressure providers cannot be used with Zhao2017 ellipse physics.')
+        return calculate_finned_ellipse_hydraulics(bundle=bundle,m_dot=m_dot,model=airside_model,
+            property_provider=property_provider,temperature_in=temperature_in,
+            temperature_out=temperature_out,pressure=pressure,inlet_props=inlet_props,
+            midpoint_props=midpoint_props,outlet_props=outlet_props,
+            m_dot_inlet=m_dot_inlet,m_dot_midpoint=m_dot_midpoint,m_dot_outlet=m_dot_outlet)
+    if airside_model is not None:
+        raise IncompatibleOutsideCorrelationProviderError('Zhao2017AirsideModel requires rectangular-finned ellipse geometry.')
     if surface is TubeSurfaceType.PLAIN:
         _reject_finned_provider_on_plain(
             finned_pressure_drop_provider,
@@ -582,6 +632,7 @@ def calculate_resistance_network(
     resistance_core_wall: float,
     fouling_resistance_inside: float | None = None,
     fouling_resistance_outside: float | None = None,
+    fin_efficiency_model: ThinPlateFinEfficiency2D | None = None,
 ) -> ThermalResistanceNetwork:
     """Build core terms and the full topology-correct outside resistance.
 
@@ -596,6 +647,12 @@ def calculate_resistance_network(
     areas respectively. ``resistance_inside`` includes inside fouling;
     ``resistance_outside`` includes common lumped outside fouling before
     the root/contact/fin path. Explicit fouling contributions are [K/W].
+
+    A rectangular-finned ellipse uses h -> 2D eta(h) -> effective face area
+    in this same network, with an ideal isothermal contact. Its physical
+    outer-edge area is reported in the gross/geometric area, but conducts
+    no heat to the fluid under the adiabatic-edge model. Prescribing a film
+    coefficient here does not certify an automatic bank correlation.
     """
 
     for name, value in (
@@ -615,7 +672,9 @@ def calculate_resistance_network(
     fouling_o = normalize_fouling_resistance(fouling_resistance_outside, "fouling_resistance_outside")
     resistance_fi, resistance_fo = fouling_i / area_i, fouling_o / area_gross
     resistance_i += resistance_fi
-    fin_result: FinEfficiencyResult | None = None
+    fin_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | None = None
+    if fin_efficiency_model is not None and surface is not TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        raise ValueError("fin_efficiency_model applies only to rectangular-individual-finned elliptical tubes.")
 
     if surface is TubeSurfaceType.PLAIN:
         area_primary = area_gross
@@ -641,6 +700,25 @@ def calculate_resistance_network(
         # Preserve the exact historical bare-tube value instead of producing
         # a numerically equivalent reciprocal round trip.
         outside_alpha_effective_gross = outside_alpha_physical
+    elif surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+        tube = bundle.tube
+        fin_result = (fin_efficiency_model or ThinPlateFinEfficiency2D()).evaluate(tube, outside_alpha_physical)
+        area_primary = bundle.total_primary_outside_area
+        area_fin = bundle.total_fin_area  # physical faces AND adiabatic edge
+        area_geometric = bundle.total_outer_geometric_area
+        eta_fin = fin_result.eta_fin
+        area_effective = tube.effective_outside_area(eta_fin) * bundle.n_tubes_total
+        eta_overall = area_effective / area_gross
+        conductance_primary = outside_alpha_physical * area_primary
+        conductance_fin = outside_alpha_physical * eta_fin * tube.area_fin_faces * bundle.n_tubes_total
+        resistance_root = resistance_contact = common_root_contact = 0.0
+        contact_input_mode = "ideal_isothermal"
+        fin_contact_efficiency_input = None
+        fin_contact_efficiency_effective = 1.0
+        contact_resistance_equivalent_areal = contact_resistance_used = 0.0
+        contact_area = tube.area_contact * bundle.n_tubes_total
+        contact_area_basis = "elliptical_perimeter_times_fin_thickness_times_count"
+        contact_topology = "ideal_isothermal_fin_base"
     else:
         tube = bundle.tube
         assert isinstance(tube, CircularFinnedTube)
@@ -791,19 +869,19 @@ def build_finned_tube_diagnostics(
     hydraulic: OutsideBankHydraulicResult | None = None,
     geometry_warnings: tuple[ModelWarning, ...] = (),
 ) -> FinnedTubeDiagnostics | None:
-    """Materialize the public diagnostics for a circular-finned result."""
+    """Materialize physical network and source-specific finned diagnostics."""
 
     if network.surface_type is TubeSurfaceType.PLAIN:
         return None
     ht = thermal.finned_result
-    bank = hydraulic if isinstance(hydraulic, FinnedTubeBankHydraulicResult) else None
+    bank = hydraulic if isinstance(hydraulic, (FinnedTubeBankHydraulicResult,Zhao2017BankHydraulicResult)) else None
     midpoint = None if bank is None else bank.midpoint
     warnings = _deduplicate_warnings(
         (*geometry_warnings, *thermal.warnings, *((bank.warnings) if bank else ()))
     )
     assert network.fin_efficiency_result is not None
     return FinnedTubeDiagnostics(
-        tube_surface_type=TubeSurfaceType.CIRCULAR_FINNED,
+        tube_surface_type=network.surface_type,
         area_inside=network.area_inside,
         area_primary_outside=network.area_primary_outside,
         area_fin=network.area_fin,
@@ -843,7 +921,8 @@ def build_finned_tube_diagnostics(
         reynolds_number=thermal.reynolds_number,
         prandtl_number=thermal.prandtl_number,
         nusselt_number=thermal.nusselt_number,
-        colburn_j_factor=math.nan if ht is None else ht.colburn_j_factor,
+        colburn_j_factor=(thermal.airside_result.factors.j_prime if thermal.airside_result is not None
+                         else math.nan if ht is None else ht.colburn_j_factor),
         pressure_drop_coefficient=math.nan if midpoint is None else midpoint.coefficient,
         pressure_drop_coefficient_definition=(
             "" if bank is None else bank.coefficient_definition
@@ -851,12 +930,15 @@ def build_finned_tube_diagnostics(
         outside_dp_drag=math.nan if bank is None else bank.dp_drag,
         outside_dp_acceleration=math.nan if bank is None else bank.dp_acceleration,
         outside_dp_total=math.nan if bank is None else bank.dp_total,
-        heat_transfer_metadata=None if ht is None else ht.metadata,
+        heat_transfer_metadata=thermal.airside_result if thermal.airside_result is not None else None if ht is None else ht.metadata,
         pressure_drop_metadata=None if bank is None else bank.metadata,
         warnings=warnings,
         outside_dp_dry_reference=math.nan if bank is None else bank.dp_total,
         wet_pressure_drop_supported=False,
         outside_dp_reference_only=False,
+        airside_result=thermal.airside_result,
+        hydraulic_airside_result=bank.metadata if isinstance(bank,Zhao2017BankHydraulicResult) else None,
+        fin_efficiency_result=network.fin_efficiency_result if isinstance(network.fin_efficiency_result,ThinPlateFinEfficiencyResult) else None,
     )
 
 
@@ -894,6 +976,7 @@ def merge_finned_tube_diagnostics(
             or wet_surface is not None
         ),
         pressure_drop_metadata=hydraulic.pressure_drop_metadata,
+        hydraulic_airside_result=hydraulic.hydraulic_airside_result,
         warnings=_deduplicate_warnings((*thermal.warnings, *hydraulic.warnings)),
     )
 
