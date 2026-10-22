@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.9.2`
+**Current version:** `v0.9.3`
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
 **Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
@@ -52,6 +52,19 @@ and distributed thermal resolution remain future work.
 ---
 
 ## Roadmap Overview
+
+### v0.9.3 — Chakroun–Al-Fahed 1995 twisted tape (implemented)
+
+- Explicit public laminar provider, paired Eq.16 friction and Eq.17 heat transfer.
+- Actual finite-width Ac(W), bulk properties and existing coupled wall viscosity.
+- Native Fanning conversion and equivalent axial hydraulic normalization.
+- Source-domain diagnostics and optional strict mode; cooling is extrapolated,
+  source Pr bounds remain unknown and thickness has one tested ratio only.
+- No universal arbitrary-clearance validation, calibration or default dispatch change.
+
+See [the provider guide](twisted_tape_chakroun1995.md).
+
+---
 
 ### v0.9.2 — Rectangular-finned elliptical engineering baseline (implemented)
 
