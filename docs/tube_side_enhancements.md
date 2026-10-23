@@ -1,5 +1,12 @@
 # Tube-side enhancements
 
+The explicitly selected [Chakroun–Al-Fahed 1995 provider](twisted_tape_chakroun1995.md)
+adds paired laminar liquid predictions using actual finite-width blockage,
+bulk thermal properties and coupled wall viscosity. It exposes the nominal
+Eq.11 ambiguity and native Fanning-to-Darcy normalization. Cooling and
+out-of-source geometry require the documented extrapolation diagnostics;
+there is no universal arbitrary-clearance validation or automatic selection.
+
 The [Inaba1994 wire-coil provider](wire_coil_inaba1994.md) adds a distinct
 insert family without using twisted-tape geometry or clearance semantics. Its
 hydraulic and thermal film properties, source diameter/area normalization and

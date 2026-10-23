@@ -550,6 +550,22 @@ weak form documented by the
 (CC BY 4.0); it does not reuse tutorial implementation or require FEniCS.
 No source PDF, figure, external implementation or private geometry is included.
 
+## Chakroun–Al-Fahed laminar twisted tape
+
+Chakroun, W. M.; Al-Fahed, S. F. (1995), *The Effect of Twisted Tape Width
+on Heat Transfer and Pressure Drop for Fully Developed Laminar Flow*, ASME
+95-GT-042, [DOI 10.1115/95-GT-042](https://doi.org/10.1115/95-GT-042).
+The public v0.9.3 implementation follows the separately audited 1995 equations
+and explicit public-implementation authorization. This is a scoped exception
+to the free-source-only project policy, without asserting free full-text
+access. No PDF, copied source prose, figures or tables are redistributed.
+See [equations, conventions and limitations](twisted_tape_chakroun1995.md).
+
+The later Chakroun and Al-Fahed (1996) journal publication, *Journal of
+Engineering for Gas Turbines and Power*,
+[DOI 10.1115/1.2816688](https://doi.org/10.1115/1.2816688), is recorded
+bibliographically; its complete equations were not independently audited.
+
 ## Private Reference Sources
 
 Project source policy: built-in engineering correlations must be independently

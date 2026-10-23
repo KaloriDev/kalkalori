@@ -12,6 +12,7 @@ from .base import (
 from .yang2020 import Yang2020TwistedTapeProvider
 from .rossi2017 import Rossi2017TwistedTapeProvider
 from .inaba1994 import Inaba1994WireCoilProvider
+from .chakroun1995 import ChakrounAlFahed1995TwistedTapeProvider
 from .clearance import (
     ClearanceModelMode, ClearanceCorrection, TwistedTapeClearanceResult,
     TwistedTapeClearanceProvider, require_nominal_twisted_tape,
@@ -27,6 +28,7 @@ __all__ = [
     "Yang2020TwistedTapeProvider",
     "Rossi2017TwistedTapeProvider",
     "Inaba1994WireCoilProvider",
+    "ChakrounAlFahed1995TwistedTapeProvider",
     "TwistedTapeClearanceGeometry", "ClearanceModelMode", "ClearanceCorrection",
     "TwistedTapeClearanceResult", "TwistedTapeClearanceProvider", "require_nominal_twisted_tape",
 ]

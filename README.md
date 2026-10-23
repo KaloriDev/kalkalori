@@ -35,7 +35,13 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.2)
+## Current Capabilities (v0.9.3)
+
+The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
+supports paired laminar liquid heat transfer and distributed friction using
+actual tape-width blockage and coupled wall viscosity, with source-domain
+diagnostics and explicit Fanning-to-Darcy conversion. Cooling remains an
+extrapolation; arbitrary-clearance validity is not established.
 
 - Rectangular-finned elliptical baseline: `RectangularIndividualFin` composes with
   `EllipticalTube` through `RectangularFinnedEllipticalTube`. Exact physical

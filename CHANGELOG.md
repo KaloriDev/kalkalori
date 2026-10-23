@@ -5,6 +5,21 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.3] — Chakroun–Al-Fahed laminar twisted tape
+
+- Added public Chakroun–Al-Fahed 1995 laminar twisted-tape provider with
+  finite tape-width geometry, paired heat-transfer/friction predictions,
+  source-domain diagnostics, and explicit native-Fanning-to-Darcy conversion.
+- Uses actual `Ac(W)` for prediction; the printed nominal Eq.11 reading is
+  diagnostic only. Eq.17 uses bulk properties and coupled wall viscosity.
+- Explicit selection, optional strict source domain, cooling extrapolation
+  warning, single-thickness limitation and unknown source Pr range. This
+  does not establish direct cooling or arbitrary-clearance validation.
+- Public synthetic equation, hydraulic-basis and Rating/Simulation tests;
+  existing Yang2020, Rossi2017 and private provider physics are unchanged.
+
+See [the provider guide](docs/twisted_tape_chakroun1995.md).
+
 ## [0.9.2] — Rectangular-finned elliptical baseline and conduction
 
 - **Potentially breaking pre-release v0.9.2 semantic correction:** rectangular
