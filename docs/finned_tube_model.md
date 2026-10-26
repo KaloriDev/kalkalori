@@ -24,10 +24,12 @@ the fractional count `length_effective / fin_pitch`; it does not round the
 number of fins and therefore does not introduce area jumps when tube length
 changes.
 
-The implemented empirical correlations cover staggered equilateral triangular
-banks.
-`TubeBundle(layout="inline")` remains valid public geometry, but the built-in
-Briggs--Young and Robinson--Briggs providers reject it as unsupported.
+The original paired empirical correlations cover staggered equilateral
+triangular banks. The proposed v0.9.4 adds an [INLINE ESCOA thermal
+provider](inline_round_finned_thermal.md), including coupled mean fin temperature
+and explicit source uncertainty. Briggs--Young and Robinson--Briggs retain their
+INLINE rejection. INLINE hydraulics remain unsupported, so full INLINE
+Rating/Simulation still stops at that hydraulic guard.
 
 Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
 frost/ice; acid or multiple-species condensation; condensate retention,
@@ -672,8 +674,8 @@ does not silently substitute the inlet state.
 
 Provider results report method/source, geometry family, velocity and
 Reynolds bases, reference diameter, area and row bases, applicability ranges
-and structured warnings. The built-in models reject bare tubes, inline
-banks, materially isosceles banks and geometry-family mismatches rather than
+and structured warnings. Briggs--Young and Robinson--Briggs reject bare tubes,
+inline banks, materially isosceles banks and geometry-family mismatches rather than
 falling back to a smooth-tube model. Robinson--Briggs pressure loss also
 rejects banks with fewer than four rows. Briggs--Young heat transfer instead
 calculates every positive row count and reports the dedicated extrapolation

@@ -80,6 +80,21 @@ class FinEfficiencyResult:
     energy_balance_relative_error: float
     method: str = _FINITE_VOLUME_METHOD
 
+    def mean_fin_temperature(self, base_temperature: float, fluid_temperature: float) -> float:
+        """Area mean of the fin faces and convective tip, in kelvin.
+
+        For the uniform film coefficient used by this model,
+        q = h*integral(T-T_fluid, dA) = eta*h*A_fin*(T_base-T_fluid).
+        Thus eta is also the area-mean normalized temperature. Contact
+        resistance belongs upstream of the prescribed fin-base temperature.
+        Gross-area overrides and overall surface efficiency do not enter.
+        """
+        for name, value in (("base_temperature", base_temperature),
+                            ("fluid_temperature", fluid_temperature)):
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be positive and finite [K].")
+        return fluid_temperature + self.fin_efficiency * (base_temperature - fluid_temperature)
+
 
 def annular_fin_efficiency(
     tube: CircularFinnedTube,

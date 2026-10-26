@@ -8,17 +8,18 @@ outside-flow API.  In particular, the reference diameter is the fin-root
 diameter and the reference velocity is based on the bundle's actual minimum
 free-flow area, including periodic fin blockage.
 
-The built-in implementation is an independent implementation of the
-published Briggs-Young (1963) correlation.  It returns the physical mean
-outside film coefficient.  Fin efficiency and extended-surface area are not
-folded into that coefficient.
+Automatic thermal selection uses Briggs-Young (1963) for staggered banks
+and the old ESCOA INLINE solid-fin model as reproduced by Frass (2015) for
+inline banks. Both return physical film coefficients. Fin efficiency and
+extended-surface area are applied separately. Temperature-dependent providers
+can couple to a caller-supplied, provider-neutral fin/network callback.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import math
-from typing import Literal, Protocol, runtime_checkable
+from typing import Callable, Literal, Protocol, runtime_checkable
 
 from core.common.warnings import ApplicabilityRange, ModelWarning, make_warning
 from core.geometry.bundle import TubeBundle
@@ -106,9 +107,11 @@ class FinnedTubeHeatTransferRequest:
     """Complete state and geometry supplied to an outside-HTC provider.
 
     ``fin_thickness_root`` and ``fin_thickness_tip`` retain the real fin
-    profile.  Briggs-Young alone maps that profile to the arithmetic mean
-    thickness for its empirical ``s/t`` terms; the underlying geometry is
-    never replaced by a mean-thickness fin.
+    profile. Empirical mean-thickness mappings are provider-specific and
+    diagnosed separately; the underlying geometry is never replaced by a
+    mean-thickness fin. Optional absolute temperatures support providers
+    requiring a mean fin temperature. ``tube_outer_diameter`` retains the
+    metal core OD separately from the gas-facing fin-root cylinder.
     """
 
     m_dot: float
@@ -129,6 +132,10 @@ class FinnedTubeHeatTransferRequest:
     n_rows: int
     fluid_family: str = "air"
     geometry_family: str = "solid_circular_finned_tube_bank"
+    gas_temperature: float | None = None
+    mean_fin_temperature: float | None = None
+    tube_outer_diameter: float | None = None
+    strict_source_domain: bool = False
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -173,6 +180,12 @@ class FinnedTubeHeatTransferRequest:
             raise ValueError("fluid_family must be non-empty.")
         if not self.geometry_family.strip():
             raise ValueError("geometry_family must be non-empty.")
+        for name in ("gas_temperature", "mean_fin_temperature", "tube_outer_diameter"):
+            value = getattr(self, name)
+            if value is not None:
+                _require_positive_finite(value, name)
+        if not isinstance(self.strict_source_domain, bool):
+            raise TypeError("strict_source_domain must be boolean.")
 
 
 @dataclass(frozen=True)
@@ -199,6 +212,7 @@ class FinnedTubeHeatTransferResult:
     equilateral_relative_deviation: float
     metadata: FinnedTubeHeatTransferMetadata
     warnings: tuple[ModelWarning, ...]
+    diagnostics: dict[str, object] = field(default_factory=dict, hash=False)
 
     @property
     def h(self) -> float:
@@ -389,11 +403,11 @@ class BriggsYoung1963Provider:
 def evaluate_finned_tube_heat_transfer(
     request: FinnedTubeHeatTransferRequest,
     *,
-    provider: str | FinnedTubeHeatTransferProvider = "briggs_young_1963",
+    provider: str | FinnedTubeHeatTransferProvider = "auto",
 ) -> FinnedTubeHeatTransferResult:
     """Evaluate a request with a built-in name or custom provider."""
 
-    resolved = _resolve_heat_transfer_provider(provider)
+    resolved = _resolve_heat_transfer_provider(provider, layout=request.layout)
     return resolved.evaluate(request)
 
 
@@ -402,8 +416,12 @@ def calculate_finned_tube_outside_heat_transfer(
     bundle: TubeBundle,
     props: FluidTransportProperties,
     *,
-    provider: str | FinnedTubeHeatTransferProvider = "briggs_young_1963",
+    provider: str | FinnedTubeHeatTransferProvider = "auto",
     fluid_family: str = "air",
+    gas_temperature: float | None = None,
+    mean_fin_temperature: float | None = None,
+    fin_temperature_model: Callable[[float], float] | None = None,
+    strict_source_domain: bool = False,
 ) -> FinnedTubeHeatTransferResult:
     """Calculate dry outside HTC from ``(m_dot, bundle, props)``.
 
@@ -431,8 +449,44 @@ def calculate_finned_tube_outside_heat_transfer(
         layout=bundle.layout.lower(),
         n_rows=bundle.n_rows,
         fluid_family=fluid_family,
+        gas_temperature=gas_temperature,
+        mean_fin_temperature=mean_fin_temperature,
+        tube_outer_diameter=tube.D_o,
+        strict_source_domain=strict_source_domain,
     )
-    return evaluate_finned_tube_heat_transfer(request, provider=provider)
+    resolved = _resolve_heat_transfer_provider(provider, layout=request.layout)
+    if (getattr(resolved, "requires_fin_temperature", False)
+            and mean_fin_temperature is None and fin_temperature_model is not None):
+        return _coupled_fin_heat_transfer(request, resolved, fin_temperature_model)
+    return resolved.evaluate(request)
+
+
+def _coupled_fin_heat_transfer(
+    request: FinnedTubeHeatTransferRequest,
+    provider: FinnedTubeHeatTransferProvider,
+    temperature_model: Callable[[float], float],
+) -> FinnedTubeHeatTransferResult:
+    """Solve h = provider(T_fin(h)); no empirical temperature assumption.
+
+    The callback owns the fin/contact/network model. The 100 W/(m2 K)
+    starting iterate is numerical only; accepted results require a checked
+    constitutive residual. Non-convergence fails instead of returning a guess.
+    """
+    alpha = 100.0
+    for iteration in range(1, 101):
+        temperature = temperature_model(alpha)
+        result = provider.evaluate(replace(request, mean_fin_temperature=temperature))
+        residual = abs(result.alpha - alpha) / max(result.alpha, alpha)
+        if residual <= 1.0e-10:
+            return replace(result, diagnostics={
+                **result.diagnostics,
+                "coupling_iterations": iteration,
+                "coupling_relative_residual": residual,
+                "coupling_converged": True,
+                "coupling_method": "relaxed_fixed_point_h_fin_network",
+            })
+        alpha = 0.5 * (alpha + result.alpha)
+    raise RuntimeError("Outside film/mean-fin-temperature coupling did not converge.")
 
 
 # Concise public alias for later workflow integration.
@@ -441,14 +495,21 @@ finned_tube_outside_heat_transfer = calculate_finned_tube_outside_heat_transfer
 
 def _resolve_heat_transfer_provider(
     provider: str | FinnedTubeHeatTransferProvider,
+    *, layout: str,
 ) -> FinnedTubeHeatTransferProvider:
     if isinstance(provider, str):
         name = provider.strip().lower().replace("-", "_")
+        if name == "auto":
+            name = "frass_escoa_inline_solid_fin" if layout == "inline" else "briggs_young_1963"
+        if name == "frass_escoa_inline_solid_fin":
+            from core.heat_transfer.escoa_inline import FrassEscoaInlineSolidFinProvider
+            return FrassEscoaInlineSolidFinProvider()
         if name in ("briggs_young", "briggs_young_1963", "by1963"):
             return BriggsYoung1963Provider()
         raise ValueError(
             f"Unknown finned-tube heat-transfer provider '{provider}'. "
-            "Supported built-in provider: 'briggs_young_1963'."
+            "Supported built-ins: 'auto', 'briggs_young_1963', "
+            "'frass_escoa_inline_solid_fin'."
         )
     if not isinstance(provider, FinnedTubeHeatTransferProvider):
         raise TypeError(

@@ -103,6 +103,7 @@ from .finned_tube_outside import (
     calculate_finned_tube_outside_heat_transfer,
     finned_tube_outside_heat_transfer,
 )
+from .escoa_inline import FrassEscoaInlineSolidFinProvider, FRASS_ESCOA_INLINE_METADATA
 
 from core.common.warnings import (
     ApplicabilityRange,
@@ -114,6 +115,7 @@ from core.common.warnings import (
 )
 
 __all__ = [
+    "FrassEscoaInlineSolidFinProvider", "FRASS_ESCOA_INLINE_METADATA",
     "Zhao2017AirsideModel", "Zhao2017AirsideResult", "Zhao2017Flow",
     "Zhao2017Factors", "zhao2017_factors", "zhao2017_flow",
     "AirsideCorrection", "AirsideCorrectionProvider", "MultiplicativeAirsideCorrection",

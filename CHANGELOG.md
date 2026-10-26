@@ -5,6 +5,27 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [Unreleased] — v0.9.4 INLINE round-finned thermal work
+
+- Added `FrassEscoaInlineSolidFinProvider`, implementing the ESCOA 1979 INLINE
+  solid-fin Eqs. (96)-(98) from Frass's legally accessible 2015 reproduction.
+  Automatic circular-finned thermal dispatch selects it for INLINE banks;
+  staggered Briggs-Young equations and applicability remain unchanged.
+- Coupled physical film HTC to mean fin temperature using the existing annular
+  fin model and contact/fouling resistance network. Fin efficiency remains a
+  separate operation after physical film HTC.
+- Added explicit supplied-property engineering convention, unresolved-source-range
+  diagnostics, strict-domain rejection and the source's single-row caveat.
+- Continuous root layers use the explicitly qualified gas-facing root-diameter
+  engineering mapping in non-strict mode; the metal core diameter and full
+  conduction/contact topology remain separate and auditable.
+- Linear fin taper uses an explicitly qualified arithmetic-mean thickness for
+  the empirical fin terms, preserving actual area, blockage and fin conduction.
+- INLINE hydraulics remain unsupported. This is thermal work on the feature
+  branch, not a finalized v0.9.4 release; version remains 0.9.3.
+
+See [the INLINE thermal guide](docs/inline_round_finned_thermal.md).
+
 ## [0.9.3] — Chakroun–Al-Fahed laminar twisted tape
 
 - Added public Chakroun–Al-Fahed 1995 laminar twisted-tape provider with

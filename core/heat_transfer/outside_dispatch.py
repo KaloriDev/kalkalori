@@ -5,8 +5,9 @@
 
 This module is the integration boundary between exchanger workflows and
 separate outside-correlation families. A plain tube can
-only reach the existing Zukauskas/Euler path; a circular-finned tube can only
-reach Briggs-Young/Robinson-Briggs. Rectangular-finned ellipses select the
+only reach the existing Zukauskas/Euler path; circular-finned thermal selection
+uses Briggs-Young for staggered and Frass/ESCOA for inline banks. Circular
+hydraulics still require Robinson-Briggs's staggered domain. Rectangular-finned ellipses select the
 explicit reconstructed Zhao baseline. Keeping that decision in one place
 prevents a workflow refresh from silently falling back to a bare-tube model.
 """
@@ -16,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 from core.heat_transfer.fouling import normalize_fouling_resistance
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
 
 
 DEFAULT_BARE_EULER_PROVIDER = "zukauskas"
-DEFAULT_FINNED_HT_PROVIDER = "briggs_young_1963"
+DEFAULT_FINNED_HT_PROVIDER = "auto"
 DEFAULT_FINNED_DP_PROVIDER = "robinson_briggs_1966"
 
 
@@ -265,6 +266,7 @@ class FinnedTubeDiagnostics:
     airside_result: Zhao2017AirsideResult | None = None
     hydraulic_airside_result: Zhao2017AirsideResult | None = None
     fin_efficiency_result: ThinPlateFinEfficiencyResult | None = None
+    heat_transfer_result: FinnedTubeHeatTransferResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -391,6 +393,10 @@ def evaluate_outside_thermal(
         str | FinnedTubeHeatTransferProvider
     ) = DEFAULT_FINNED_HT_PROVIDER,
     airside_model: Zhao2017AirsideModel | None = None,
+    gas_temperature: float | None = None,
+    mean_fin_temperature: float | None = None,
+    fin_temperature_model: Callable[[float], float] | None = None,
+    strict_source_domain: bool = False,
 ) -> OutsideThermalDispatchResult:
     """Evaluate the dry outside film coefficient for the declared surface."""
 
@@ -398,7 +404,8 @@ def evaluate_outside_thermal(
     require_automatic_outside_bank(bundle.tube, 'Automatic outside bank HTC')
     surface = tube_surface_type(bundle)
     if surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
-        if euler_provider != DEFAULT_BARE_EULER_PROVIDER or finned_heat_transfer_provider != DEFAULT_FINNED_HT_PROVIDER:
+        if (euler_provider != DEFAULT_BARE_EULER_PROVIDER
+                or finned_heat_transfer_provider not in (DEFAULT_FINNED_HT_PROVIDER, "briggs_young_1963")):
             raise IncompatibleOutsideCorrelationProviderError('Circular outside providers cannot be used with Zhao2017 ellipse physics.')
         model=airside_model if airside_model is not None else Zhao2017AirsideModel()
         if not isinstance(model,Zhao2017AirsideModel):
@@ -461,6 +468,10 @@ def evaluate_outside_thermal(
         bundle,
         props,
         provider=finned_heat_transfer_provider,
+        gas_temperature=gas_temperature,
+        mean_fin_temperature=mean_fin_temperature,
+        fin_temperature_model=fin_temperature_model,
+        strict_source_domain=strict_source_domain,
     )
     return OutsideThermalDispatchResult(
         surface_type=surface,
@@ -862,6 +873,88 @@ def calculate_resistance_network(
     )
 
 
+def fin_surface_temperatures(
+    *,
+    network: ThermalResistanceNetwork,
+    outside_wall_temperature: float,
+    outside_bulk_temperature: float,
+    heat_rate: float,
+) -> tuple[float, float, float, float, float]:
+    """Return ``(primary_surface, fin_base, fin_tip, skin_min, skin_max)``.
+
+    ``outside_wall_temperature`` is the existing outside/core-wall network
+    node (``T_core``); ``heat_rate`` is the signed total outside heat rate,
+    positive when heat flows from that node toward the outside bulk. Uses
+    the network's declared contact topology (see
+    ``core.heat_transfer.outside_dispatch.calculate_resistance_network``):
+    for a welded fin (``"fin_branch_only"``, ``D_root == D_o``) the exposed
+    primary surface bypasses the fin/contact resistance entirely, while a
+    continuous root layer (``"series_before_primary_and_fin_parallel_branches"``)
+    puts the *whole* outside heat rate through the common root/contact
+    resistance before the primary/fin branches split -- so it is never
+    applied twice. Only valid for a finned (non-``PLAIN``) network.
+    """
+    fin_result = network.fin_efficiency_result
+    if fin_result is None:
+        raise ValueError(
+            "fin_surface_temperatures requires a finned resistance network "
+            "(network.fin_efficiency_result is None for a plain tube)."
+        )
+    # Gas-facing lumped fouling node feeds the unchanged fin/contact circuit.
+    T_core = outside_wall_temperature - heat_rate * network.resistance_fouling_outside
+    T_bulk = outside_bulk_temperature
+    if network.contact_topology == "fin_branch_only":
+        q_fin = network.conductance_fin_outside * (T_core - T_bulk)
+        primary_surface = T_core
+        fin_base = T_core - q_fin * network.resistance_contact
+    else:
+        R_common = network.resistance_root + network.resistance_contact
+        root_surface = T_core - heat_rate * R_common
+        primary_surface = root_surface
+        fin_base = root_surface
+    fin_tip = T_bulk + fin_result.tip_temperature_ratio * (fin_base - T_bulk)
+    skin_min = min(primary_surface, fin_base, fin_tip)
+    skin_max = max(primary_surface, fin_base, fin_tip)
+    return primary_surface, fin_base, fin_tip, skin_min, skin_max
+
+
+def make_mean_fin_temperature_model(
+    *,
+    bundle: TubeBundle,
+    inside_bulk_temperature: float,
+    outside_bulk_temperature: float,
+    alpha_inside: float,
+    resistance_core_wall: float,
+    fouling_resistance_inside: float | None = None,
+    fouling_resistance_outside: float | None = None,
+) -> Callable[[float], float]:
+    """A provider-neutral h -> mean-fin-temperature constitutive callback.
+
+    Each trial h builds the actual network, including fouling/contact/root
+    topology, then derives the prescribed fin-base node and fin area mean.
+    The callback is lazy: temperature-independent providers never invoke it.
+    No correlation-specific physics belongs to the geometry or fin solver.
+    """
+    def temperature_for_htc(alpha: float) -> float:
+        network = calculate_resistance_network(
+            bundle=bundle, alpha_inside=alpha_inside,
+            outside_alpha_physical=alpha, resistance_core_wall=resistance_core_wall,
+            fouling_resistance_inside=fouling_resistance_inside,
+            fouling_resistance_outside=fouling_resistance_outside,
+        )
+        heat_rate = (inside_bulk_temperature - outside_bulk_temperature) / network.resistance_total
+        outside_wall = outside_bulk_temperature + heat_rate * network.resistance_outside
+        _, fin_base, _, _, _ = fin_surface_temperatures(
+            network=network, outside_wall_temperature=outside_wall,
+            outside_bulk_temperature=outside_bulk_temperature, heat_rate=heat_rate,
+        )
+        result = network.fin_efficiency_result
+        if not isinstance(result, FinEfficiencyResult):
+            raise TypeError("Mean fin temperature requires an annular-fin efficiency result.")
+        return result.mean_fin_temperature(fin_base, outside_bulk_temperature)
+    return temperature_for_htc
+
+
 def build_finned_tube_diagnostics(
     *,
     network: ThermalResistanceNetwork,
@@ -937,6 +1030,7 @@ def build_finned_tube_diagnostics(
         wet_pressure_drop_supported=False,
         outside_dp_reference_only=False,
         airside_result=thermal.airside_result,
+        heat_transfer_result=ht,
         hydraulic_airside_result=bank.metadata if isinstance(bank,Zhao2017BankHydraulicResult) else None,
         fin_efficiency_result=network.fin_efficiency_result if isinstance(network.fin_efficiency_result,ThinPlateFinEfficiencyResult) else None,
     )
@@ -1000,7 +1094,7 @@ def _reject_bare_provider_on_finned(provider: object) -> None:
         return
     raise IncompatibleOutsideCorrelationProviderError(
         "CircularFinnedTube cannot use a bare-tube Euler/HTC provider. "
-        "Use the automatic Briggs-Young/Robinson-Briggs dispatch (the default) "
+        "Use automatic surface/layout dispatch (the default) "
         "or pass dedicated finned-tube providers."
     )
 
@@ -1013,11 +1107,14 @@ def _reject_finned_provider_on_plain(
     # Dedicated provider arguments retain their documented defaults even for
     # a plain bundle, where they are inactive. A non-default value means the
     # caller attempted to cross the surface-family boundary.
-    if (
-        isinstance(provider, str)
-        and provider.strip().lower().replace("-", "_") == expected_default
-    ):
-        return
+    if isinstance(provider, str):
+        name = provider.strip().lower().replace("-", "_")
+        if name == expected_default:
+            return
+        if expected_default == DEFAULT_FINNED_HT_PROVIDER and name == "briggs_young_1963":
+            # Preserve the old inactive default literal for plain geometry.
+            # An explicit provider object or ESCOA selection still fails.
+            return
     raise IncompatibleOutsideCorrelationProviderError(
         "A dedicated circular-finned-tube provider cannot be used with a plain tube."
     )

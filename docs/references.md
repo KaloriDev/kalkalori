@@ -6,6 +6,14 @@ property libraries as implementation references.
 This document lists the main references used by the current computational core.
 Short reference notes are also included directly in the relevant source files.
 
+The proposed v0.9.4 inline round-finned correlations have a separate
+[forensic source reconstruction](validation/inline_round_finned_source_audit_v094.md),
+including the ITE evidence matrix and a conditional ESCOA thermal recommendation.
+The [INLINE thermal provider guide](inline_round_finned_thermal.md) documents
+the implemented ESCOA 1979 model from Frass's legal secondary reproduction,
+its engineering property convention and unresolved domain. INLINE hydraulics
+and the v0.9.4 release remain open.
+
 ## v0.9.2 thin-plate fin foundation: free primary sources
 
 - Taler, D.; Marcinkowski, M. (2020), *Calculating the Efficiency of Complex

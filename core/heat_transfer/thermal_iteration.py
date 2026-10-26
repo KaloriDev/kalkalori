@@ -140,7 +140,9 @@ from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_
 from core.heat_transfer.outside_flow import (
     prandtl_number as outside_prandtl_number,
 )
+from core.geometry.finned_tube import CircularFinnedTube
 from core.heat_transfer.outside_dispatch import (
+    fin_surface_temperatures,
     DEFAULT_FINNED_HT_PROVIDER,
     FinnedTubeDiagnostics,
     OutsideThermalDispatchResult,
@@ -354,51 +356,6 @@ class WallTemperatureEnvelope:
     fin_tip_max: float = math.nan
 
 
-def fin_surface_temperatures(
-    *,
-    network: ThermalResistanceNetwork,
-    outside_wall_temperature: float,
-    outside_bulk_temperature: float,
-    heat_rate: float,
-) -> tuple[float, float, float, float, float]:
-    """Return ``(primary_surface, fin_base, fin_tip, skin_min, skin_max)``.
-
-    ``outside_wall_temperature`` is the existing outside/core-wall network
-    node (``T_core``); ``heat_rate`` is the signed total outside heat rate,
-    positive when heat flows from that node toward the outside bulk. Uses
-    the network's declared contact topology (see
-    ``core.heat_transfer.outside_dispatch.calculate_resistance_network``):
-    for a welded fin (``"fin_branch_only"``, ``D_root == D_o``) the exposed
-    primary surface bypasses the fin/contact resistance entirely, while a
-    continuous root layer (``"series_before_primary_and_fin_parallel_branches"``)
-    puts the *whole* outside heat rate through the common root/contact
-    resistance before the primary/fin branches split -- so it is never
-    applied twice. Only valid for a finned (non-``PLAIN``) network.
-    """
-    fin_result = network.fin_efficiency_result
-    if fin_result is None:
-        raise ValueError(
-            "fin_surface_temperatures requires a finned resistance network "
-            "(network.fin_efficiency_result is None for a plain tube)."
-        )
-    # Gas-facing lumped fouling node feeds the unchanged fin/contact circuit.
-    T_core = outside_wall_temperature - heat_rate * network.resistance_fouling_outside
-    T_bulk = outside_bulk_temperature
-    if network.contact_topology == "fin_branch_only":
-        q_fin = network.conductance_fin_outside * (T_core - T_bulk)
-        primary_surface = T_core
-        fin_base = T_core - q_fin * network.resistance_contact
-    else:
-        R_common = network.resistance_root + network.resistance_contact
-        root_surface = T_core - heat_rate * R_common
-        primary_surface = root_surface
-        fin_base = root_surface
-    fin_tip = T_bulk + fin_result.tip_temperature_ratio * (fin_base - T_bulk)
-    skin_min = min(primary_surface, fin_base, fin_tip)
-    skin_max = max(primary_surface, fin_base, fin_tip)
-    return primary_surface, fin_base, fin_tip, skin_min, skin_max
-
-
 @dataclass(frozen=True)
 class _LocalWallEvaluation:
     inside_bulk_props: FluidTransportProperties
@@ -519,6 +476,15 @@ def _evaluate_local_wall_state(
     if wall_o is not None:
         Pr_s = outside_prandtl_number(wall_o.cp, wall_o.mu, wall_o.k)
 
+    from core.heat_transfer.outside_dispatch import make_mean_fin_temperature_model
+    fin_temperature_model = make_mean_fin_temperature_model(
+        bundle=bundle, inside_bulk_temperature=inside_bulk_temperature,
+        outside_bulk_temperature=outside_bulk_temperature, alpha_inside=internal.alfa_corrected,
+        resistance_core_wall=hx.tube_wall_resistance(),
+        fouling_resistance_inside=hx.fouling_resistance_inside,
+        fouling_resistance_outside=hx.fouling_resistance_outside,
+    ) if isinstance(tube, CircularFinnedTube) else None
+
     outside_dispatch = evaluate_outside_thermal(
         airside_model=hx.airside_model,
         bundle=bundle,
@@ -527,6 +493,9 @@ def _evaluate_local_wall_state(
         Pr_s=Pr_s,
         euler_provider=euler_provider,
         finned_heat_transfer_provider=finned_heat_transfer_provider,
+        gas_temperature=outside_bulk_temperature,
+        fin_temperature_model=fin_temperature_model,
+        strict_source_domain=hx.strict_source_domain,
     )
     warnings.extend(outside_dispatch.warnings)
     alfa_o_physical = outside_dispatch.alpha_physical
