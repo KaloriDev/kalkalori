@@ -2,10 +2,13 @@
 
 Audit date: 2026-10-26. Branch: `feature/v0.9.4-inline-round-finned`.
 Thermal checkpoint: `e374329 feat: add inline round solid-finned thermal model`.
-The working tree was clean immediately after that commit. Package version is
-still 0.9.3. At the initial audit stage this document contained hydraulic
+The working tree was clean immediately after that commit. Package version was
+0.9.3 at that historical checkpoint; current release integration uses 0.9.4.
+At the initial audit stage this document contained hydraulic
 investigation only, without provider/dispatch/loss/release changes. The revised
-policy and subsequent implementation are distinguished below.
+policy and subsequent implementation are distinguished below. See the
+[final release validation](v094_release_validation.md) for current completion
+and regression status; the source findings below remain qualified.
 
 ## Current decision under the revised user policy
 

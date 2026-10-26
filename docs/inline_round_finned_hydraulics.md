@@ -182,7 +182,14 @@ geometry still has unresolved required limits/loss provenance, so there is no
 claimed fully verified strict-domain success envelope. `hx.strict_source_domain`
 reaches both direct solve and the Simulation hydraulic refresh.
 
-## Validation
+## Hydraulic-checkpoint validation
+
+The counts below belong to the completed hydraulic implementation checkpoint.
+Later ESCOA STAGGERED and release API tests extend the public collection.
+See [final release validation](validation/v094_release_validation.md) for the
+complete release test-ID coverage. STAGGERED AUTO thermal remains Briggs–Young;
+the [explicit ESCOA STAGGERED alternative](staggered_round_finned_thermal.md)
+does not alter Robinson–Briggs hydraulics or its geometry/layout guards.
 
 The final focused thermal/geometry/hydraulic/regression suite passed **314 tests
 in 30.20 s**, including all 48 new hydraulic tests. Three additional legacy
@@ -195,7 +202,7 @@ The parallel public regression run passed **2,202 tests in 3,535.66 s** using
 four workers and work stealing (`-n 4 --dist worksteal core/tests tests -k
 "not test_inverse_area_rating_with_default_deadline"`). The two reserved
 default-deadline tests passed serially with their original 300-second limits:
-**2 passed in 485.02 s**. All **2,204 current public test IDs** therefore have
+**2 passed in 485.02 s**. All **2,204 public test IDs at that checkpoint** therefore have
 passing results across the complete partitioned suite and final focused
 contract/adapter checks. No tolerances, solver budgets or physics were changed
 to obtain those results. The version update followed these checks; source

@@ -1,11 +1,18 @@
-# INLINE round solid-finned thermal support (unreleased v0.9.4 work)
+# INLINE round solid-finned thermal support (v0.9.4)
 
-Implementation/validation record: 2026-10-25. Feature branch:
-`feature/v0.9.4-inline-round-finned`. Package version remains **0.9.3**.
-**Historical thermal-checkpoint record.** At this checkpoint INLINE hydraulics
-were still missing. The subsequent [native Frass hydraulic implementation](inline_round_finned_hydraulics.md)
-under the revised conditional engineering policy supersedes hydraulic-blocker
-statements below. The thermal equations and coupling described here are unchanged.
+Package version is **0.9.4**. INLINE AUTO combines this ESCOA thermal model
+with [native Frass Eq.191 hydraulics](inline_round_finned_hydraulics.md), under
+the qualified non-strict policy. STAGGERED AUTO remains Briggs–Young;
+[ESCOA STAGGERED](staggered_round_finned_thermal.md) is an explicit alternative.
+Source-range, property and geometry qualifications remain visible, and strict
+mode rejects unresolved required conditions. See the
+[release integration validation](validation/v094_release_validation.md).
+
+The implementation began with the separate thermal checkpoint `e374329` on
+2026-10-25. The final section preserves its historical validation record,
+including the hydraulic blocker that existed then. Native Frass hydraulics
+subsequently resolved that implementation blocker under the revised policy;
+the underlying source uncertainties remain. The thermal equations are unchanged.
 
 ## Provider and provenance
 
@@ -121,8 +128,9 @@ Automatic circular-finned thermal selection now defaults to `"auto"`:
 | --- | --- |
 | Round, individual solid fins, INLINE | `FrassEscoaInlineSolidFinProvider` |
 | Round, individual solid fins, staggered equilateral triangular | `BriggsYoung1963Provider` |
+| Explicit ESCOA STAGGERED on supported staggered round solid fins | `FrassEscoaStaggeredSolidFinProvider`; source ranges unresolved |
 | Explicit Briggs-Young with INLINE | Rejected as before |
-| Explicit ESCOA with staggered/shifted | Rejected |
+| Explicit ESCOA INLINE with staggered/shifted | Rejected |
 | Serrated/segmented/louvered/nonround families | Rejected by the applicable family guard |
 
 The explicit built-in name is `"frass_escoa_inline_solid_fin"`. Low-level
@@ -178,7 +186,12 @@ have defaults; existing custom providers remain compatible. Briggs-Young
 equation coefficients, source bounds, row warnings and explicit INLINE guard
 are unchanged. Its existing numerical fixtures remain authoritative.
 
-## Validation and engineering-case progress
+## Historical thermal-checkpoint validation and engineering-case progress
+
+The results below describe the original thermal-only checkpoint, when package
+version was 0.9.3 and INLINE hydraulics had not been implemented. They are not
+the current release status. The [release validation](validation/v094_release_validation.md)
+records the final public suite and completed original INLINE workflows.
 
 Focused command:
 

@@ -31,6 +31,11 @@ and explicit source uncertainty. Briggs--Young and Robinson--Briggs retain their
 INLINE rejection. The later [native-xi Frass hydraulic provider](inline_round_finned_hydraulics.md)
 supports conditional non-strict INLINE Rating/Simulation with explicit
 normalization/loss-scope qualifications and separate acceleration/local losses.
+v0.9.4 also adds an [explicit ESCOA STAGGERED thermal
+alternative](staggered_round_finned_thermal.md). STAGGERED AUTO remains
+Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
+Robinson–Briggs. See [release integration validation](validation/v094_release_validation.md)
+for the final provider matrix and public regression coverage.
 
 Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
 frost/ice; acid or multiple-species condensation; condensate retention,

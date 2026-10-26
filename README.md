@@ -53,6 +53,8 @@ using `finned_heat_transfer_provider="frass_escoa_staggered_solid_fin"`.
 It reproduces Frass's ESCOA Eqs.(60)–(62), with mean-fin-temperature coupling
 and explicit source/property qualifications. Staggered AUTO remains
 Briggs–Young; hydraulic selection and applicability guards remain unchanged.
+See the [v0.9.4 release validation](docs/validation/v094_release_validation.md)
+for the final provider matrix, public regression coverage and release qualifications.
 
 The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
 supports paired laminar liquid heat transfer and distributed friction using

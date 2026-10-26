@@ -9,6 +9,8 @@ thermal, Rating or Simulation calls, or with `provider=` in
 
 AUTO remains Briggs–Young for staggered banks and Frass/ESCOA for inline banks.
 This addition changes no hydraulic equation or hydraulic layout guard.
+The [v0.9.4 release validation](validation/v094_release_validation.md) records
+explicit-selector workflow and layout-guard checks for both ESCOA providers.
 
 ## Implementation source
 

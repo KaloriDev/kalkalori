@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [0.9.4] — INLINE round-finned support
+## [0.9.4] — INLINE round-finned support and explicit ESCOA STAGGERED
 
 - Added explicitly selected `FrassEscoaStaggeredSolidFinProvider`, reproducing
   ESCOA solid-fin Eqs.(60)–(62) from Frass's legal secondary source, including
@@ -40,6 +40,8 @@ The project follows **Semantic Versioning (SemVer)**:
 
 See [the INLINE thermal guide](docs/inline_round_finned_thermal.md).
 See [the native INLINE hydraulic guide](docs/inline_round_finned_hydraulics.md).
+See [the explicit ESCOA STAGGERED guide](docs/staggered_round_finned_thermal.md)
+and [final release validation](docs/validation/v094_release_validation.md).
 
 ## [0.9.3] — Chakroun–Al-Fahed laminar twisted tape
 
