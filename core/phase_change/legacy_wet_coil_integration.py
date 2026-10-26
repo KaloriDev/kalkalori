@@ -713,6 +713,7 @@ def _apply_legacy_outside(
         m_dot_inlet=m_dot_gas_in,
         m_dot_midpoint=m_dot_dry_carrier * (1.0 + W_mean),
         m_dot_outlet=m_dot_gas_out,
+        strict_source_domain=hx.strict_source_domain,
     )
     outside_bank_hydraulic = _replace(
         outside_bank_hydraulic,
@@ -759,6 +760,7 @@ def _apply_legacy_outside(
             wet_pressure_drop_supported=False,
             outside_dp_reference_only=True,
             pressure_drop_metadata=outside_bank_hydraulic.metadata,
+            hydraulic_result=outside_bank_hydraulic,
             warnings=tuple(
                 _deduplicate_warnings(
                     [

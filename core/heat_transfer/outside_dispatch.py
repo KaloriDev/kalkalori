@@ -7,7 +7,7 @@ This module is the integration boundary between exchanger workflows and
 separate outside-correlation families. A plain tube can
 only reach the existing Zukauskas/Euler path; circular-finned thermal selection
 uses Briggs-Young for staggered and Frass/ESCOA for inline banks. Circular
-hydraulics still require Robinson-Briggs's staggered domain. Rectangular-finned ellipses select the
+hydraulics use Robinson-Briggs for staggered and native Frass xi for INLINE. Rectangular-finned ellipses select the
 explicit reconstructed Zhao baseline. Keeping that decision in one place
 prevents a workflow refresh from silently falling back to a bare-tube model.
 """
@@ -40,6 +40,7 @@ from core.heat_transfer.outside_flow import (
     outside_flow_from_mass_flow,
 )
 from core.pressure_drop.finned_tube_pressure_drop import (
+    FRASS_INLINE_XI_COEFFICIENT_BASIS,
     FinnedTubeBankHydraulicResult,
     FinnedTubeHydraulicPoint,
     FinnedTubePressureDropProvider,
@@ -56,7 +57,7 @@ if TYPE_CHECKING:
 
 DEFAULT_BARE_EULER_PROVIDER = "zukauskas"
 DEFAULT_FINNED_HT_PROVIDER = "auto"
-DEFAULT_FINNED_DP_PROVIDER = "robinson_briggs_1966"
+DEFAULT_FINNED_DP_PROVIDER = "auto"
 
 
 class IncompatibleOutsideCorrelationProviderError(TypeError):
@@ -267,6 +268,7 @@ class FinnedTubeDiagnostics:
     hydraulic_airside_result: Zhao2017AirsideResult | None = None
     fin_efficiency_result: ThinPlateFinEfficiencyResult | None = None
     heat_transfer_result: FinnedTubeHeatTransferResult | None = None
+    hydraulic_result: FinnedTubeBankHydraulicResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -349,7 +351,8 @@ class FinnedTubeDiagnostics:
 
     @property
     def f(self) -> float:
-        return self.pressure_drop_coefficient
+        return (math.nan if getattr(self.pressure_drop_metadata, "coefficient_basis", None) == FRASS_INLINE_XI_COEFFICIENT_BASIS
+                else self.pressure_drop_coefficient)
 
     @property
     def dp(self) -> float:
@@ -423,6 +426,7 @@ def evaluate_outside_thermal(
         _reject_finned_provider_on_plain(
             finned_heat_transfer_provider,
             expected_default=DEFAULT_FINNED_HT_PROVIDER,
+            legacy_default="briggs_young_1963",
         )
         v, reynolds, prandtl, alpha, _, warnings, _ = outside_flow_from_mass_flow(
             m_dot=m_dot,
@@ -458,9 +462,10 @@ def evaluate_outside_thermal(
         )
 
     _reject_bare_provider_on_finned(euler_provider)
-    if isinstance(finned_heat_transfer_provider, RobinsonBriggs1966Provider):
+    from core.pressure_drop.frass_inline import FrassInlineSolidFinPressureDropProvider
+    if isinstance(finned_heat_transfer_provider, (RobinsonBriggs1966Provider, FrassInlineSolidFinPressureDropProvider)):
         raise IncompatibleOutsideCorrelationProviderError(
-            "RobinsonBriggs1966Provider is a finned pressure-drop provider, "
+            f"{type(finned_heat_transfer_provider).__name__} is a finned pressure-drop provider, "
             "not a finned heat-transfer provider."
         )
     result = calculate_finned_tube_outside_heat_transfer(
@@ -507,6 +512,7 @@ def evaluate_outside_hydraulics(
         str | FinnedTubePressureDropProvider
     ) = DEFAULT_FINNED_DP_PROVIDER,
     airside_model: Zhao2017AirsideModel | None = None,
+    strict_source_domain: bool = False,
 ) -> OutsideBankHydraulicResult:
     """Evaluate the three-state outside hydraulics for the declared surface."""
 
@@ -514,7 +520,8 @@ def evaluate_outside_hydraulics(
     require_automatic_outside_bank(bundle.tube, 'Automatic outside bank pressure drop')
     surface = tube_surface_type(bundle)
     if surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
-        if euler_provider != DEFAULT_BARE_EULER_PROVIDER or finned_pressure_drop_provider != DEFAULT_FINNED_DP_PROVIDER:
+        if (euler_provider != DEFAULT_BARE_EULER_PROVIDER
+                or finned_pressure_drop_provider not in (DEFAULT_FINNED_DP_PROVIDER, "robinson_briggs_1966")):
             raise IncompatibleOutsideCorrelationProviderError('Circular pressure providers cannot be used with Zhao2017 ellipse physics.')
         return calculate_finned_ellipse_hydraulics(bundle=bundle,m_dot=m_dot,model=airside_model,
             property_provider=property_provider,temperature_in=temperature_in,
@@ -527,6 +534,7 @@ def evaluate_outside_hydraulics(
         _reject_finned_provider_on_plain(
             finned_pressure_drop_provider,
             expected_default=DEFAULT_FINNED_DP_PROVIDER,
+            legacy_default="robinson_briggs_1966",
         )
         return calculate_outside_tube_bank_hydraulics(
             m_dot=m_dot,
@@ -551,9 +559,10 @@ def evaluate_outside_hydraulics(
         )
 
     _reject_bare_provider_on_finned(euler_provider)
-    if isinstance(finned_pressure_drop_provider, BriggsYoung1963Provider):
+    from core.heat_transfer.escoa_inline import FrassEscoaInlineSolidFinProvider
+    if isinstance(finned_pressure_drop_provider, (BriggsYoung1963Provider, FrassEscoaInlineSolidFinProvider)):
         raise IncompatibleOutsideCorrelationProviderError(
-            "BriggsYoung1963Provider is a finned heat-transfer provider, "
+            f"{type(finned_pressure_drop_provider).__name__} is a finned heat-transfer provider, "
             "not a finned pressure-drop provider."
         )
     return calculate_finned_tube_bank_hydraulics(
@@ -570,6 +579,7 @@ def evaluate_outside_hydraulics(
         m_dot_midpoint=m_dot_midpoint,
         m_dot_outlet=m_dot_outlet,
         pressure_drop_provider=finned_pressure_drop_provider,
+        strict_source_domain=strict_source_domain,
     )
 
 
@@ -1031,6 +1041,7 @@ def build_finned_tube_diagnostics(
         outside_dp_reference_only=False,
         airside_result=thermal.airside_result,
         heat_transfer_result=ht,
+        hydraulic_result=bank if isinstance(bank, FinnedTubeBankHydraulicResult) else None,
         hydraulic_airside_result=bank.metadata if isinstance(bank,Zhao2017BankHydraulicResult) else None,
         fin_efficiency_result=network.fin_efficiency_result if isinstance(network.fin_efficiency_result,ThinPlateFinEfficiencyResult) else None,
     )
@@ -1071,6 +1082,7 @@ def merge_finned_tube_diagnostics(
         ),
         pressure_drop_metadata=hydraulic.pressure_drop_metadata,
         hydraulic_airside_result=hydraulic.hydraulic_airside_result,
+        hydraulic_result=hydraulic.hydraulic_result,
         warnings=_deduplicate_warnings((*thermal.warnings, *hydraulic.warnings)),
     )
 
@@ -1103,6 +1115,7 @@ def _reject_finned_provider_on_plain(
     provider: object,
     *,
     expected_default: str,
+    legacy_default: str | None = None,
 ) -> None:
     # Dedicated provider arguments retain their documented defaults even for
     # a plain bundle, where they are inactive. A non-default value means the
@@ -1111,7 +1124,7 @@ def _reject_finned_provider_on_plain(
         name = provider.strip().lower().replace("-", "_")
         if name == expected_default:
             return
-        if expected_default == DEFAULT_FINNED_HT_PROVIDER and name == "briggs_young_1963":
+        if name == legacy_default:
             # Preserve the old inactive default literal for plain geometry.
             # An explicit provider object or ESCOA selection still fails.
             return

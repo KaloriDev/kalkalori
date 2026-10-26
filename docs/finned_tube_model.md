@@ -25,11 +25,12 @@ number of fins and therefore does not introduce area jumps when tube length
 changes.
 
 The original paired empirical correlations cover staggered equilateral
-triangular banks. The proposed v0.9.4 adds an [INLINE ESCOA thermal
+triangular banks. v0.9.4 adds an [INLINE ESCOA thermal
 provider](inline_round_finned_thermal.md), including coupled mean fin temperature
 and explicit source uncertainty. Briggs--Young and Robinson--Briggs retain their
-INLINE rejection. INLINE hydraulics remain unsupported, so full INLINE
-Rating/Simulation still stops at that hydraulic guard.
+INLINE rejection. The later [native-xi Frass hydraulic provider](inline_round_finned_hydraulics.md)
+supports conditional non-strict INLINE Rating/Simulation with explicit
+normalization/loss-scope qualifications and separate acceleration/local losses.
 
 Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
 frost/ice; acid or multiple-species condensation; condensate retention,

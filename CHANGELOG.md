@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [Unreleased] — v0.9.4 INLINE round-finned thermal work
+## [0.9.4] — INLINE round-finned support
 
 - Added `FrassEscoaInlineSolidFinProvider`, implementing the ESCOA 1979 INLINE
   solid-fin Eqs. (96)-(98) from Frass's legally accessible 2015 reproduction.
@@ -20,11 +20,21 @@ The project follows **Semantic Versioning (SemVer)**:
   engineering mapping in non-strict mode; the metal core diameter and full
   conduction/contact topology remain separate and auditable.
 - Linear fin taper uses an explicitly qualified arithmetic-mean thickness for
-  the empirical fin terms, preserving actual area, blockage and fin conduction.
-- INLINE hydraulics remain unsupported. This is thermal work on the feature
-  branch, not a finalized v0.9.4 release; version remains 0.9.3.
+  ESCOA thermal empirical terms, preserving actual area, blockage and fin conduction.
+- Added native-xi `FrassInlineSolidFinPressureDropProvider` (Eq.191), evaluated
+  at mean gas state with Eq.190 row treatment for 2..8 rows, explicit Kz=1
+  convention above eight, and one-row rejection. Automatic hydraulic dispatch
+  selects Frass for INLINE and unchanged Robinson-Briggs for staggered banks.
+- Heated normalization is explicitly NOT_APPLIED; partial normalization/loss
+  provenance is diagnosed under the accepted non-strict engineering policy.
+  Strict mode rejects unresolved required conditions. Acceleration and external
+  losses stay separate; no internal Robinson-Briggs conversion is used.
+- Original private ECO Rating/Simulation targets completed using the new providers.
+  Version updated after implementation, case validation and public regressions
+  completed under the explicit conditional engineering policy.
 
 See [the INLINE thermal guide](docs/inline_round_finned_thermal.md).
+See [the native INLINE hydraulic guide](docs/inline_round_finned_hydraulics.md).
 
 ## [0.9.3] — Chakroun–Al-Fahed laminar twisted tape
 

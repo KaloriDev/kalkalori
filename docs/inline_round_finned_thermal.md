@@ -2,8 +2,10 @@
 
 Implementation/validation record: 2026-10-25. Feature branch:
 `feature/v0.9.4-inline-round-finned`. Package version remains **0.9.3**.
-This thermal implementation does not complete the v0.9.4 release: a defensible
-INLINE hydraulic provider is still missing.
+**Historical thermal-checkpoint record.** At this checkpoint INLINE hydraulics
+were still missing. The subsequent [native Frass hydraulic implementation](inline_round_finned_hydraulics.md)
+under the revised conditional engineering policy supersedes hydraulic-blocker
+statements below. The thermal equations and coupling described here are unchanged.
 
 ## Provider and provenance
 

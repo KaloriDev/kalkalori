@@ -1035,6 +1035,7 @@ class BareTubeHeatExchanger:
                 euler_provider=euler_provider,
                 inlet_props=outside_props if outside_provider is None else None,
                 finned_pressure_drop_provider=finned_pressure_drop_provider,
+                strict_source_domain=self.strict_source_domain,
             )
             dp_o = outside_bank_hydraulic.dp_total
         else:
@@ -1043,7 +1044,7 @@ class BareTubeHeatExchanger:
                     raise ValueError('Rectangular-finned ellipse requires outside mass flow and properties for the Zhao2017 baseline; alfa_o-only bypass is unsupported.')
                 raise ValueError(
                     "CircularFinnedTube dry solve requires m_dot_outside and "
-                    "outside_props so Briggs-Young and Robinson-Briggs can be "
+                    "outside_props so the layout-specific outside providers can be "
                     "evaluated; an alfa_o-only bypass is unsupported."
                 )
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = (

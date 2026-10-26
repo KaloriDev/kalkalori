@@ -102,6 +102,7 @@ from .finned_tube_pressure_drop import (
     FinnedTubeHydraulicPoint,
     FinnedTubeBankHydraulicResult,
     ROBINSON_BRIGGS_COEFFICIENT_BASIS,
+    FRASS_INLINE_XI_COEFFICIENT_BASIS,
     ROBINSON_BRIGGS_1966_APPLICABILITY,
     ROBINSON_BRIGGS_1966_METADATA,
     evaluate_finned_tube_pressure_drop,
@@ -110,6 +111,8 @@ from .finned_tube_pressure_drop import (
     calculate_finned_tube_bank_hydraulics,
     finned_tube_bank_hydraulics,
 )
+
+from .frass_inline import FrassInlineSolidFinPressureDropProvider, FRASS_INLINE_METADATA
 
 from .flow_path import (
     PressureDropFlowState,
@@ -127,6 +130,8 @@ from .flow_path import (
 )
 
 __all__ = [
+    "FrassInlineSolidFinPressureDropProvider", "FRASS_INLINE_METADATA",
+    "FRASS_INLINE_XI_COEFFICIENT_BASIS",
     # Internal (tube-side) pressure drop
     "InternalPressureDropFluidProps",
     "HydraulicPosition",

@@ -304,7 +304,7 @@ def test_strict_domain_is_threaded_through_automatic_dispatch():
 
 
 @pytest.mark.parametrize("workflow", ["thermal", "simulation", "rating"])
-def test_inline_workflows_close_thermal_then_stop_at_hydraulic_guard(workflow):
+def test_inline_workflows_close_thermal_and_native_hydraulics(workflow):
     from core.models.simulation import HXSideInput
     from core.models import BalanceSideSpec
     from core.phase_change.types import PhaseChangeMode
@@ -323,10 +323,18 @@ def test_inline_workflows_close_thermal_then_stop_at_hydraulic_guard(workflow):
     elif workflow == "simulation":
         i = HXSideInput(provider=inside,m_dot=1.5,T_in=400.,p=101325.,phase_change_mode=PhaseChangeMode.DISABLED)
         o = HXSideInput(provider=outside,m_dot=1.,T_in=600.,p=101325.,phase_change_mode=PhaseChangeMode.DISABLED)
-        with pytest.raises(ValueError, match="RobinsonBriggs1966Provider.*staggered"):
-            hx.simulate(i,o)
+        result = hx.simulate(i,o)
+        assert result.outside_tube_bank_hydraulic.metadata.method == "frass_inline_solid_fin_191"
+        assert result.outside_tube_bank_hydraulic.native_result.bank_delta_p > 0.
+        assert result.final_result.finned_tube_diagnostics.heat_transfer_result.method == "frass_escoa_inline_solid_fin"
+        assert result.final_result.finned_tube_diagnostics.hydraulic_result is result.outside_tube_bank_hydraulic
+        assert math.isnan(result.final_result.finned_tube_diagnostics.f)
     else:
         i = BalanceSideSpec(provider=inside,m_dot=1.5,T_in=400.,T_out=410.,p=101325.)
         o = BalanceSideSpec(provider=outside,m_dot=1.,T_in=600.,p=101325.)
-        with pytest.raises(ValueError, match="RobinsonBriggs1966Provider.*staggered"):
-            hx.rate(i,o)
+        result = hx.rate(i,o)
+        assert result.outside_tube_bank_hydraulic.metadata.method == "frass_inline_solid_fin_191"
+        assert result.outside_tube_bank_hydraulic.native_result.bank_delta_p > 0.
+        assert result.final_result.finned_tube_diagnostics.heat_transfer_result.method == "frass_escoa_inline_solid_fin"
+        assert result.final_result.finned_tube_diagnostics.hydraulic_result is result.outside_tube_bank_hydraulic
+        assert math.isnan(result.final_result.finned_tube_diagnostics.f)

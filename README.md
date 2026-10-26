@@ -35,7 +35,17 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.3)
+## Current Capabilities (v0.9.4)
+
+Round individual solid-finned INLINE banks now select ESCOA thermal HTC
+(as reproduced by Frass) and native Frass Eq.191 hydraulics automatically.
+Mean fin temperature is coupled to the physical film coefficient. Hydraulic
+drag uses mean gas state with separate acceleration and external losses.
+This is qualified non-strict engineering support: heated normalization is
+unapplied, source ranges and loss decomposition remain partial, and strict
+mode rejects unresolved required conditions. Staggered Briggs--Young and
+Robinson--Briggs behavior is unchanged. See the [thermal guide](docs/inline_round_finned_thermal.md)
+and [native hydraulic guide](docs/inline_round_finned_hydraulics.md).
 
 The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
 supports paired laminar liquid heat transfer and distributed friction using
@@ -106,8 +116,9 @@ extrapolation; arbitrary-clearance validity is not established.
   welded or continuous-root construction, ideal contact by default, and
   either a practical dimensionless `fin_contact_efficiency` or the advanced
   physical `fin_contact_resistance` for non-ideal fin/root contact,
-  Briggs--Young dry outside heat transfer, verified-scope Robinson--Briggs
-  pressure loss, Simulation, Rating, and the established inside-side phase
+  Briggs--Young dry outside heat transfer and verified-scope Robinson--Briggs
+  pressure loss for staggered banks, the qualified INLINE models linked above,
+  Simulation, Rating, and the established inside-side phase
   change paths when the finned outside surface remains dry. The unchanged dry
   Briggs--Young heat-transfer provider accepts every positive bank row count;
   one- to
