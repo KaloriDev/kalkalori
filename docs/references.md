@@ -213,6 +213,15 @@ Used for:
 
 ### Circular-finned tubes (v0.7.0)
 
+The explicit v0.9.4 ESCOA staggered solid-fin alternative uses the legal
+secondary reproduction in Frass/Hofmann/Ponweiser (2015), printed pp.17–18,
+Eqs.(60)–(62), including `exp(-0.15*n_rows^2)`.
+[Publisher full text](https://www.wseas.us/e-library/conferences/2015/Frass/Frass.pdf).
+The original ESCOA 1979 manual was not inspected; complete source-domain,
+property-state and accuracy closure is not claimed. See the
+[staggered model guide](staggered_round_finned_thermal.md). This model is
+explicit only and changes neither Briggs–Young AUTO nor hydraulics.
+
 - Briggs, D. E.; Young, E. H. (1963).
   "Convection Heat Transfer and Pressure Drop of Air Flowing Across
   Triangular Pitch Banks of Finned Tubes", *Chemical Engineering Progress

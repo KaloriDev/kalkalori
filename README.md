@@ -47,6 +47,13 @@ mode rejects unresolved required conditions. Staggered Briggs--Young and
 Robinson--Briggs behavior is unchanged. See the [thermal guide](docs/inline_round_finned_thermal.md)
 and [native hydraulic guide](docs/inline_round_finned_hydraulics.md).
 
+Staggered round solid-fin banks can explicitly select
+[`FrassEscoaStaggeredSolidFinProvider`](docs/staggered_round_finned_thermal.md)
+using `finned_heat_transfer_provider="frass_escoa_staggered_solid_fin"`.
+It reproduces Frass's ESCOA Eqs.(60)–(62), with mean-fin-temperature coupling
+and explicit source/property qualifications. Staggered AUTO remains
+Briggs–Young; hydraulic selection and applicability guards remain unchanged.
+
 The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
 supports paired laminar liquid heat transfer and distributed friction using
 actual tape-width blockage and coupled wall viscosity, with source-domain

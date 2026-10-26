@@ -560,7 +560,8 @@ def evaluate_outside_hydraulics(
 
     _reject_bare_provider_on_finned(euler_provider)
     from core.heat_transfer.escoa_inline import FrassEscoaInlineSolidFinProvider
-    if isinstance(finned_pressure_drop_provider, (BriggsYoung1963Provider, FrassEscoaInlineSolidFinProvider)):
+    from core.heat_transfer.escoa_staggered import FrassEscoaStaggeredSolidFinProvider
+    if isinstance(finned_pressure_drop_provider, (BriggsYoung1963Provider, FrassEscoaInlineSolidFinProvider, FrassEscoaStaggeredSolidFinProvider)):
         raise IncompatibleOutsideCorrelationProviderError(
             f"{type(finned_pressure_drop_provider).__name__} is a finned heat-transfer provider, "
             "not a finned pressure-drop provider."

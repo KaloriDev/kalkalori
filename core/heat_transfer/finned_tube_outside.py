@@ -482,6 +482,7 @@ def _coupled_fin_heat_transfer(
                 **result.diagnostics,
                 "coupling_iterations": iteration,
                 "coupling_relative_residual": residual,
+                "coupling_residual": residual,
                 "coupling_converged": True,
                 "coupling_method": "relaxed_fixed_point_h_fin_network",
             })
@@ -504,12 +505,15 @@ def _resolve_heat_transfer_provider(
         if name == "frass_escoa_inline_solid_fin":
             from core.heat_transfer.escoa_inline import FrassEscoaInlineSolidFinProvider
             return FrassEscoaInlineSolidFinProvider()
+        if name == "frass_escoa_staggered_solid_fin":
+            from core.heat_transfer.escoa_staggered import FrassEscoaStaggeredSolidFinProvider
+            return FrassEscoaStaggeredSolidFinProvider()
         if name in ("briggs_young", "briggs_young_1963", "by1963"):
             return BriggsYoung1963Provider()
         raise ValueError(
             f"Unknown finned-tube heat-transfer provider '{provider}'. "
             "Supported built-ins: 'auto', 'briggs_young_1963', "
-            "'frass_escoa_inline_solid_fin'."
+            "'frass_escoa_inline_solid_fin', 'frass_escoa_staggered_solid_fin'."
         )
     if not isinstance(provider, FinnedTubeHeatTransferProvider):
         raise TypeError(

@@ -7,6 +7,11 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [0.9.4] — INLINE round-finned support
 
+- Added explicitly selected `FrassEscoaStaggeredSolidFinProvider`, reproducing
+  ESCOA solid-fin Eqs.(60)–(62) from Frass's legal secondary source, including
+  the squared row term. It shares qualified property/geometry mechanics and
+  mean-fin-temperature coupling with INLINE while retaining separate factors.
+  Staggered AUTO remains Briggs–Young; hydraulics are unchanged by this addition.
 - Added `FrassEscoaInlineSolidFinProvider`, implementing the ESCOA 1979 INLINE
   solid-fin Eqs. (96)-(98) from Frass's legally accessible 2015 reproduction.
   Automatic circular-finned thermal dispatch selects it for INLINE banks;
