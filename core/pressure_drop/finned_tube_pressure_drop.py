@@ -24,6 +24,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from core.common.warnings import ApplicabilityRange, ModelWarning, make_warning
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.serrated_finned_tube import reject_serrated_physics
 from core.properties.common import FluidTransportProperties
 
 
@@ -940,6 +941,7 @@ def _resolve_pressure_drop_provider(
 def _require_circular_finned_bundle(bundle: TubeBundle) -> CircularFinnedTube:
     if not isinstance(bundle, TubeBundle):
         raise TypeError("bundle must be a TubeBundle instance.")
+    reject_serrated_physics(bundle.tube, "Solid-fin pressure-drop provider")
     if not isinstance(bundle.tube, CircularFinnedTube):
         raise TypeError(
             "Dedicated finned-tube pressure drop requires bundle.tube to "

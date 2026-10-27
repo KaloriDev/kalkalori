@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.serrated_finned_tube import SerratedCircularFinnedTube, reject_serrated_physics
 from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
 from core.geometry.tube import TubeSurfaceType
 from core.heat_transfer.fin_efficiency import FinEfficiencyResult, annular_fin_efficiency
@@ -371,6 +372,10 @@ def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
     value = getattr(bundle.tube, "surface_type", None)
     if value is TubeSurfaceType.PLAIN:
         return TubeSurfaceType.PLAIN
+    if value is TubeSurfaceType.SERRATED_HELICAL_FIN:
+        if not isinstance(bundle.tube, SerratedCircularFinnedTube):
+            raise TypeError("SERRATED_HELICAL_FIN requires SerratedCircularFinnedTube geometry.")
+        return value
     if value is TubeSurfaceType.CIRCULAR_FINNED:
         if not isinstance(bundle.tube, CircularFinnedTube):
             raise TypeError(
@@ -383,7 +388,7 @@ def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
         return value
     raise TypeError(
         "Tube geometry must expose a supported TubeSurfaceType; supported values "
-        "are PLAIN, CIRCULAR_FINNED and RECTANGULAR_INDIVIDUAL_FINNED."
+        "are PLAIN, CIRCULAR_FINNED, SERRATED_HELICAL_FIN and RECTANGULAR_INDIVIDUAL_FINNED."
     )
 
 
@@ -695,6 +700,7 @@ def calculate_resistance_network(
         raise ValueError("resistance_core_wall must be finite and non-negative.")
 
     surface = tube_surface_type(bundle)
+    reject_serrated_physics(bundle.tube, "Physical UA / serrated fin efficiency")
     area_i = bundle.total_inner_area
     area_gross = bundle.total_outer_area
     resistance_i = 1.0 / (alpha_inside * area_i)

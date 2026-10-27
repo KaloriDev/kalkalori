@@ -27,6 +27,8 @@ def require_circular_tube(tube, model: str) -> None:
 
 def require_automatic_outside_bank(tube, model: str) -> None:
     """Reject source gaps before evaluating any surrogate bank physics."""
+    from core.geometry.serrated_finned_tube import reject_serrated_physics
+    reject_serrated_physics(tube, model)
     if getattr(tube, 'surface_type', None) is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
         # Source-specific model selection/geometry validation belongs to the
         # outside dispatcher. This is not circular or smooth-ellipse physics.

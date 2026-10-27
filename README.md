@@ -35,7 +35,14 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.4)
+## Current Capabilities (v0.9.5 development)
+
+v0.9.5 Phase A adds a [serrated helical-fin geometry/API foundation](docs/serrated_fins.md):
+explicit radial-sector-cut volume, fin mass and external geometric area for
+untwisted constant-thickness welded I-foot fins. Serrated A_min, fin efficiency,
+HTC and pressure-drop physics are intentionally unavailable. Rating/Simulation
+reject serrated surfaces with no solid-fin fallback. This is development
+geometry support; no release has been published.
 
 Round individual solid-finned INLINE banks now select ESCOA thermal HTC
 (as reproduced by Frass) and native Frass Eq.191 hydraulics automatically.
