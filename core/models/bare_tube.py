@@ -991,6 +991,23 @@ class BareTubeHeatExchanger:
             )
 
         if have_outside:
+            from core.heat_transfer.outside_dispatch import make_mean_fin_temperature_model
+            gas_temperature = (None if outside_temperature_in is None else
+                0.5 * (outside_temperature_in + (outside_temperature_out
+                    if outside_temperature_out is not None else outside_temperature_in)))
+            inside_temperature = (None if tube_side_temperature_in is None else
+                0.5 * (tube_side_temperature_in + (tube_side_temperature_out
+                    if tube_side_temperature_out is not None else tube_side_temperature_in)))
+            fin_temperature_model = (
+                make_mean_fin_temperature_model(
+                    bundle=self.bundle, inside_bulk_temperature=inside_temperature,
+                    outside_bulk_temperature=gas_temperature, alpha_inside=alfa_i,
+                    resistance_core_wall=self.tube_wall_resistance(),
+                    fouling_resistance_inside=self.fouling_resistance_inside,
+                    fouling_resistance_outside=self.fouling_resistance_outside,
+                ) if surface is TubeSurfaceType.CIRCULAR_FINNED
+                and inside_temperature is not None and gas_temperature is not None else None
+            )
             outside_thermal_dispatch = evaluate_outside_thermal(
                 airside_model=self.airside_model,
                 bundle=self.bundle,
@@ -998,6 +1015,9 @@ class BareTubeHeatExchanger:
                 props=outside_props,
                 euler_provider=euler_provider,
                 finned_heat_transfer_provider=finned_heat_transfer_provider,
+                gas_temperature=gas_temperature,
+                fin_temperature_model=fin_temperature_model,
+                strict_source_domain=self.strict_source_domain,
             )
             v_o = outside_thermal_dispatch.face_velocity
             Re_o = outside_thermal_dispatch.reynolds_number
@@ -1015,6 +1035,7 @@ class BareTubeHeatExchanger:
                 euler_provider=euler_provider,
                 inlet_props=outside_props if outside_provider is None else None,
                 finned_pressure_drop_provider=finned_pressure_drop_provider,
+                strict_source_domain=self.strict_source_domain,
             )
             dp_o = outside_bank_hydraulic.dp_total
         else:
@@ -1023,7 +1044,7 @@ class BareTubeHeatExchanger:
                     raise ValueError('Rectangular-finned ellipse requires outside mass flow and properties for the Zhao2017 baseline; alfa_o-only bypass is unsupported.')
                 raise ValueError(
                     "CircularFinnedTube dry solve requires m_dot_outside and "
-                    "outside_props so Briggs-Young and Robinson-Briggs can be "
+                    "outside_props so the layout-specific outside providers can be "
                     "evaluated; an alfa_o-only bypass is unsupported."
                 )
             v_o, Re_o, Pr_o, alfa_o_calc, dp_o, outside_warnings, _outside_euler_result = (

@@ -97,6 +97,7 @@ def evaluate_outside_side(
         pressure=p,
         euler_provider=euler_provider,
         finned_pressure_drop_provider=finned_pressure_drop_provider,
+        strict_source_domain=hx.strict_source_domain,
     )
     # The effective outside coefficient depends only on the physical film
     # coefficient, declared fin topology and gross-area outside fouling.

@@ -444,7 +444,7 @@ def test_finned_rejects_bare_provider_alpha_override_and_inline_solver() -> None
 
     inline_hx = BareTubeHeatExchanger(_bundle(finned=True, layout="inline"))
     with pytest.raises(ValueError, match="staggered"):
-        _solve(inline_hx)
+        _solve(inline_hx, finned_heat_transfer_provider=BriggsYoung1963Provider())
 
 
 def test_flow_path_identifies_finned_result_by_type_with_custom_method() -> None:

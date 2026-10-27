@@ -35,7 +35,31 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.3)
+## Current Capabilities (v0.9.4)
+
+Round individual solid-finned INLINE banks now select ESCOA thermal HTC
+(as reproduced by Frass) and native Frass Eq.191 hydraulics automatically.
+Mean fin temperature is coupled to the physical film coefficient. Hydraulic
+drag uses mean gas state with separate acceleration and external losses.
+This is qualified non-strict engineering support: heated normalization is
+unapplied, source ranges and loss decomposition remain partial, and strict
+mode rejects unresolved required conditions. Staggered Briggs--Young and
+Robinson--Briggs behavior is unchanged. See the [thermal guide](docs/inline_round_finned_thermal.md)
+and [native hydraulic guide](docs/inline_round_finned_hydraulics.md).
+
+Staggered round solid-fin banks can explicitly select
+[`FrassEscoaStaggeredSolidFinProvider`](docs/staggered_round_finned_thermal.md)
+using `finned_heat_transfer_provider="frass_escoa_staggered_solid_fin"`.
+It reproduces Frass's ESCOA Eqs.(60)–(62), with mean-fin-temperature coupling
+and explicit source/property qualifications. Staggered AUTO remains
+Briggs–Young; hydraulic selection and applicability guards remain unchanged.
+See the [v0.9.4 release validation](docs/validation/v094_release_validation.md)
+for the final provider matrix, public regression coverage and release qualifications.
+
+Optional [Genić 2006 solid-fin hydraulic providers](docs/genic2006_finned_hydraulics.md)
+are explicitly selectable with `genic2006_staggered` and `genic2006_inline`.
+They retain their native equivalent-diameter and pressure-drop basis, with
+source-domain and calibration-coverage diagnostics. AUTO remains unchanged.
 
 The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
 supports paired laminar liquid heat transfer and distributed friction using
@@ -106,8 +130,9 @@ extrapolation; arbitrary-clearance validity is not established.
   welded or continuous-root construction, ideal contact by default, and
   either a practical dimensionless `fin_contact_efficiency` or the advanced
   physical `fin_contact_resistance` for non-ideal fin/root contact,
-  Briggs--Young dry outside heat transfer, verified-scope Robinson--Briggs
-  pressure loss, Simulation, Rating, and the established inside-side phase
+  Briggs--Young dry outside heat transfer and verified-scope Robinson--Briggs
+  pressure loss for staggered banks, the qualified INLINE models linked above,
+  Simulation, Rating, and the established inside-side phase
   change paths when the finned outside surface remains dry. The unchanged dry
   Briggs--Young heat-transfer provider accepts every positive bank row count;
   one- to

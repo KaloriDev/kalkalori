@@ -6,6 +6,22 @@ property libraries as implementation references.
 This document lists the main references used by the current computational core.
 Short reference notes are also included directly in the relevant source files.
 
+The v0.9.4 inline round-finned correlations have a separate
+[forensic source reconstruction](validation/inline_round_finned_source_audit_v094.md),
+including the ITE evidence matrix and a conditional ESCOA thermal recommendation.
+The [INLINE thermal provider guide](inline_round_finned_thermal.md) documents
+the implemented ESCOA 1979 model from Frass's legal secondary reproduction,
+its engineering property convention and unresolved domain. The later
+[native INLINE hydraulic provider](inline_round_finned_hydraulics.md) implements
+Frass Eq.191 under an explicit conditional engineering policy; normalization
+and loss-scope provenance remain partial. v0.9.4 provides qualified non-strict
+support with strict rejection of unresolved required source conditions.
+The [explicit ESCOA STAGGERED guide](staggered_round_finned_thermal.md) covers
+Eqs.(60)–(62) from the same legal secondary source. STAGGERED AUTO remains
+Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
+Robinson–Briggs. The [release validation](validation/v094_release_validation.md)
+records integration checks without expanding the source domain.
+
 ## v0.9.2 thin-plate fin foundation: free primary sources
 
 - Taler, D.; Marcinkowski, M. (2020), *Calculating the Efficiency of Complex
@@ -202,6 +218,15 @@ Used for:
 
 ### Circular-finned tubes (v0.7.0)
 
+The explicit v0.9.4 ESCOA staggered solid-fin alternative uses the legal
+secondary reproduction in Frass/Hofmann/Ponweiser (2015), printed pp.17–18,
+Eqs.(60)–(62), including `exp(-0.15*n_rows^2)`.
+[Publisher full text](https://www.wseas.us/e-library/conferences/2015/Frass/Frass.pdf).
+The original ESCOA 1979 manual was not inspected; complete source-domain,
+property-state and accuracy closure is not claimed. See the
+[staggered model guide](staggered_round_finned_thermal.md). This model is
+explicit only and changes neither Briggs–Young AUTO nor hydraulics.
+
 - Briggs, D. E.; Young, E. H. (1963).
   "Convection Heat Transfer and Pressure Drop of Air Flowing Across
   Triangular Pitch Banks of Finned Tubes", *Chemical Engineering Progress
@@ -235,12 +260,14 @@ Used for:
   DOI: `10.1080/01457639108939746`.
 
 The Genić DOI above corrects the commonly repeated but incorrect
-`10.1016/j.applthermaleng.2005.06.020`. It is used only as a comparative
-validation reference. ESDU 86022 may likewise be used externally for
+`10.1016/j.applthermaleng.2005.06.020`. It is now implemented as an
+[explicit optional hydraulic model](genic2006_finned_hydraulics.md); equation
+definitions are closed, calibration provenance is partial, and original raw
+calibration data were not recovered. ESDU 86022 may be used externally for
 validation; no closed ESDU tables, data or code are included in the GPL core.
-Schmidt, VDI, Genić and Nir were reviewed as extended-surface or comparative
-references; their correlations are not blended into the two implemented
-Briggs--Young/Robinson--Briggs empirical models.
+Schmidt, VDI and Nir remain extended-surface or comparative references.
+Genić is explicit only; no blending or change to Briggs--Young,
+Robinson--Briggs or Frass AUTO selection is introduced.
 
 The Briggs--Young source experiments used six-row banks, while later
 references recommend applying the correlation to banks with at least four

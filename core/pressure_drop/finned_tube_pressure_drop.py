@@ -1,7 +1,7 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
 
-"""Pressure loss across staggered banks of circular-finned tubes.
+"""Layout-specific pressure loss across circular solid-finned tube banks.
 
 This module has a dedicated contract because the Robinson-Briggs
 coefficient is neither an unnamed Euler number nor a bare-tube coefficient.
@@ -11,11 +11,13 @@ Its definition is kept explicit throughout::
 
 ``V_max`` and the corresponding Reynolds number use the bundle's actual
 minimum free-flow area, including periodic fin blockage.
+INLINE Frass uses its own native per-row xi basis and returns bank drag at
+one mean gas state. It is never converted to f_RB; acceleration stays separate.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -28,11 +30,21 @@ from core.properties.common import FluidTransportProperties
 FinnedTubeLayout = Literal["inline", "staggered"]
 FinnedTubeHydraulicPosition = Literal["inlet", "midpoint", "outlet"]
 FinnedTubePressureCoefficientBasis = Literal[
-    "delta_p/(2*n_rows*rho*V_max^2)"
+    "delta_p/(2*n_rows*rho*V_max^2)",
+    "2*delta_p_row/(rho_mean*w_E^2)",
+    "2*delta_p*d_e/(n_rows*Pl*rho*w_min^2)",
 ]
 
 ROBINSON_BRIGGS_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
     "delta_p/(2*n_rows*rho*V_max^2)"
+)
+
+FRASS_INLINE_XI_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
+    "2*delta_p_row/(rho_mean*w_E^2)"
+)
+
+GENIC_2006_XI_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
+    "2*delta_p*d_e/(n_rows*Pl*rho*w_min^2)"
 )
 
 
@@ -130,6 +142,10 @@ class FinnedTubePressureDropRequest:
     n_rows: int
     fluid_family: str = "air"
     geometry_family: str = "solid_circular_finned_tube_bank"
+    tube_outer_diameter: float | None = None
+    temperature_in: float | None = None
+    temperature_out: float | None = None
+    strict_source_domain: bool = False
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -171,6 +187,12 @@ class FinnedTubePressureDropRequest:
             raise ValueError("fluid_family must be non-empty.")
         if not self.geometry_family.strip():
             raise ValueError("geometry_family must be non-empty.")
+        for name in ("tube_outer_diameter", "temperature_in", "temperature_out"):
+            value = getattr(self, name)
+            if value is not None:
+                _require_positive_finite(value, name)
+        if not isinstance(self.strict_source_domain, bool):
+            raise TypeError("strict_source_domain must be boolean.")
 
 
 @dataclass(frozen=True)
@@ -197,10 +219,29 @@ class FinnedTubePressureDropResult:
     equilateral_relative_deviation: float
     metadata: FinnedTubePressureDropMetadata
     warnings: tuple[ModelWarning, ...]
+    diagnostics: dict[str, object] = field(default_factory=dict, hash=False)
 
     @property
     def f(self) -> float:
-        return self.coefficient
+        return self.coefficient if self.coefficient_basis == ROBINSON_BRIGGS_COEFFICIENT_BASIS else math.nan
+
+    @property
+    def xi(self) -> float:
+        return self.coefficient if self.coefficient_basis in (
+            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+        ) else math.nan
+
+    @property
+    def Kz(self) -> float:
+        return float(self.diagnostics.get("Kz", math.nan))
+
+    @property
+    def dp_row(self) -> float:
+        return float(self.diagnostics.get("dp_row", math.nan))
+
+    @property
+    def bank_delta_p(self) -> float:
+        return self.dp_drag
 
     @property
     def Re(self) -> float:
@@ -369,11 +410,11 @@ class RobinsonBriggs1966Provider:
 def evaluate_finned_tube_pressure_drop(
     request: FinnedTubePressureDropRequest,
     *,
-    provider: str | FinnedTubePressureDropProvider = "robinson_briggs_1966",
+    provider: str | FinnedTubePressureDropProvider = "auto",
 ) -> FinnedTubePressureDropResult:
     """Evaluate a request with a built-in name or custom provider."""
 
-    return _resolve_pressure_drop_provider(provider).evaluate(request)
+    return _resolve_pressure_drop_provider(provider, layout=request.layout).evaluate(request)
 
 
 def calculate_finned_tube_pressure_drop(
@@ -381,8 +422,11 @@ def calculate_finned_tube_pressure_drop(
     bundle: TubeBundle,
     props: FluidTransportProperties,
     *,
-    provider: str | FinnedTubePressureDropProvider = "robinson_briggs_1966",
+    provider: str | FinnedTubePressureDropProvider = "auto",
     fluid_family: str = "air",
+    temperature_in: float | None = None,
+    temperature_out: float | None = None,
+    strict_source_domain: bool = False,
 ) -> FinnedTubePressureDropResult:
     """Calculate single-state drag directly from ``(m_dot, bundle, props)``."""
 
@@ -394,6 +438,9 @@ def calculate_finned_tube_pressure_drop(
         tube=tube,
         props=transport,
         fluid_family=fluid_family,
+        temperature_in=temperature_in,
+        temperature_out=temperature_out,
+        strict_source_domain=strict_source_domain,
     )
     return evaluate_finned_tube_pressure_drop(request, provider=provider)
 
@@ -465,7 +512,9 @@ class FinnedTubeHydraulicPoint:
 
     @property
     def f(self) -> float:
-        return self.coefficient
+        return math.nan if self.metadata.coefficient_basis in (
+            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+        ) else self.coefficient
 
     @property
     def dynamic_pressure_reference(self) -> float:
@@ -501,6 +550,7 @@ class FinnedTubeBankHydraulicResult:
     dp_total: float
     metadata: FinnedTubePressureDropMetadata
     warnings: tuple[ModelWarning, ...]
+    native_result: FinnedTubePressureDropResult | None = None
 
     @property
     def dp_outside_drag(self) -> float:
@@ -516,7 +566,9 @@ class FinnedTubeBankHydraulicResult:
 
     @property
     def mean_f_over_rho(self) -> float:
-        return self.mean_coefficient_over_rho
+        return math.nan if self.metadata.coefficient_basis in (
+            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+        ) else self.mean_coefficient_over_rho
 
 
 def calculate_finned_tube_bank_hydraulics(
@@ -532,15 +584,17 @@ def calculate_finned_tube_bank_hydraulics(
     outlet_props: Any | None = None,
     pressure_drop_provider: (
         str | FinnedTubePressureDropProvider
-    ) = "robinson_briggs_1966",
+    ) = "auto",
     fluid_family: str = "air",
     m_dot_inlet: float | None = None,
     m_dot_midpoint: float | None = None,
     m_dot_outlet: float | None = None,
+    strict_source_domain: bool = False,
 ) -> FinnedTubeBankHydraulicResult:
-    """Calculate inlet/midpoint/outlet finned-bank hydraulics.
+    """Calculate finned-bank drag plus separate endpoint acceleration.
 
-    Simpson's rule is applied to ``f_RB/rho`` for drag.  The signed
+    Robinson-Briggs retains Simpson's rule on ``f_RB/rho``. Native Frass
+    evaluates whole-bank drag once at the mean gas temperature. The signed
     acceleration term uses the face sections, not ``A_min``.  Either a
     thermophysical ``property_provider`` or explicit point properties must
     be supplied.  This function never constructs or dispatches an
@@ -549,7 +603,8 @@ def calculate_finned_tube_bank_hydraulics(
 
     tube = _require_circular_finned_bundle(bundle)
     _require_positive_finite(m_dot, "m_dot")
-    corr_provider = _resolve_pressure_drop_provider(pressure_drop_provider)
+    corr_provider = _resolve_pressure_drop_provider(pressure_drop_provider, layout=bundle.layout.lower())
+    mean_state_only = getattr(corr_provider, "hydraulic_state_basis", None) == "mean_outside_gas"
     warnings: list[ModelWarning] = []
 
     if property_provider is None:
@@ -588,7 +643,9 @@ def calculate_finned_tube_bank_hydraulics(
         props_out, h_out = _evaluate_property_state(property_provider, T_out, p)
         T_mid = 0.5 * (T_in + T_out)
         midpoint_method = "arithmetic_temperature"
-        if _finite_enthalpy(h_in) and _finite_enthalpy(h_out):
+        if mean_state_only:
+            midpoint_method = "arithmetic_temperature_mean_state"
+        elif _finite_enthalpy(h_in) and _finite_enthalpy(h_out):
             T_from_h = _try_temperature_from_enthalpy(
                 property_provider,
                 h=0.5 * (float(h_in) + float(h_out)),
@@ -625,6 +682,16 @@ def calculate_finned_tube_bank_hydraulics(
     for name, value in point_mass_flows.items():
         _require_positive_finite(value, f"m_dot_{name}")
 
+    if mean_state_only:
+        return _mean_state_bank_hydraulics(
+            provider=corr_provider, bundle=bundle, tube=tube, m_dot=m_dot,
+            temperatures=(T_in, T_mid, T_out), pressure=p,
+            properties=(props_in, props_mid, props_out), enthalpies=(h_in, h_mid, h_out),
+            point_mass_flows=point_mass_flows, midpoint_method=midpoint_method,
+            fluid_family=fluid_family, strict_source_domain=strict_source_domain,
+            warnings=warnings,
+        )
+
     points: list[FinnedTubeHydraulicPoint] = []
     metadata: FinnedTubePressureDropMetadata | None = None
     for position, temperature, props, enthalpy in (
@@ -639,6 +706,9 @@ def calculate_finned_tube_bank_hydraulics(
                 tube=tube,
                 props=props,
                 fluid_family=fluid_family,
+                temperature_in=T_in,
+                temperature_out=T_out,
+                strict_source_domain=strict_source_domain,
             )
         )
         if state.coefficient_basis != ROBINSON_BRIGGS_COEFFICIENT_BASIS:
@@ -730,6 +800,68 @@ def calculate_finned_tube_bank_hydraulics(
     )
 
 
+def _mean_state_bank_hydraulics(
+    *, provider: FinnedTubePressureDropProvider, bundle: TubeBundle,
+    tube: CircularFinnedTube, m_dot: float, temperatures: tuple[float, float, float],
+    pressure: float, properties: tuple[FluidTransportProperties, ...],
+    enthalpies: tuple[float | None, ...], point_mass_flows: dict[str, float],
+    midpoint_method: str, fluid_family: str, strict_source_domain: bool,
+    warnings: list[ModelWarning],
+) -> FinnedTubeBankHydraulicResult:
+    """Native mean-state bank drag; endpoint states serve acceleration only.
+
+    Never reinterpret native xi as Robinson-Briggs f. There is one provider
+    evaluation and its bank pressure is used directly, without Simpson averaging
+    or another row multiplication. Endpoint coefficients are deliberately NaN.
+    """
+    state = provider.evaluate(_request_from_bundle(
+        m_dot=m_dot, bundle=bundle, tube=tube, props=properties[1],
+        fluid_family=fluid_family, temperature_in=temperatures[0],
+        temperature_out=temperatures[2], strict_source_domain=strict_source_domain,
+    ))
+    if state.coefficient_basis not in (
+        FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+    ):
+        raise ValueError("Mean-state native provider must return a supported explicit native xi basis.")
+    warnings = [*warnings, *state.warnings]
+    points = []
+    for index, position in enumerate(("inlet", "midpoint", "outlet")):
+        props = properties[index]
+        face_flux = point_mass_flows[position] / bundle.frontal_flow_area
+        reference_flux = m_dot / bundle.minimum_free_flow_area
+        points.append(FinnedTubeHydraulicPoint(
+            position=position, temperature=temperatures[index], pressure=pressure,
+            props=props, enthalpy=enthalpies[index], face_mass_flux=face_flux,
+            face_velocity=face_flux/props.rho, reference_area=bundle.minimum_free_flow_area,
+            reference_mass_flux=reference_flux, reference_velocity=reference_flux/props.rho,
+            reynolds_number=reference_flux*state.reference_diameter_value/props.mu,
+            coefficient=state.coefficient if index == 1 else math.nan,
+            coefficient_definition=state.coefficient_definition,
+            local_dp_drag=state.bank_delta_p if index == 1 else math.nan,
+            metadata=state.metadata, warnings=state.warnings,
+        ))
+    dp_acceleration = points[2].face_mass_flux**2/points[2].rho - points[0].face_mass_flux**2/points[0].rho
+    dp_total = state.bank_delta_p + dp_acceleration
+    if not math.isfinite(dp_acceleration) or not math.isfinite(dp_total):
+        raise ValueError("Finned-tube bank pressure change must be finite.")
+    if dp_total < 0.0:
+        warnings.append(make_warning(
+            code="finned_tube_bank_hydraulics_negative_total_pressure_change",
+            source="finned_tube_bank_hydraulics",
+            message="Signed finned-tube bank pressure change represents net recovery after bank drag.",
+        ))
+    return FinnedTubeBankHydraulicResult(
+        inlet=points[0], midpoint=points[1], outlet=points[2], midpoint_method=midpoint_method,
+        coefficient_definition=state.coefficient_definition,
+        face_area=bundle.frontal_flow_area, face_mass_flux=m_dot/bundle.frontal_flow_area,
+        reference_area=bundle.minimum_free_flow_area, reference_mass_flux=m_dot/bundle.minimum_free_flow_area,
+        reference_diameter=state.reference_diameter_value, n_rows_effective=bundle.n_rows,
+        mean_coefficient_over_rho=state.coefficient/properties[1].rho,
+        dp_drag=state.bank_delta_p, dp_acceleration=dp_acceleration, dp_total=dp_total,
+        metadata=state.metadata, warnings=_deduplicate_warnings(warnings), native_result=state,
+    )
+
+
 finned_tube_pressure_drop_from_mass_flow = calculate_finned_tube_pressure_drop
 finned_tube_bank_hydraulics = calculate_finned_tube_bank_hydraulics
 
@@ -741,6 +873,9 @@ def _request_from_bundle(
     tube: CircularFinnedTube,
     props: FluidTransportProperties,
     fluid_family: str,
+    temperature_in: float | None = None,
+    temperature_out: float | None = None,
+    strict_source_domain: bool = False,
 ) -> FinnedTubePressureDropRequest:
     return FinnedTubePressureDropRequest(
         m_dot=m_dot,
@@ -758,14 +893,31 @@ def _request_from_bundle(
         layout=bundle.layout.lower(),
         n_rows=bundle.n_rows,
         fluid_family=fluid_family,
+        tube_outer_diameter=tube.D_o,
+        temperature_in=temperature_in,
+        temperature_out=temperature_out,
+        strict_source_domain=strict_source_domain,
     )
 
 
 def _resolve_pressure_drop_provider(
     provider: str | FinnedTubePressureDropProvider,
+    *, layout: str,
 ) -> FinnedTubePressureDropProvider:
     if isinstance(provider, str):
         name = provider.strip().lower().replace("-", "_")
+        if name == "auto":
+            name = "frass_inline_solid_fin_191" if layout == "inline" else "robinson_briggs_1966"
+        if name == "frass_inline_solid_fin_191":
+            from core.pressure_drop.frass_inline import FrassInlineSolidFinPressureDropProvider
+            return FrassInlineSolidFinPressureDropProvider()
+        if name in ("genic2006_staggered", "genic2006_inline"):
+            from core.pressure_drop.genic2006 import (
+                Genic2006StaggeredPressureDropProvider,
+                Genic2006InlinePressureDropProvider,
+            )
+            return (Genic2006StaggeredPressureDropProvider() if name.endswith("staggered")
+                    else Genic2006InlinePressureDropProvider())
         if name in (
             "robinson_briggs",
             "robinson_briggs_1966",
@@ -774,7 +926,8 @@ def _resolve_pressure_drop_provider(
             return RobinsonBriggs1966Provider()
         raise ValueError(
             f"Unknown finned-tube pressure-drop provider '{provider}'. "
-            "Supported built-in provider: 'robinson_briggs_1966'."
+            "Supported built-ins: 'auto', 'robinson_briggs_1966', 'frass_inline_solid_fin_191', "
+            "'genic2006_staggered', 'genic2006_inline'."
         )
     if not isinstance(provider, FinnedTubePressureDropProvider):
         raise TypeError(
@@ -1048,6 +1201,8 @@ __all__ = [
     "FinnedTubeHydraulicPoint",
     "FinnedTubeBankHydraulicResult",
     "ROBINSON_BRIGGS_COEFFICIENT_BASIS",
+    "FRASS_INLINE_XI_COEFFICIENT_BASIS",
+    "GENIC_2006_XI_COEFFICIENT_BASIS",
     "ROBINSON_BRIGGS_1966_APPLICABILITY",
     "ROBINSON_BRIGGS_1966_METADATA",
     "evaluate_finned_tube_pressure_drop",

@@ -383,6 +383,7 @@ def _public_simulation(
         m_dot_inlet=outside.m_dot,
         m_dot_midpoint=md * (1 + wm),
         m_dot_outlet=md * (1 + wo),
+        strict_source_domain=hx.strict_source_domain,
     )
     bank = replace(bank, midpoint_method="arithmetic_temperature_and_water_ratio")
     # Only hydraulics are retained from the legacy snapshot. Thermal

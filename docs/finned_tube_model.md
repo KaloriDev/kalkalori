@@ -24,10 +24,23 @@ the fractional count `length_effective / fin_pitch`; it does not round the
 number of fins and therefore does not introduce area jumps when tube length
 changes.
 
-The implemented empirical correlations cover staggered equilateral triangular
-banks.
-`TubeBundle(layout="inline")` remains valid public geometry, but the built-in
-Briggs--Young and Robinson--Briggs providers reject it as unsupported.
+The original paired empirical correlations cover staggered equilateral
+triangular banks. v0.9.4 adds an [INLINE ESCOA thermal
+provider](inline_round_finned_thermal.md), including coupled mean fin temperature
+and explicit source uncertainty. Briggs--Young and Robinson--Briggs retain their
+INLINE rejection. The later [native-xi Frass hydraulic provider](inline_round_finned_hydraulics.md)
+supports conditional non-strict INLINE Rating/Simulation with explicit
+normalization/loss-scope qualifications and separate acceleration/local losses.
+v0.9.4 also adds an [explicit ESCOA STAGGERED thermal
+alternative](staggered_round_finned_thermal.md). STAGGERED AUTO remains
+Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
+Robinson–Briggs. See [release integration validation](validation/v094_release_validation.md)
+for the final provider matrix and public regression coverage.
+
+[Explicit Genić 2006 hydraulic alternatives](genic2006_finned_hydraulics.md)
+support constant-thickness round solid fins with at least five rows. They
+use their own equivalent diameter and native Eq.(15) loss basis. The existing
+thermal and hydraulic AUTO policy remains unchanged.
 
 Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
 frost/ice; acid or multiple-species condensation; condensate retention,
@@ -672,8 +685,8 @@ does not silently substitute the inlet state.
 
 Provider results report method/source, geometry family, velocity and
 Reynolds bases, reference diameter, area and row bases, applicability ranges
-and structured warnings. The built-in models reject bare tubes, inline
-banks, materially isosceles banks and geometry-family mismatches rather than
+and structured warnings. Briggs--Young and Robinson--Briggs reject bare tubes,
+inline banks, materially isosceles banks and geometry-family mismatches rather than
 falling back to a smooth-tube model. Robinson--Briggs pressure loss also
 rejects banks with fewer than four rows. Briggs--Young heat transfer instead
 calculates every positive row count and reports the dedicated extrapolation

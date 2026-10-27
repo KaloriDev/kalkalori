@@ -5,6 +5,50 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.4] — INLINE round-finned support and explicit ESCOA STAGGERED
+
+- Added optional explicit `genic2006_staggered` and `genic2006_inline` hydraulic
+  providers with native equivalent-diameter and bank-loss bases, domain checks
+  and calibration-coverage diagnostics. Genić does not change AUTO. The
+  original raw calibration data were not recovered; independent public access
+  to the complete reconstruction remains unverified. See the
+  [Genić guide](docs/genic2006_finned_hydraulics.md).
+- Added explicitly selected `FrassEscoaStaggeredSolidFinProvider`, reproducing
+  ESCOA solid-fin Eqs.(60)–(62) from Frass's legal secondary source, including
+  the squared row term. It shares qualified property/geometry mechanics and
+  mean-fin-temperature coupling with INLINE while retaining separate factors.
+  Staggered AUTO remains Briggs–Young; hydraulics are unchanged by this addition.
+- Added `FrassEscoaInlineSolidFinProvider`, implementing the ESCOA 1979 INLINE
+  solid-fin Eqs. (96)-(98) from Frass's legally accessible 2015 reproduction.
+  Automatic circular-finned thermal dispatch selects it for INLINE banks;
+  staggered Briggs-Young equations and applicability remain unchanged.
+- Coupled physical film HTC to mean fin temperature using the existing annular
+  fin model and contact/fouling resistance network. Fin efficiency remains a
+  separate operation after physical film HTC.
+- Added explicit supplied-property engineering convention, unresolved-source-range
+  diagnostics, strict-domain rejection and the source's single-row caveat.
+- Continuous root layers use the explicitly qualified gas-facing root-diameter
+  engineering mapping in non-strict mode; the metal core diameter and full
+  conduction/contact topology remain separate and auditable.
+- Linear fin taper uses an explicitly qualified arithmetic-mean thickness for
+  ESCOA thermal empirical terms, preserving actual area, blockage and fin conduction.
+- Added native-xi `FrassInlineSolidFinPressureDropProvider` (Eq.191), evaluated
+  at mean gas state with Eq.190 row treatment for 2..8 rows, explicit Kz=1
+  convention above eight, and one-row rejection. Automatic hydraulic dispatch
+  selects Frass for INLINE and unchanged Robinson-Briggs for staggered banks.
+- Heated normalization is explicitly NOT_APPLIED; partial normalization/loss
+  provenance is diagnosed under the accepted non-strict engineering policy.
+  Strict mode rejects unresolved required conditions. Acceleration and external
+  losses stay separate; no internal Robinson-Briggs conversion is used.
+- Original private ECO Rating/Simulation targets completed using the new providers.
+  Version updated after implementation, case validation and public regressions
+  completed under the explicit conditional engineering policy.
+
+See [the INLINE thermal guide](docs/inline_round_finned_thermal.md).
+See [the native INLINE hydraulic guide](docs/inline_round_finned_hydraulics.md).
+See [the explicit ESCOA STAGGERED guide](docs/staggered_round_finned_thermal.md)
+and [final release validation](docs/validation/v094_release_validation.md).
+
 ## [0.9.3] — Chakroun–Al-Fahed laminar twisted tape
 
 - Added public Chakroun–Al-Fahed 1995 laminar twisted-tape provider with
