@@ -56,6 +56,11 @@ Briggs–Young; hydraulic selection and applicability guards remain unchanged.
 See the [v0.9.4 release validation](docs/validation/v094_release_validation.md)
 for the final provider matrix, public regression coverage and release qualifications.
 
+Optional [Genić 2006 solid-fin hydraulic providers](docs/genic2006_finned_hydraulics.md)
+are explicitly selectable with `genic2006_staggered` and `genic2006_inline`.
+They retain their native equivalent-diameter and pressure-drop basis, with
+source-domain and calibration-coverage diagnostics. AUTO remains unchanged.
+
 The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
 supports paired laminar liquid heat transfer and distributed friction using
 actual tape-width blockage and coupled wall viscosity, with source-domain

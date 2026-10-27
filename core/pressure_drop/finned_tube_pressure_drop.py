@@ -32,6 +32,7 @@ FinnedTubeHydraulicPosition = Literal["inlet", "midpoint", "outlet"]
 FinnedTubePressureCoefficientBasis = Literal[
     "delta_p/(2*n_rows*rho*V_max^2)",
     "2*delta_p_row/(rho_mean*w_E^2)",
+    "2*delta_p*d_e/(n_rows*Pl*rho*w_min^2)",
 ]
 
 ROBINSON_BRIGGS_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
@@ -40,6 +41,10 @@ ROBINSON_BRIGGS_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
 
 FRASS_INLINE_XI_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
     "2*delta_p_row/(rho_mean*w_E^2)"
+)
+
+GENIC_2006_XI_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
+    "2*delta_p*d_e/(n_rows*Pl*rho*w_min^2)"
 )
 
 
@@ -222,7 +227,9 @@ class FinnedTubePressureDropResult:
 
     @property
     def xi(self) -> float:
-        return self.coefficient if self.coefficient_basis == FRASS_INLINE_XI_COEFFICIENT_BASIS else math.nan
+        return self.coefficient if self.coefficient_basis in (
+            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+        ) else math.nan
 
     @property
     def Kz(self) -> float:
@@ -505,7 +512,9 @@ class FinnedTubeHydraulicPoint:
 
     @property
     def f(self) -> float:
-        return math.nan if self.metadata.coefficient_basis == FRASS_INLINE_XI_COEFFICIENT_BASIS else self.coefficient
+        return math.nan if self.metadata.coefficient_basis in (
+            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+        ) else self.coefficient
 
     @property
     def dynamic_pressure_reference(self) -> float:
@@ -557,7 +566,9 @@ class FinnedTubeBankHydraulicResult:
 
     @property
     def mean_f_over_rho(self) -> float:
-        return math.nan if self.metadata.coefficient_basis == FRASS_INLINE_XI_COEFFICIENT_BASIS else self.mean_coefficient_over_rho
+        return math.nan if self.metadata.coefficient_basis in (
+            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+        ) else self.mean_coefficient_over_rho
 
 
 def calculate_finned_tube_bank_hydraulics(
@@ -808,8 +819,10 @@ def _mean_state_bank_hydraulics(
         fluid_family=fluid_family, temperature_in=temperatures[0],
         temperature_out=temperatures[2], strict_source_domain=strict_source_domain,
     ))
-    if state.coefficient_basis != FRASS_INLINE_XI_COEFFICIENT_BASIS:
-        raise ValueError("Mean-state native provider must return the explicit per-row xi basis.")
+    if state.coefficient_basis not in (
+        FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
+    ):
+        raise ValueError("Mean-state native provider must return a supported explicit native xi basis.")
     warnings = [*warnings, *state.warnings]
     points = []
     for index, position in enumerate(("inlet", "midpoint", "outlet")):
@@ -898,6 +911,13 @@ def _resolve_pressure_drop_provider(
         if name == "frass_inline_solid_fin_191":
             from core.pressure_drop.frass_inline import FrassInlineSolidFinPressureDropProvider
             return FrassInlineSolidFinPressureDropProvider()
+        if name in ("genic2006_staggered", "genic2006_inline"):
+            from core.pressure_drop.genic2006 import (
+                Genic2006StaggeredPressureDropProvider,
+                Genic2006InlinePressureDropProvider,
+            )
+            return (Genic2006StaggeredPressureDropProvider() if name.endswith("staggered")
+                    else Genic2006InlinePressureDropProvider())
         if name in (
             "robinson_briggs",
             "robinson_briggs_1966",
@@ -906,7 +926,8 @@ def _resolve_pressure_drop_provider(
             return RobinsonBriggs1966Provider()
         raise ValueError(
             f"Unknown finned-tube pressure-drop provider '{provider}'. "
-            "Supported built-ins: 'auto', 'robinson_briggs_1966', 'frass_inline_solid_fin_191'."
+            "Supported built-ins: 'auto', 'robinson_briggs_1966', 'frass_inline_solid_fin_191', "
+            "'genic2006_staggered', 'genic2006_inline'."
         )
     if not isinstance(provider, FinnedTubePressureDropProvider):
         raise TypeError(
@@ -1181,6 +1202,7 @@ __all__ = [
     "FinnedTubeBankHydraulicResult",
     "ROBINSON_BRIGGS_COEFFICIENT_BASIS",
     "FRASS_INLINE_XI_COEFFICIENT_BASIS",
+    "GENIC_2006_XI_COEFFICIENT_BASIS",
     "ROBINSON_BRIGGS_1966_APPLICABILITY",
     "ROBINSON_BRIGGS_1966_METADATA",
     "evaluate_finned_tube_pressure_drop",

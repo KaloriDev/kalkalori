@@ -41,6 +41,7 @@ from core.heat_transfer.outside_flow import (
 )
 from core.pressure_drop.finned_tube_pressure_drop import (
     FRASS_INLINE_XI_COEFFICIENT_BASIS,
+    GENIC_2006_XI_COEFFICIENT_BASIS,
     FinnedTubeBankHydraulicResult,
     FinnedTubeHydraulicPoint,
     FinnedTubePressureDropProvider,
@@ -351,7 +352,8 @@ class FinnedTubeDiagnostics:
 
     @property
     def f(self) -> float:
-        return (math.nan if getattr(self.pressure_drop_metadata, "coefficient_basis", None) == FRASS_INLINE_XI_COEFFICIENT_BASIS
+        return (math.nan if getattr(self.pressure_drop_metadata, "coefficient_basis", None) in (
+                    FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS)
                 else self.pressure_drop_coefficient)
 
     @property
@@ -463,7 +465,13 @@ def evaluate_outside_thermal(
 
     _reject_bare_provider_on_finned(euler_provider)
     from core.pressure_drop.frass_inline import FrassInlineSolidFinPressureDropProvider
-    if isinstance(finned_heat_transfer_provider, (RobinsonBriggs1966Provider, FrassInlineSolidFinPressureDropProvider)):
+    from core.pressure_drop.genic2006 import (
+        Genic2006InlinePressureDropProvider, Genic2006StaggeredPressureDropProvider,
+    )
+    if isinstance(finned_heat_transfer_provider, (
+        RobinsonBriggs1966Provider, FrassInlineSolidFinPressureDropProvider,
+        Genic2006InlinePressureDropProvider, Genic2006StaggeredPressureDropProvider,
+    )):
         raise IncompatibleOutsideCorrelationProviderError(
             f"{type(finned_heat_transfer_provider).__name__} is a finned pressure-drop provider, "
             "not a finned heat-transfer provider."

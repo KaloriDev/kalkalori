@@ -260,12 +260,14 @@ explicit only and changes neither Briggs–Young AUTO nor hydraulics.
   DOI: `10.1080/01457639108939746`.
 
 The Genić DOI above corrects the commonly repeated but incorrect
-`10.1016/j.applthermaleng.2005.06.020`. It is used only as a comparative
-validation reference. ESDU 86022 may likewise be used externally for
+`10.1016/j.applthermaleng.2005.06.020`. It is now implemented as an
+[explicit optional hydraulic model](genic2006_finned_hydraulics.md); equation
+definitions are closed, calibration provenance is partial, and original raw
+calibration data were not recovered. ESDU 86022 may be used externally for
 validation; no closed ESDU tables, data or code are included in the GPL core.
-Schmidt, VDI, Genić and Nir were reviewed as extended-surface or comparative
-references; their correlations are not blended into the two implemented
-Briggs--Young/Robinson--Briggs empirical models.
+Schmidt, VDI and Nir remain extended-surface or comparative references.
+Genić is explicit only; no blending or change to Briggs--Young,
+Robinson--Briggs or Frass AUTO selection is introduced.
 
 The Briggs--Young source experiments used six-row banks, while later
 references recommend applying the correlation to banks with at least four

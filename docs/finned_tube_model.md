@@ -37,6 +37,11 @@ Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
 Robinson–Briggs. See [release integration validation](validation/v094_release_validation.md)
 for the final provider matrix and public regression coverage.
 
+[Explicit Genić 2006 hydraulic alternatives](genic2006_finned_hydraulics.md)
+support constant-thickness round solid fins with at least five rows. They
+use their own equivalent diameter and native Eq.(15) loss basis. The existing
+thermal and hydraulic AUTO policy remains unchanged.
+
 Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
 frost/ice; acid or multiple-species condensation; condensate retention,
 flooding, bridging, re-evaporation, carry-over or re-entrainment; drainage

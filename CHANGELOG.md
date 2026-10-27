@@ -7,6 +7,12 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [0.9.4] — INLINE round-finned support and explicit ESCOA STAGGERED
 
+- Added optional explicit `genic2006_staggered` and `genic2006_inline` hydraulic
+  providers with native equivalent-diameter and bank-loss bases, domain checks
+  and calibration-coverage diagnostics. Genić does not change AUTO. The
+  original raw calibration data were not recovered; independent public access
+  to the complete reconstruction remains unverified. See the
+  [Genić guide](docs/genic2006_finned_hydraulics.md).
 - Added explicitly selected `FrassEscoaStaggeredSolidFinProvider`, reproducing
   ESCOA solid-fin Eqs.(60)–(62) from Frass's legal secondary source, including
   the squared row term. It shares qualified property/geometry mechanics and

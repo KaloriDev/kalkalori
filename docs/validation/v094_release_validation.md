@@ -7,10 +7,10 @@ visible and strict source-domain mode continues to reject them.
 
 ## Provider policy
 
-| Round solid-fin bank | Thermal AUTO | Explicit thermal alternative | Hydraulic AUTO |
-| --- | --- | --- | --- |
-| INLINE | `FrassEscoaInlineSolidFinProvider` | Same provider, `frass_escoa_inline_solid_fin` | `FrassInlineSolidFinPressureDropProvider` |
-| STAGGERED | `BriggsYoung1963Provider` | `FrassEscoaStaggeredSolidFinProvider`, `frass_escoa_staggered_solid_fin` | `RobinsonBriggs1966Provider` |
+| Round solid-fin bank | Thermal AUTO | Explicit thermal alternative | Hydraulic AUTO | Explicit hydraulic alternative |
+| --- | --- | --- | --- | --- |
+| INLINE | `FrassEscoaInlineSolidFinProvider` | Same provider, `frass_escoa_inline_solid_fin` | `FrassInlineSolidFinPressureDropProvider` | `Genic2006InlinePressureDropProvider` |
+| STAGGERED | `BriggsYoung1963Provider` | `FrassEscoaStaggeredSolidFinProvider`, `frass_escoa_staggered_solid_fin` | `RobinsonBriggs1966Provider` | `Genic2006StaggeredPressureDropProvider` |
 
 The STAGGERED ESCOA addition does not change AUTO. Briggs–Young and
 Robinson–Briggs retain their equations and source/geometry/layout guards.
@@ -30,7 +30,31 @@ Kz=1 remains an explicit engineering asymptotic convention. One row is
 rejected. Eq.143 is not applied. Acceleration and external losses remain
 separate; no internal conversion to Robinson–Briggs is introduced.
 
-## Complete public regression coverage
+The two [Genić 2006 hydraulics alternatives](../genic2006_finned_hydraulics.md)
+are explicit only, with native equivalent-diameter Reynolds number and loss
+basis, not blended or fitted to either AUTO provider. The supplied equation
+reconstruction is closed; calibration provenance is partial, raw calibration
+data were not recovered, and complete independently reproducible public source
+access remains unverified. These are separate provenance and source-policy
+questions. INLINE retains its open Reynolds interval and calibration-geometry
+warning. Constant thickness and five or more rows are required.
+
+## Final regression after Genić integration
+
+The complete public collection was rerun after the optional Genić providers
+and the documented STAGGERED Reynolds-domain guard were added. The four-worker
+partition passed **2,326** tests; the two unchanged inverse-area deadline tests
+then passed serially. The disjoint reports cover all **2,328** collected IDs:
+2,328 passed, zero failed, skipped, xfailed or missing. Code and test hashes
+were unchanged throughout the run.
+
+The 0.9.4 wheel was built from a clean snapshot of the public source because the
+local ignored build directory contained stale files. The wheel's Python files
+match the working source, and its contents exclude private case files, source
+PDFs and temporary diagnostic outputs. Isolated wheel imports and Genić
+numerical smoke tests passed. Private user files remain ignored and untouched.
+
+## Historical public regression coverage before Genić
 
 The frozen collection contains **2,263 unique public test IDs**.
 The complete suite was partitioned using the established four-worker
