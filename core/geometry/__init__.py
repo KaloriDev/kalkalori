@@ -19,10 +19,11 @@ from .finned_tube import (
 )
 from .elliptical_tube import EllipticalTube
 from .serrated_finned_tube import SerratedCircularFinnedTube, SerratedFinPhysicsNotSupportedError
-from .serrated_flow_area import SerratedFlowAreaBasis, SerratedFlowAreaProvider
+from .serrated_flow_area import SerratedFlowAreaBasis, SerratedFlowAreaProvider, Holfeld2016SerratedFlowAreaProvider
 from .rectangular_finned_tube import RectangularIndividualFin, RectangularFinnedEllipticalTube
 from .applicability import TubeGeometryApplicabilityError
 from .bundle import TubeBundle, TubePathType, RowParityMode
+from .serrated_source import HolfeldSerratedSourceGeometry, SerratedTubeBankRequest, SerratedSourceDomainError
 
 from .pressure_drop_stages import (
     FlowSectionShape,
@@ -64,6 +65,10 @@ __all__ = [
     "SerratedFinPhysicsNotSupportedError",
     "SerratedFlowAreaBasis",
     "SerratedFlowAreaProvider",
+    "Holfeld2016SerratedFlowAreaProvider",
+    "HolfeldSerratedSourceGeometry",
+    "SerratedTubeBankRequest",
+    "SerratedSourceDomainError",
     "TubeOrientation",
     "TubeSurfaceType",
     "TubeCrossSectionFamily",

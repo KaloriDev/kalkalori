@@ -244,3 +244,12 @@ __all__ += [
     'EllipticalNumericalWallResult', 'EllipticalWallConvergence',
     'WallConductionConvergenceError', 'elliptical_wall_solution',
 ]
+
+from .serrated_fin_efficiency import HashizumeSerratedFinEfficiencyProvider, SerratedFinEfficiencyResult
+from .serrated_holfeld import Holfeld2016SerratedStaggeredHeatTransferProvider
+from .serrated_airside import Holfeld2016SerratedStaggeredModel
+
+__all__ += [
+    "HashizumeSerratedFinEfficiencyProvider", "SerratedFinEfficiencyResult",
+    "Holfeld2016SerratedStaggeredHeatTransferProvider", "Holfeld2016SerratedStaggeredModel",
+]

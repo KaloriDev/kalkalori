@@ -1,8 +1,15 @@
-# Serrated helical fins: v0.9.5 Phase A
+# Serrated helical fins: v0.9.5 Phases A and B
 
-**Phase A is a geometry/API foundation.** It supplies volume, fin mass and
-external geometric area, with engineering-derivation provenance. It does not
-enable physical serrated Rating/Simulation.
+**STAGGERED: explicit source-bounded execution is available. AUTO: unavailable.
+INLINE: incomplete, no complete Rating/Simulation. SHIFTED: unsupported.**
+
+Phase A supplies volume, fin mass and external geometric area, with engineering
+derivation provenance. Phase B adds separate Holfeld source-equivalent flow
+area, Hashizume serrated efficiency, and Holfeld physical-film HTC/native-Eu
+pressure loss. Only an explicit compatible complete profile opens execution.
+The source-equivalent surface used for physics is distinct from the unchanged
+Phase A geometric surface. Independent matched hydraulic validation remains
+incomplete; see the [Phase B validation record](validation/serrated_physics_v095.md).
 
 ## Supported geometry and API
 
@@ -144,36 +151,133 @@ no formula was adjusted to match rounded audit values. The reference and
 geometric invariants are executable in
 `core/tests/serrated_finned_tube_geometry_test.py`.
 
-## Physical execution and future providers
+## Phase B: explicit source-bounded execution
 
-`TubeSurfaceType.SERRATED_HELICAL_FIN` routes separately. All automatic
-outside-bank entry points, direct solid-fin HTC/pressure adapters, annular
-fin-efficiency functions, physical UA networks and Rating/Simulation reject
-serrated geometry with `SerratedFinPhysicsNotSupportedError`. This also
-applies to zero-depth serrated objects and supplied-film attempts. Users who
-intend a solid fin must explicitly construct a solid-fin geometry.
+`TubeSurfaceType.SERRATED_HELICAL_FIN` has a distinct route. Select the complete
+profile through the existing `airside_model` argument:
 
-Phase A implements **no serrated A_min, fin efficiency, HTC or pressure-drop
-model**. Actual 3D flow through serration gaps, source-specific area bases
-and serrated conduction remain unresolved. Neither a mass ratio nor an area
-ratio supplies a hydraulic free-area law. Annular Bessel efficiency,
-Briggs-Young, Robinson-Briggs, Frass/ESCOA solid-fin and Genic solid-fin
-providers are never substituted. There is no constant serration multiplier,
-RB correction or Frass correction.
+```python
+from core.geometry import BareTube, SerratedCircularFinnedTube, TubeBundle
+from core.heat_transfer import Holfeld2016SerratedStaggeredModel
+from core.models.bare_tube import BareTubeHeatExchanger
 
-The typed future boundaries are:
+tube = SerratedCircularFinnedTube(
+    core_tube=BareTube(.025, .03175, 2.0, 2.0, 45.0),
+    fin_k=45.0, D_root=.03175, D_fin=.06775,
+    fin_thickness_root=.001, fin_pitch=1/277,
+    serration_depth=.011, kerf_width_at_tip=0.0,
+    segments_per_turn=32, fin_density_material=7850.0,
+)
+bank = TubeBundle(tube, 8, 8, .06975, .0604052719139646,
+                  "staggered", 1, flow_arrangement="counterflow")
+model = Holfeld2016SerratedStaggeredModel(source_segment_width=.0045)
+hx = BareTubeHeatExchanger(bank, airside_model=model, strict_source_domain=True)
+# hx.rate(...), hx.simulate(...), hx.solve_thermal_state(...)
+```
 
-- `core.geometry.SerratedFlowAreaProvider`, with explicit provider/source
-  provenance and one of `SerratedFlowAreaBasis`'s three distinct bases:
-  orthographic geometric blockage, source-equivalent flow area or hydraulic
-  provider-specific A_min. No implementation is registered. Orthographic
-  blocked area is not interchangeable with either open-area definition.
-- `core.heat_transfer.serrated_fin_efficiency.SerratedFinEfficiencyProvider`,
-  for future fin-area-based conduction efficiency with provider/source
-  provenance, before the shared contact network is applied.
-- Existing outside thermal/hydraulic request/result and Rating/Simulation
-  contracts, extended later with source-closed serrated providers through
-  the distinct surface route. No such execution is enabled in Phase A.
+The profile itself is the explicit selector. The generic finned-provider
+arguments retain their default sentinel values; supplying a solid/bare selector
+alongside the profile raises an incompatibility error. No string selector or
+provider is registered with AUTO. Omitting `airside_model`, using an incomplete
+component set, or requesting a solid-fin adapter still raises
+`SerratedFinPhysicsNotSupportedError`, including for zero serration depth.
+An explicit solid tube object is required for solid-fin physics.
+
+The individual implementations remain public and inspectable:
+
+| Component | Class | Source |
+| --- | --- | --- |
+| Flow area | `Holfeld2016SerratedFlowAreaProvider` | Eq. 5-9 |
+| Serrated efficiency | `HashizumeSerratedFinEfficiencyProvider` | 1997 two-region theory; 2002 STAGGERED correction |
+| Physical film HTC | `Holfeld2016SerratedStaggeredHeatTransferProvider` | Eq. 6-6 |
+| Bank-section loss | `Holfeld2016SerratedStaggeredPressureDropProvider` | Eqs. 6-10, 4-8 |
+
+The low-level HTC and DP classes consume a `SerratedTubeBankRequest` and return
+the normal `FinnedTubeHeatTransferResult` / `FinnedTubePressureDropResult`.
+These requests are separate from solid-fin requests. The profile exposes each
+component as a named field and rejects missing/incompatible fields.
+
+### Geometry and area contracts
+
+`source_segment_width` is the physical rectangular strip-segment width [m].
+It is required independently of Phase A's derived outer-radius tip arc width.
+Neither width is rounded into a segment count. The native strip interpretation
+and Phase A radial-sector idealization are different reference models; no exact
+manufacturer CAD correspondence is claimed between them.
+
+Initially the physical profile requires `D_root` equal to bare core OD,
+zero removed kerf, constant thickness, no twist, and ideal HF-welded I-foot
+contact. Geometry with finite kerf or a continuous root layer still works for
+Phase A quantities but has no source-closed Phase B mapping. Nonideal contact,
+fouling, wet gas, condensation, and phase-capable property-provider routes are
+rejected. Dry-air transport properties are the source calibration contract;
+constant/custom point properties are a caller assertion of that contract.
+Single-phase liquid tube-side transport can be supplied independently.
+
+Holfeld `sf` is **fin pitch**, not clear spacing. `Nf=1/fin_pitch` is turns/m.
+The source flow area is:
+
+```text
+A_min_source = length_effective * transverse_flow_cells
+             * (Pt - do - 2*Nf*hf*tf)
+Vmax = mdot/(rho*A_min_source)
+Re = mdot*do/(A_min_source*mu)
+```
+
+Its basis is `SOURCE_EQUIVALENT_FLOW_AREA`, exposed with `flow_area_source=
+HOLFELD_2016`. It is not an orthographic blockage result, a mass-ratio correction
+or a surface-area correction. Bundle geometry's automatic `minimum_free_flow_area`
+property remains guarded; source providers supply the explicit area instead.
+
+Holfeld Eqs. 2-17/2-19 supply the native `Ar` and source surface area. The
+resistance network uses native primary and fin areas with physical film h:
+`G_out = h*(A_primary_source + eta_corrected*A_fin_source)`. Eta enters once.
+`area_outside_gross`/reported `A_o` use that source reference;
+`area_outside_geometric` retains the Phase A geometric area. Native area can
+be smaller than the geometric radial-sector area; no geometry override occurs.
+
+Hashizume's theory couples a continuous annular root to straight segmented
+fins with insulated tips/sides. Its theoretical denominator counts broad faces.
+The empirical correction supplies physical-fin-area-based eta, including the
+effects excluded by that theory. The implementation uses the explicit 2002
+STAGGERED restatement because the 2000 main equation and its appendix disagree
+on a symbol. Corrected mean eta does not define a corrected temperature field:
+tip temperature and full fin-skin extrema remain unavailable. The ideal weld
+base/core temperatures remain available. These outputs cannot support wet
+onset calculations.
+
+### Domain and pressure convention
+
+Every component is guarded; complete execution uses their **intersection**,
+even when the generic engine's `strict_source_domain` flag is false. The
+complete Re interval is `[5000,50000)`, with at least four longitudinal rows;
+the source reports no upper row count. Additional dimensional and ratio bounds
+are machine-readable, including `df/do` 1.80–2.15, `hs/hf` .50–.86 in the
+intersection, `hs/ws<=2.60`, `m*hf<=2.5`, `Pt/Pl<2`, and layout angle <45°.
+Passing these few examples of bounds does not replace all the other checks.
+Unknown source bounds remain explicit diagnostics. No row correction is added.
+
+Failures identify `FLOW_AREA`, `HT`, `DP`, `ETA` or `PROFILE`. Where available,
+preceding component statuses are retained, for example `HT_DOMAIN=PASS`,
+`DP_DOMAIN=PASS`, `ETA_DOMAIN=FAIL`.
+
+Pressure loss stays on Holfeld's native `Eu=2*dp/(Nl*rho*Vmax^2)` basis.
+`dp_drag=Eu*Nl*rho*Vmax^2/2` uses one mean-temperature evaluation and mean
+endpoint density. It is not converted through RB, Darcy/Fanning, Frass or
+Genic coefficients; their `f`/`xi` aliases remain unavailable (NaN).
+The correlated quantity is the adiabatic measured bundle-section pressure
+difference treated as friction by the source after neglecting approximately
+1% acceleration. Exact tap distances and an empty-channel subtraction are
+unreported; it is not an isolated skin-friction measurement. No extra inlet/exit
+loss coefficients are added. Signed acceleration uses face-area momentum
+change separately, and `dp_total=dp_drag+dp_acceleration`.
+
+Source equations, units, area/velocity/property/row mappings, access status,
+symbol discrepancies and numerical fixture provenance are in the
+[source mapping](validation/serrated_source_mapping_v095.md). Source-reported
+regression coverage is metadata, not a prediction-uncertainty guarantee.
+Kawaguchi remains validation-only; the qualified HTC equation comparison and
+unresolved hydraulic comparison are recorded in the validation report.
 
 Geometry provenance is directly inspectable:
 `geometry_model=IDEALIZED_RADIAL_SECTOR_CUT`,
@@ -184,5 +288,5 @@ diagnostics include `SERRATED_IDEALIZED_RADIAL_SECTOR_CUT`. Public tests
 verify guards and unchanged solid routes; they establish implementation
 consistency, not empirical validation.
 
-See [the Phase A validation record](validation/serrated_geometry_v095.md)
-for the complete public-suite result and exact branch base.
+See the historical [Phase A validation record](validation/serrated_geometry_v095.md)
+and current [Phase B validation record](validation/serrated_physics_v095.md).

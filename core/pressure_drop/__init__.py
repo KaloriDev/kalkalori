@@ -244,3 +244,8 @@ __all__ = [
     "calculate_tube_side_pressure_drop_path",
     "calculate_outside_pressure_drop_path",
 ]
+
+from .serrated_holfeld import Holfeld2016SerratedStaggeredPressureDropProvider
+from .finned_tube_pressure_drop import HOLFELD_2016_EU_COEFFICIENT_BASIS
+
+__all__ += ["Holfeld2016SerratedStaggeredPressureDropProvider", "HOLFELD_2016_EU_COEFFICIENT_BASIS"]

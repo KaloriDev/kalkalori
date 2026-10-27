@@ -682,10 +682,13 @@ class BareTubeHeatExchanger:
             raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
         self.bundle = bundle
         from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel
+        from core.heat_transfer.serrated_airside import Holfeld2016SerratedStaggeredModel
         from core.heat_transfer.internal_model_contract import EllipticalFlowAssumptions
         from core.heat_transfer.wall_conduction import TubeWallModel
-        if airside_model is not None and not isinstance(airside_model,Zhao2017AirsideModel):
-            raise TypeError('airside_model must be Zhao2017AirsideModel or None.')
+        if airside_model is not None and not isinstance(airside_model,(Zhao2017AirsideModel,Holfeld2016SerratedStaggeredModel)):
+            raise TypeError('airside_model must be Zhao2017AirsideModel, Holfeld2016SerratedStaggeredModel or None.')
+        if isinstance(airside_model, Holfeld2016SerratedStaggeredModel):
+            airside_model.validate_bundle(bundle)
         if elliptical_flow_assumptions is not None and not isinstance(elliptical_flow_assumptions,EllipticalFlowAssumptions):
             raise TypeError('elliptical_flow_assumptions must be EllipticalFlowAssumptions or None.')
         from core.geometry.tube import TubeCrossSectionFamily
@@ -829,7 +832,9 @@ class BareTubeHeatExchanger:
     ) -> HXResult:
         # Use the arrangement resolved from bundle circuiting if not provided.
         from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.serrated_airside import guard_serrated_execution
+        guard_serrated_execution(self, inside_provider=tube_side_provider, outside_provider=outside_provider)
         uses_bundle_flow_arrangement = flow_arrangement is None
         topology_warnings = (
             self.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -842,7 +847,8 @@ class BareTubeHeatExchanger:
 
         # --- Areas (effective) ---
         A_i = self.bundle.total_inner_area
-        A_o = self.bundle.total_outer_area
+        from core.heat_transfer.outside_dispatch import outside_reference_area
+        A_o = outside_reference_area(self.bundle, self.airside_model)
         A_frontal = self.bundle.frontal_flow_area
 
         # --------------------------------------------------------------
@@ -1098,6 +1104,8 @@ class BareTubeHeatExchanger:
             resistance_core_wall=R_w,
             fouling_resistance_inside=self.fouling_resistance_inside,
             fouling_resistance_outside=self.fouling_resistance_outside,
+            airside_model=self.airside_model,
+            outside_thermal_result=outside_thermal_dispatch,
         )
         # Generic exchanger-facing alfa is referenced to authoritative gross
         # outside area and reconstructs the complete outside resistance.  For
@@ -1422,7 +1430,9 @@ class BareTubeHeatExchanger:
         effect for a call where neither side is phase-change capable.
         """
         from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.serrated_airside import guard_serrated_execution
+        guard_serrated_execution(self, inside_provider=inside.provider, outside_provider=outside.provider)
         from core.models.simulation import run_simulation
         from core.phase_change.integration import PhaseChangeSettings, apply_phase_change
         self = self._for_enhancement_call(tube_side_enhancement, enhancement_operation_context)
@@ -1706,7 +1716,9 @@ class BareTubeHeatExchanger:
         ``core.phase_change.steam_integration.apply_water_steam_rating``.
         """
         from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.serrated_airside import guard_serrated_execution
+        guard_serrated_execution(self, inside_provider=inside.provider, outside_provider=outside.provider)
         from core.phase_change.rating_integration import apply_phase_change_to_rating
         from core.phase_change.integration import PhaseChangeSettings
 
@@ -1855,7 +1867,9 @@ class BareTubeHeatExchanger:
         for the full algorithm, convergence controls and result fields.
         """
         from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics')
+        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.serrated_airside import guard_serrated_execution
+        guard_serrated_execution(self, inside_provider=inside_provider, outside_provider=outside_provider)
         from core.heat_transfer.thermal_iteration import solve_iterative_thermal_state
 
         return solve_iterative_thermal_state(

@@ -34,6 +34,7 @@ FinnedTubePressureCoefficientBasis = Literal[
     "delta_p/(2*n_rows*rho*V_max^2)",
     "2*delta_p_row/(rho_mean*w_E^2)",
     "2*delta_p*d_e/(n_rows*Pl*rho*w_min^2)",
+    "2*delta_p/(n_rows*rho*u_max^2)",
 ]
 
 ROBINSON_BRIGGS_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
@@ -46,6 +47,10 @@ FRASS_INLINE_XI_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
 
 GENIC_2006_XI_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
     "2*delta_p*d_e/(n_rows*Pl*rho*w_min^2)"
+)
+
+HOLFELD_2016_EU_COEFFICIENT_BASIS: FinnedTubePressureCoefficientBasis = (
+    "2*delta_p/(n_rows*rho*u_max^2)"
 )
 
 
@@ -225,6 +230,10 @@ class FinnedTubePressureDropResult:
     @property
     def f(self) -> float:
         return self.coefficient if self.coefficient_basis == ROBINSON_BRIGGS_COEFFICIENT_BASIS else math.nan
+
+    @property
+    def eu(self) -> float:
+        return self.coefficient if self.coefficient_basis == HOLFELD_2016_EU_COEFFICIENT_BASIS else math.nan
 
     @property
     def xi(self) -> float:
@@ -513,9 +522,11 @@ class FinnedTubeHydraulicPoint:
 
     @property
     def f(self) -> float:
-        return math.nan if self.metadata.coefficient_basis in (
-            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
-        ) else self.coefficient
+        return self.coefficient if self.metadata.coefficient_basis == ROBINSON_BRIGGS_COEFFICIENT_BASIS else math.nan
+
+    @property
+    def eu(self) -> float:
+        return self.coefficient if self.metadata.coefficient_basis == HOLFELD_2016_EU_COEFFICIENT_BASIS else math.nan
 
     @property
     def dynamic_pressure_reference(self) -> float:
@@ -567,9 +578,7 @@ class FinnedTubeBankHydraulicResult:
 
     @property
     def mean_f_over_rho(self) -> float:
-        return math.nan if self.metadata.coefficient_basis in (
-            FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
-        ) else self.mean_coefficient_over_rho
+        return self.mean_coefficient_over_rho if self.metadata.coefficient_basis == ROBINSON_BRIGGS_COEFFICIENT_BASIS else math.nan
 
 
 def calculate_finned_tube_bank_hydraulics(
@@ -1205,6 +1214,7 @@ __all__ = [
     "ROBINSON_BRIGGS_COEFFICIENT_BASIS",
     "FRASS_INLINE_XI_COEFFICIENT_BASIS",
     "GENIC_2006_XI_COEFFICIENT_BASIS",
+    "HOLFELD_2016_EU_COEFFICIENT_BASIS",
     "ROBINSON_BRIGGS_1966_APPLICABILITY",
     "ROBINSON_BRIGGS_1966_METADATA",
     "evaluate_finned_tube_pressure_drop",

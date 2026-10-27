@@ -15,16 +15,16 @@ from core.geometry.tube import BaseTube, BareTube, TubeCrossSectionFamily, TubeS
 
 
 class SerratedFinPhysicsNotSupportedError(NotImplementedError):
-    """Phase A supplies geometry, but no source-closed serrated physics."""
+    """The requested route lacks an explicit compatible serrated model."""
 
 
 def reject_serrated_physics(tube: BaseTube, operation: str) -> None:
     """Guard physical entry points, including explicitly selected solid models."""
     if getattr(tube, "surface_type", None) is TubeSurfaceType.SERRATED_HELICAL_FIN:
         raise SerratedFinPhysicsNotSupportedError(
-            f"{operation}: serrated fins support geometry only in v0.9.5 Phase A. "
-            "Serrated A_min, fin efficiency, HTC and pressure-drop providers are "
-            "unavailable/not source-closed; no solid-fin fallback is permitted."
+            f"{operation}: serrated fins support geometry only without an explicit "
+            "complete Phase B profile. Serrated A_min, fin efficiency, HTC and pressure-drop "
+            "providers must all be selected compatibly; no solid-fin fallback is permitted."
         )
 
 

@@ -558,7 +558,7 @@ def run_rating(
     infeasible once condensation is considered.
     """
     from core.geometry.applicability import require_automatic_outside_bank
-    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=hx.airside_model)
     uses_bundle_flow_arrangement = flow_arrangement is None
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()
@@ -570,6 +570,8 @@ def run_rating(
     from core.enhancements.integration import guard_side
     guard_side(hx.tube_side_enhancement, inside)
     outside = closed_balance.outside
+    from core.heat_transfer.serrated_airside import guard_serrated_execution
+    guard_serrated_execution(hx, inside_provider=inside.provider, outside_provider=outside.provider)
     hot_is_inside = closed_balance.hot_is_inside
 
     T_mean_inside = 0.5 * (inside.T_in + inside.T_out)
