@@ -24,6 +24,7 @@ from .rectangular_finned_tube import RectangularIndividualFin, RectangularFinned
 from .applicability import TubeGeometryApplicabilityError
 from .bundle import TubeBundle, TubePathType, RowParityMode
 from .serrated_source import HolfeldSerratedSourceGeometry, SerratedTubeBankRequest, SerratedSourceDomainError
+from .lattice import LayoutClass, TubeBankLattice
 
 from .pressure_drop_stages import (
     FlowSectionShape,
@@ -75,6 +76,8 @@ __all__ = [
     "TubeGeometry",
     "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
     "TubeBundle",
+    "LayoutClass",
+    "TubeBankLattice",
     "TubePathType",
     "RowParityMode",
 

@@ -226,7 +226,8 @@ def test_geometric_area_source_provenance_and_bundle_areas():
 
 
 @pytest.mark.parametrize("layout,changes", [
-    ("inline", {"pitch_transverse": .05}), ("inline", {"pitch_longitudinal": .05}),
+    ("staggered", {"pitch_transverse": .05}),
+    ("staggered", {"pitch_transverse": .12, "pitch_longitudinal": .025}),
     ("staggered", {"pitch_longitudinal": .02}),
 ])
 def test_bundle_retains_physical_fin_envelope_clearance(layout, changes):

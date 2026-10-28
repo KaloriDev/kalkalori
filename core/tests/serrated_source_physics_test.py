@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from scipy.integrate import solve_bvp, quad
 
-from core.geometry import BareTube, SerratedCircularFinnedTube, TubeBundle
+from core.geometry import BareTube, SerratedCircularFinnedTube, TubeBundle, TubeBankLattice
 from core.geometry.serrated_flow_area import Holfeld2016SerratedFlowAreaProvider, SerratedFlowAreaBasis
 from core.geometry.serrated_source import (
     HolfeldSerratedSourceGeometry, SerratedTubeBankRequest, SerratedSourceDomainError,
@@ -397,8 +397,11 @@ def test_temperature_dependent_hydraulic_properties_use_arithmetic_temperature()
 
 @pytest.mark.parametrize("api",["thermal_state","rating","simulation"])
 @pytest.mark.parametrize("mode",[PhaseChangeMode.DISABLED,PhaseChangeMode.AUTO])
-def test_explicit_complete_profile_executes_public_workflows(api,mode):
+@pytest.mark.parametrize("explicit_lattice", [False, True])
+def test_explicit_complete_profile_executes_public_workflows(api,mode,explicit_lattice):
     b = source_bank()
+    if explicit_lattice:
+        b = replace(b, layout="inline", lattice=TubeBankLattice("conventional_staggered"))
     model = Holfeld2016SerratedStaggeredModel(WS)
     hx = BareTubeHeatExchanger(b,airside_model=model)
     inside = ConstantPropertyProvider(FluidTransportProperties(900.,.0005,.6,4000.))
@@ -438,9 +441,10 @@ def test_incomplete_or_solid_component_sets_reject(field):
 
 @pytest.mark.parametrize("layout,rows",[("inline",8),("staggered",1),("staggered",2),("staggered",3)])
 def test_explicit_profile_rejects_layout_and_shallow_rows(layout,rows):
-    with pytest.raises(SerratedSourceDomainError,match="PROFILE_DOMAIN_FAIL"):
+    pattern = "layout" if layout == "inline" else "PROFILE_DOMAIN_FAIL"
+    with pytest.raises(ValueError,match=pattern):
         BareTubeHeatExchanger(source_bank(layout=layout,n_rows=rows,
-            **({"pitch_longitudinal":.07} if layout == "inline" else {})),
+            **({"lattice":TubeBankLattice("inline")} if layout == "inline" else {})),
             airside_model=Holfeld2016SerratedStaggeredModel(WS))
 
 

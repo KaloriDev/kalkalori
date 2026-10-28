@@ -415,6 +415,14 @@ class HXSimulationResult:
     LMTD_countercurrent: float | None = None
     F_equivalent: float | None = None
 
+    # Original solver inputs stored verbatim so reporting/post-processing
+    # can recover m_dot, p, and provider without repeating the solve.
+    # ``None`` only for results constructed directly via ``HXSimulationResult``
+    # without going through ``BareTubeHeatExchanger.simulate`` (e.g. unit
+    # tests that construct minimal result objects).
+    inside_input: "HXSideInput | None" = field(default=None, repr=False, compare=False)
+    outside_input: "HXSideInput | None" = field(default=None, repr=False, compare=False)
+
     @property
     def ua_margin(self) -> float:
         """Exact alias of the canonical result margin."""
@@ -1147,6 +1155,8 @@ def run_simulation(
             thermal_state=thermal_state,
             wall_temperature_envelope=envelope,
             warnings=warnings_list if warnings_list else None,
+            inside_input=inside,
+            outside_input=outside,
         )
 
     # --- iterate=False: explicit uncorrected single-pass escape hatch -------

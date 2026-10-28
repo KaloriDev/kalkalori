@@ -199,6 +199,15 @@ remain unchanged. See [implementation validation](validation/zhao2017_v092.md).
 
 ## Zhao 2017: equations and evidence grades
 
+The [2026-10-27 lattice audit](validation/zhao_layout_audit_2026-10-27.md)
+distinguishes conventional whole-row STAGGERED from per-site SHIFTED. Zhao
+rejects SHIFTED (including unresolved phases) and INLINE in both domain modes.
+Recovered Zhao2017 Fig. 2 and Zhao2016 Fig. 1 resolve the source identities:
+Pt is transverse, Pl follows flow, and there is no Pt/Pl swap. The audit gives
+the ROW/COLUMN coordinates and the legacy coordinate-helper indexing caveat.
+YC SHIFTED uses the user-confirmed Zhao COLUMN design basis; the named COLUMN
+preset retains SHIFTED identity and does not enable Zhao2017 coefficients.
+
 Zhao, Gu, Gao, Yang (2017), *Numerical study on airside thermal-hydraulic
 performance of rectangular finned elliptical tube heat exchanger with large
 row number in turbulent flow regime*, IJHMT 114, 1314–1330,

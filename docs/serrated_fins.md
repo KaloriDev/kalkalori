@@ -1,7 +1,7 @@
 # Serrated helical fins: v0.9.5 Phases A and B
 
 **STAGGERED: explicit source-bounded execution is available. AUTO: unavailable.
-INLINE: incomplete, no complete Rating/Simulation. SHIFTED: unsupported.**
+INLINE and SHIFTED: rejected at bundle construction.**
 
 Phase A supplies volume, fin mass and external geometric area, with engineering
 derivation provenance. Phase B adds separate Holfeld source-equivalent flow
@@ -17,7 +17,11 @@ incomplete; see the [Phase B validation record](validation/serrated_physics_v095
 constant-thickness, untwisted, high-frequency welded I-foot fin. The helical
 winding is idealized as periodic annuli with radial-sector cuts. The model
 is dry geometry; U-foot, L-foot, tapered serrated fins, twisted/deformed
-segments and SHIFTED banks are unsupported.
+segments, INLINE banks and SHIFTED banks are unsupported. A serrated
+`TubeBundle` requires `CONVENTIONAL_STAGGERED`; the legacy `staggered` spelling
+maps to that identity. An explicit `TubeBankLattice` is authoritative over the
+legacy label, so changing physical layout with `dataclasses.replace` requires
+changing or clearing the lattice as well.
 
 ```python
 from core.geometry import BareTube, SerratedCircularFinnedTube
@@ -85,8 +89,8 @@ n = slits_per_turn                   beta = kerf_width_at_tip/r1
 
 Construction requires `0 <= ds <= H`, `n*beta < 2*pi`, positive finite
 dimensions/material properties, `r1 > r0 >= core_tube.D_o/2 > 0`, and
-`pf > t > 0`. The bundle retains the existing full fin-envelope clearance
-checks for inline and staggered arrangements.
+`pf > t > 0`. The bundle retains full fin-envelope clearance checks for the
+supported conventional staggered arrangement.
 
 Integrating thickness over the annulus and the removed sectors gives:
 

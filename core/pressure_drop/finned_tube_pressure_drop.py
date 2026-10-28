@@ -914,6 +914,8 @@ def _resolve_pressure_drop_provider(
     provider: str | FinnedTubePressureDropProvider,
     *, layout: str,
 ) -> FinnedTubePressureDropProvider:
+    if layout not in ('inline', 'staggered'):
+        raise ValueError('SHIFTED/unknown lattice has no conventional finned-tube pressure provider.')
     if isinstance(provider, str):
         name = provider.strip().lower().replace("-", "_")
         if name == "auto":

@@ -684,6 +684,8 @@ def _public_simulation(
         ua_reporting_basis=UA_REPORTING_BASIS,
         ua_is_equivalent=True,
         wet_coil_diagnostics=d,
+        inside_input=inside,
+        outside_input=outside,
     )
 
 

@@ -986,6 +986,8 @@ def _simulation_from_solution(
         warnings=warnings,
         inside_phase_change=steam_result,
         outside_phase_change=outside_result,
+        inside_input=inside,
+        outside_input=outside,
     )
 
 

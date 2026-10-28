@@ -6,7 +6,7 @@ import pytest
 
 from core.geometry import (
     BareTube, SerratedCircularFinnedTube, SerratedFinPhysicsNotSupportedError,
-    SerratedFlowAreaBasis, TubeBundle, TubeSurfaceType,
+    SerratedFlowAreaBasis, TubeBundle, TubeSurfaceType, TubeBankLattice, LayoutClass,
 )
 from core.heat_transfer.fin_efficiency import annular_fin_efficiency, overall_surface_efficiency
 from core.heat_transfer.finned_tube_outside import calculate_finned_tube_outside_heat_transfer
@@ -44,12 +44,11 @@ def test_distinct_surface_and_future_flow_area_bases():
     assert SerratedFlowAreaBasis.HYDRAULIC_PROVIDER_SPECIFIC_A_MIN.value == "hydraulic_provider_specific_A_min"
 
 
-@pytest.mark.parametrize("layout", ["inline", "staggered"])
 @pytest.mark.parametrize("depth", [0., .007])
 @pytest.mark.parametrize("selector", ["auto", "briggs_young_1963",
     "frass_escoa_inline_solid_fin", "frass_escoa_staggered_solid_fin"])
-def test_no_solid_htc_fallback(layout, depth, selector):
-    b = bank(layout, depth)
+def test_no_solid_htc_fallback(depth, selector):
+    b = bank(depth=depth)
     for calculate in (
         lambda: calculate_finned_tube_outside_heat_transfer(1., b, PROPS, provider=selector),
         lambda: evaluate_outside_thermal(bundle=b, m_dot=1., props=PROPS, finned_heat_transfer_provider=selector),
@@ -58,11 +57,10 @@ def test_no_solid_htc_fallback(layout, depth, selector):
             calculate()
 
 
-@pytest.mark.parametrize("layout", ["inline", "staggered"])
 @pytest.mark.parametrize("selector", ["auto", "robinson_briggs_1966", "frass_inline_solid_fin_191",
                                      "genic2006_staggered", "genic2006_inline"])
-def test_no_solid_hydraulic_fallback(layout, selector):
-    b = bank(layout)
+def test_no_solid_hydraulic_fallback(selector):
+    b = bank()
     for calculate in (
         lambda: calculate_finned_tube_pressure_drop(1., b, PROPS, provider=selector),
         lambda: calculate_finned_tube_bank_hydraulics(1., b, inlet_props=PROPS, midpoint_props=PROPS,
@@ -94,11 +92,10 @@ def test_fin_efficiency_and_ua_rejected_even_with_supplied_film_coefficient():
             calculate()
 
 
-@pytest.mark.parametrize("layout", ["inline", "staggered"])
 @pytest.mark.parametrize("api", ["solve", "thermal_state", "rating", "simulation"])
 @pytest.mark.parametrize("mode", [PhaseChangeMode.DISABLED, PhaseChangeMode.AUTO])
-def test_public_workflows_cannot_bypass_unavailable_serrated_physics(layout, api, mode):
-    hx = BareTubeHeatExchanger(bank(layout))
+def test_public_workflows_cannot_bypass_unavailable_serrated_physics(api, mode):
+    hx = BareTubeHeatExchanger(bank())
     outside = ConstantPropertyProvider(PROPS)
     inside = ConstantPropertyProvider(FluidTransportProperties(rho=900., mu=.0005, k=.6, cp=4000.))
     with pytest.raises(SerratedFinPhysicsNotSupportedError, match="geometry only"):
@@ -129,6 +126,30 @@ def test_direct_rating_simulation_entry_points_reject_before_execution():
         run_simulation(hx, i, o)
 
 
-def test_shifted_layout_is_not_introduced():
+@pytest.mark.parametrize("layout", ["inline", "shifted"])
+def test_unsupported_serrated_layout_is_rejected_at_construction(layout):
     with pytest.raises(ValueError, match="layout"):
-        replace(bank(), layout="shifted")
+        replace(bank(), layout=layout, lattice=TubeBankLattice(layout))
+
+
+@pytest.mark.parametrize("legacy", ["inline", "staggered", "shifted"])
+@pytest.mark.parametrize("kind", ["inline", "shifted", "zhao_column"])
+def test_explicit_unsupported_lattice_cannot_use_a_stale_legacy_label(legacy, kind):
+    b = bank()
+    lattice = (TubeBankLattice.zhao2016_staggered_column(
+        pitch_transverse=b.pitch_transverse, row_counts=(3,)*4)
+        if kind == "zhao_column" else TubeBankLattice(kind))
+    with pytest.raises(ValueError, match="CONVENTIONAL_STAGGERED"):
+        replace(b, layout=legacy, lattice=lattice)
+
+
+@pytest.mark.parametrize("legacy", ["inline", "staggered", "shifted"])
+def test_explicit_conventional_lattice_is_authoritative(legacy):
+    b = replace(bank(), layout=legacy, lattice=TubeBankLattice(LayoutClass.CONVENTIONAL_STAGGERED))
+    assert b.layout == "staggered"
+    assert b.tube_bank_lattice.layout_class == LayoutClass.CONVENTIONAL_STAGGERED
+    # A label-only replacement cannot change the explicit physical lattice.
+    assert replace(b, layout="inline").layout == "staggered"
+    for kind in ("inline", "shifted"):
+        with pytest.raises(ValueError, match="layout"):
+            replace(b, lattice=TubeBankLattice(kind))
