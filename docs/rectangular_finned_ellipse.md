@@ -199,6 +199,13 @@ remain unchanged. See [implementation validation](validation/zhao2017_v092.md).
 
 ## Zhao 2017: equations and evidence grades
 
+The [2026-10-27 lattice audit](validation/zhao_layout_audit_2026-10-27.md)
+distinguishes conventional whole-row STAGGERED from per-site SHIFTED. Zhao
+rejects SHIFTED (including unresolved phases) and INLINE in both domain modes.
+The implemented lattice signature is explicit; equivalence to the original
+Zhao row/column figures and source Pt/Pl axes remains unresolved. A passing
+parameter-domain check does not certify those missing source details.
+
 Zhao, Gu, Gao, Yang (2017), *Numerical study on airside thermal-hydraulic
 performance of rectangular finned elliptical tube heat exchanger with large
 row number in turbulent flow regime*, IJHMT 114, 1314–1330,

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from core.common.warnings import ModelWarning
 from core.geometry.bundle import TubeBundle
+from core.geometry.applicability import TubeGeometryApplicabilityError
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
 from core.geometry.tube import TubeSurfaceType
@@ -1143,6 +1144,8 @@ def _reject_finned_provider_on_plain(
 
 
 def _bare_reference_velocity_ratio(bundle: TubeBundle) -> float:
+    if bundle.layout.lower() == 'shifted':
+        raise TubeGeometryApplicabilityError('SHIFTED has no automatic outside HTC/pressure provider.')
     from core.geometry.applicability import require_circular_tube
     require_circular_tube(bundle.tube, 'Automatic outside bank HTC/pressure drop')
     diameter = float(getattr(bundle.tube, "D_o"))

@@ -12,12 +12,16 @@ import math
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.applicability import TubeGeometryApplicabilityError
 from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
+from core.geometry.lattice import LayoutClass
 from core.heat_transfer.airside_correction import AirsideCorrection, AirsideCorrectionProvider
 
 
 ZHAO2017_CITATION = (
     'Zhao, Gu, Gao, Yang (2017), IJHMT 114, 1314-1330; '
     'doi:10.1016/j.ijheatmasstransfer.2017.06.049')
+ZHAO2017_IMPLEMENTED_LATTICE = 'conventional_staggered:whole_row_half_pitch:x=flow,y=transverse'
+# The retained source package does not establish row/column figure equivalence.
+ZHAO2017_SOURCE_LATTICE_GRADE = 'UNRESOLVED_ORIGINAL_FIGURE;ENGINEERING_CONVENTION_IMPLEMENTED'
 ZHAO2017_DOMAIN = (
     ('Xt', .93, 1.50), ('Xl', .56, .78), ('Xp', .10, .52),
     ('Xf', .01, .03), ('Re', 5500., 23800.), ('N', 6., 10.))
@@ -112,6 +116,9 @@ def validate_zhao2017_geometry(bundle):
     core, fin = tube.core_tube, tube.fin
     if not math.isclose(math.remainder(core.orientation_angle, math.pi), 0., abs_tol=1e-12):
         raise TubeGeometryApplicabilityError('Zhao2017 reconstruction requires major axis parallel to flow.')
+    if bundle.tube_bank_lattice.layout_class != LayoutClass.CONVENTIONAL_STAGGERED:
+        raise TubeGeometryApplicabilityError(
+            'Zhao2017 requires its conventional whole-row staggered lattice; INLINE and SHIFTED are unsupported, including unresolved phases.')
     Dl, Dt = 2*core.outer_semi_major_axis, 2*core.outer_semi_minor_axis
     Pt, Pl = bundle.pitch_transverse, bundle.pitch_longitudinal
     fin_streamwise_extent, fin_transverse_extent = fin.outer_height, fin.outer_width
@@ -183,6 +190,8 @@ class Zhao2017AirsideResult:
     pressure_model: str = 'zhao2017_source_normalization_reconstructed'
     validated_bank_irreversible: bool = False
     fin_turbulator_count: int = 0
+    implemented_lattice: str = ZHAO2017_IMPLEMENTED_LATTICE
+    source_lattice_grade: str = ZHAO2017_SOURCE_LATTICE_GRADE
 
     @property
     def correction_applied(self) -> bool:
@@ -191,7 +200,11 @@ class Zhao2017AirsideResult:
 
     @property
     def within_source_domain(self):
-        """Source ratios/nominal envelope, with the explicit simplified-fin caveat."""
+        """Legacy ratio/envelope check, not certification of original source lattice.
+
+        See source_lattice_grade: original row/column figure equivalence is
+        unresolved even when all retained transcription intervals pass.
+        """
         return not self.extrapolated_parameters
 
 

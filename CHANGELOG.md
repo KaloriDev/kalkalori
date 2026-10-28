@@ -5,6 +5,16 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [Unreleased]
+
+- Added tube-section-independent `TubeBankLattice` identities and explicit
+  per-site SHIFTED offsets, with unresolved phase represented without invented
+  coordinates. Legacy INLINE/STAGGERED numerical behavior is preserved.
+- Reject SHIFTED in conventional automatic HTC/pressure paths and restrict
+  Zhao to its implemented whole-row stagger convention. Original Zhao figure
+  equivalence and Pt/Pl mapping remain unresolved; equations are unchanged.
+  See the [layout audit](docs/validation/zhao_layout_audit_2026-10-27.md).
+
 ## [0.9.4] — INLINE round-finned support and explicit ESCOA STAGGERED
 
 - Added optional explicit `genic2006_staggered` and `genic2006_inline` hydraulic

@@ -26,6 +26,7 @@ import math
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.tube import BaseTube
+from core.geometry.lattice import LayoutClass, TubeBankLattice
 
 
 def _deterministic_nearest_step(value: float, step: float) -> float:
@@ -125,7 +126,11 @@ class TubeBundle:
     pitch_longitudinal : float
         Longitudinal pitch [m] (tube spacing in flow direction).
     layout : str
-        "inline" or "staggered" (used later for refined outside correlations).
+        "inline", "staggered" (conventional whole-row half-pitch shift), or
+        "shifted" (per-site topology, unresolved unless offsets are supplied).
+    lattice : TubeBankLattice | None
+        Optional explicit physical identity, authoritative over legacy layout.
+        SHIFTED has geometry support but no automatic HTC/pressure provider.
     n_passes_tube : int
         Number of tube-side passes (biegów).
     flow_arrangement : str
@@ -194,6 +199,7 @@ class TubeBundle:
     tube_path_type: TubePathType = TubePathType.STRAIGHT
     n_passes_transverse: int | None = None
     row_parity_mode: RowParityMode = RowParityMode.RESET
+    lattice: TubeBankLattice | None = field(default=None, kw_only=True)
     _tube_count_normalization_warning: ModelWarning | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -218,8 +224,17 @@ class TubeBundle:
             )
         if isinstance(self.n_passes_tube, bool) or not isinstance(self.n_passes_tube, int) or self.n_passes_tube <= 0:
             raise ValueError("n_passes_tube must be a positive integer.")
-        if self.layout.lower() not in ("inline", "staggered"):
-            raise ValueError("layout must be 'inline' or 'staggered'.")
+        if self.lattice is not None:
+            if not isinstance(self.lattice, TubeBankLattice):
+                raise TypeError('lattice must be a TubeBankLattice.')
+            # Explicit physical identity is authoritative over stale legacy labels.
+            object.__setattr__(self, 'layout', self.lattice.legacy_layout)
+        if not isinstance(self.layout, str) or self.layout.lower() not in ("inline", "staggered", "conventional_staggered", "shifted"):
+            raise ValueError("layout must be 'inline', 'staggered' or 'shifted'.")
+        if self.layout.lower() == 'conventional_staggered':
+            object.__setattr__(self, 'layout', 'staggered')
+        if self.layout.lower() == 'shifted' and not float(self.n_tubes_per_row).is_integer():
+            raise ValueError('SHIFTED requires an explicit integer site count per row; no conventional row-count inference.')
 
         self._normalize_n_tubes_per_row()
 
@@ -259,7 +274,25 @@ class TubeBundle:
                 )
 
         if isinstance(self.tube, CircularFinnedTube):
-            self._validate_circular_fin_clearance()
+            if self.tube_bank_lattice.layout_class != LayoutClass.SHIFTED:
+                self._validate_circular_fin_clearance()
+        if self.lattice is not None and self.lattice.site_offsets is not None:
+            self.tube_center_coordinates
+
+    @property
+    def tube_bank_lattice(self) -> TubeBankLattice:
+        """Canonical topology; legacy layout changes via replace remain supported."""
+        return self.lattice if self.lattice is not None else TubeBankLattice.from_legacy(self.layout)
+
+    @property
+    def tube_center_coordinates(self):
+        """Physical rows in flow coordinates, including legacy section parity."""
+        phases = tuple(j % (self.n_rows // self.n_sections_longitudinal)
+            if self.row_parity_mode == RowParityMode.RESET and self.rows_partition_is_exact else j
+            for j in range(self.n_rows))
+        counts = tuple(self.n_tubes_per_row_odd if j % 2 == 0 else self.n_tubes_per_row_even for j in phases)
+        return self.tube_bank_lattice.coordinates(pitch_transverse=self.pitch_transverse,
+            pitch_longitudinal=self.pitch_longitudinal, row_counts=counts, row_phases=phases)
 
     def _normalize_n_tubes_per_row(self) -> None:
         """Normalize the sole ``n_tubes_per_row`` input (v0.7.10).
@@ -676,6 +709,10 @@ class TubeBundle:
 
     @property
     def minimum_free_flow_gap(self) -> float:
+        # __post_init__ canonicalizes explicit lattice identity into layout.
+        # Keep legacy round-bank hot paths free of lattice allocations.
+        if self.layout.lower() == 'shifted':
+            raise ValueError('SHIFTED has no conventional minimum-gap/velocity model.')
         from core.geometry.applicability import require_circular_tube
         require_circular_tube(self.tube, 'Circular-bank minimum gap/reference velocity')
         if self.layout.lower() == "inline":
