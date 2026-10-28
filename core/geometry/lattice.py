@@ -56,6 +56,26 @@ class TubeBankLattice:
     def from_legacy(cls, layout):
         return cls('conventional_staggered' if layout.lower() == 'staggered' else layout.lower())
 
+    @classmethod
+    def zhao2016_staggered_column(cls, *, pitch_transverse, row_counts):
+        """Fig. 1(b), DOI 10.11908/j.issn.0253-374x.2016.02.020.
+
+        x follows flow; y is transverse. With the first downstream column
+        unshifted, alternating columns have y offset Pt/2. ``row_counts``
+        uses API downstream-row indexing, not the paper's arrangement name.
+        Source identity does not grant applicability of Zhao2017 coefficients.
+        """
+        counts = tuple(row_counts)
+        if not counts or any(isinstance(n, bool) or not isinstance(n, int) or n <= 0 for n in counts):
+            raise ValueError('row_counts must contain positive integers.')
+        if isinstance(pitch_transverse, bool) or not math.isfinite(pitch_transverse) or pitch_transverse <= 0:
+            raise ValueError('pitch_transverse must be positive and finite.')
+        return cls(LayoutClass.SHIFTED,
+            pattern='ZHAO2016_STAGGERED_COLUMN_FIG1B',
+            phase='j0_unshifted;odd_j_plus_Pt/2', nominal_offset=pitch_transverse/2,
+            site_offsets=tuple(tuple((0., (j % 2)*pitch_transverse/2) for _ in range(n))
+                for j, n in enumerate(counts)))
+
     @property
     def legacy_layout(self):
         return 'staggered' if self.layout_class == LayoutClass.CONVENTIONAL_STAGGERED else self.layout_class.value

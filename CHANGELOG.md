@@ -11,8 +11,11 @@ The project follows **Semantic Versioning (SemVer)**:
   per-site SHIFTED offsets, with unresolved phase represented without invented
   coordinates. Legacy INLINE/STAGGERED numerical behavior is preserved.
 - Reject SHIFTED in conventional automatic HTC/pressure paths and restrict
-  Zhao to its implemented whole-row stagger convention. Original Zhao figure
-  equivalence and Pt/Pl mapping remain unresolved; equations are unchanged.
+  Zhao to its conventional-staggered source family. Recovered source figures
+  resolve Pt/Pl and ROW/COLUMN coordinates; a named Zhao2016 COLUMN preset
+  records SHIFTED geometry without enabling Zhao2017 coefficients. The audit
+  distinguishes source coordinates from legacy helper indexing. Equations
+  and coefficients are unchanged.
   See the [layout audit](docs/validation/zhao_layout_audit_2026-10-27.md).
 
 ## [0.9.4] — INLINE round-finned support and explicit ESCOA STAGGERED

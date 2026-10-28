@@ -20,8 +20,9 @@ ZHAO2017_CITATION = (
     'Zhao, Gu, Gao, Yang (2017), IJHMT 114, 1314-1330; '
     'doi:10.1016/j.ijheatmasstransfer.2017.06.049')
 ZHAO2017_IMPLEMENTED_LATTICE = 'conventional_staggered:whole_row_half_pitch:x=flow,y=transverse'
-# The retained source package does not establish row/column figure equivalence.
-ZHAO2017_SOURCE_LATTICE_GRADE = 'UNRESOLVED_ORIGINAL_FIGURE;ENGINEERING_CONVENTION_IMPLEMENTED'
+# Recovered Fig. 2 resolves the lattice and Pt/Pl axes; normalization below
+# remains a separately graded engineering reconstruction.
+ZHAO2017_SOURCE_LATTICE_GRADE = 'SOURCE_EXACT:ZHAO2017_FIG2;Pt=TRANSVERSE;Pl=LONGITUDINAL'
 ZHAO2017_DOMAIN = (
     ('Xt', .93, 1.50), ('Xl', .56, .78), ('Xp', .10, .52),
     ('Xf', .01, .03), ('Re', 5500., 23800.), ('N', 6., 10.))
@@ -200,10 +201,11 @@ class Zhao2017AirsideResult:
 
     @property
     def within_source_domain(self):
-        """Legacy ratio/envelope check, not certification of original source lattice.
+        """Ratio/envelope check within the conventional-staggered provider.
 
-        See source_lattice_grade: original row/column figure equivalence is
-        unresolved even when all retained transcription intervals pass.
+        Source lattice/axes are resolved separately in source_lattice_grade.
+        Passing this check does not validate engineering flow normalization
+        or extend applicability to staggered-column / SHIFTED geometry.
         """
         return not self.extrapolated_parameters
 
