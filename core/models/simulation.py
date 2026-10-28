@@ -820,7 +820,9 @@ def run_simulation(
     before computing duty/outlet temperatures; see the module docstring.
     """
     from core.geometry.applicability import require_automatic_outside_bank
-    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=hx.airside_model)
+    from core.heat_transfer.serrated_airside import guard_serrated_execution
+    guard_serrated_execution(hx, inside_provider=inside.provider, outside_provider=outside.provider)
     uses_bundle_flow_arrangement = flow_arrangement is None
     topology_warnings = (
         hx.bundle.topology_warnings if uses_bundle_flow_arrangement else ()

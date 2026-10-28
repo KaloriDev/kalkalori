@@ -408,7 +408,9 @@ def _evaluate_local_wall_state(
 ) -> _LocalWallEvaluation:
     """Evaluate correlations and the resistance split at one fixed bulk pair."""
     from core.geometry.applicability import require_automatic_outside_bank
-    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics')
+    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=hx.airside_model)
+    from core.heat_transfer.serrated_airside import guard_serrated_execution
+    guard_serrated_execution(hx, inside_provider=inside_provider, outside_provider=outside_provider)
     from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 
     bundle = hx.bundle
@@ -510,6 +512,8 @@ def _evaluate_local_wall_state(
         resistance_core_wall=hx.tube_wall_resistance(),
         fouling_resistance_inside=hx.fouling_resistance_inside,
         fouling_resistance_outside=hx.fouling_resistance_outside,
+        airside_model=hx.airside_model,
+        outside_thermal_result=outside_dispatch,
     )
     alfa_o_effective_gross = network.outside_alpha_effective_gross
     heat_rate = (
@@ -531,7 +535,14 @@ def _evaluate_local_wall_state(
     )
     primary_surface = fin_base = fin_tip = fin_tip_ratio = None
     skin_min = skin_max = outside_wall_temperature_value
-    if network.fin_efficiency_result is not None:
+    if (network.fin_efficiency_result is not None
+            and network.fin_efficiency_result.tip_temperature_ratio is None):
+        # Mean eta closes heat flow, not the corrected temperature field.
+        # Ideal weld base is known; skin/tip extrema stay unavailable.
+        primary_surface = fin_base = outside_wall_temperature_value
+        skin_min = skin_max = math.nan
+    if (network.fin_efficiency_result is not None
+            and network.fin_efficiency_result.tip_temperature_ratio is not None):
         primary_surface, fin_base, fin_tip, skin_min, skin_max = fin_surface_temperatures(
             network=network,
             outside_wall_temperature=outside_wall_temperature_value,
@@ -860,7 +871,8 @@ def solve_iterative_thermal_state(
     flow_arrangement = resolve_thermal_topology(hx.bundle, flow_arrangement)
 
     bundle = hx.bundle
-    A_o = bundle.total_outer_area
+    from core.heat_transfer.outside_dispatch import outside_reference_area
+    A_o = outside_reference_area(bundle, hx.airside_model)
     hot_is_inside = T_in_inside >= T_in_outside
 
     def _evaluate(

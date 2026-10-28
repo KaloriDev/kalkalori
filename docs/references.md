@@ -6,6 +6,14 @@ property libraries as implementation references.
 This document lists the main references used by the current computational core.
 Short reference notes are also included directly in the relevant source files.
 
+The v0.9.5 [serrated source mapping](validation/serrated_source_mapping_v095.md)
+records original-page definitions from Holfeld's freely accessible NTNU thesis
+and the Hashizume/Kawaguchi J-STAGE originals. Hashizume's 2002 STAGGERED
+restatement resolves a printed-symbol discrepancy in the 2000 main equation.
+These mathematical implementations are independent GPL-3.0-only code; no
+copyrighted source PDFs, figures, prose or complete data tables are distributed.
+The J-STAGE papers are free access with JSME copyright; no CC licence is asserted.
+
 The v0.9.4 inline round-finned correlations have a separate
 [forensic source reconstruction](validation/inline_round_finned_source_audit_v094.md),
 including the ITE evidence matrix and a conditional ESCOA thermal recommendation.

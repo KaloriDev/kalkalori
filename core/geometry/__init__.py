@@ -18,9 +18,12 @@ from .finned_tube import (
     EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD,
 )
 from .elliptical_tube import EllipticalTube
+from .serrated_finned_tube import SerratedCircularFinnedTube, SerratedFinPhysicsNotSupportedError
+from .serrated_flow_area import SerratedFlowAreaBasis, SerratedFlowAreaProvider, Holfeld2016SerratedFlowAreaProvider
 from .rectangular_finned_tube import RectangularIndividualFin, RectangularFinnedEllipticalTube
 from .applicability import TubeGeometryApplicabilityError
 from .bundle import TubeBundle, TubePathType, RowParityMode
+from .serrated_source import HolfeldSerratedSourceGeometry, SerratedTubeBankRequest, SerratedSourceDomainError
 from .lattice import LayoutClass, TubeBankLattice
 
 from .pressure_drop_stages import (
@@ -59,6 +62,14 @@ __all__ = [
     "RectangularFinnedEllipticalTube",
     "TubeGeometryApplicabilityError",
     "CircularFinnedTube",
+    "SerratedCircularFinnedTube",
+    "SerratedFinPhysicsNotSupportedError",
+    "SerratedFlowAreaBasis",
+    "SerratedFlowAreaProvider",
+    "Holfeld2016SerratedFlowAreaProvider",
+    "HolfeldSerratedSourceGeometry",
+    "SerratedTubeBankRequest",
+    "SerratedSourceDomainError",
     "TubeOrientation",
     "TubeSurfaceType",
     "TubeCrossSectionFamily",

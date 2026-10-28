@@ -55,6 +55,7 @@ class TubeSurfaceType(str, Enum):
 
     PLAIN = "plain"
     CIRCULAR_FINNED = "circular_finned"
+    SERRATED_HELICAL_FIN = "serrated_helical_fin"
     RECTANGULAR_INDIVIDUAL_FINNED = "rectangular_individual_finned"
 
 

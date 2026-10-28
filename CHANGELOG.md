@@ -5,6 +5,38 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.5] - Unreleased: serrated geometry and explicit STAGGERED physics
+
+- Added separate Holfeld source-equivalent flow-area, Hashizume serrated
+  efficiency, Holfeld physical-film HTC and native-Eu bank-loss providers.
+- Opened explicit dry-air STAGGERED Rating/Simulation through
+  `Holfeld2016SerratedStaggeredModel`, with mandatory source segment width and
+  the strict intersection of all component domains. AUTO remains unavailable.
+- Preserved Phase A geometry while reporting the native source reference
+  surface separately. The normal network applies corrected fin efficiency once.
+- Recorded source symbol/normalization discrepancies, calibration conventions,
+  measured residuals and a qualified Kawaguchi HTC equation comparison.
+  Independent matched DP comparison remains unresolved; no release promotion.
+- Retained rejection of INLINE complete execution, wet/phase-change routes,
+  unsupported kerf/root/contact mappings and all solid-fin substitution.
+
+- Added distinct `SerratedCircularFinnedTube` geometry and
+  `SERRATED_HELICAL_FIN` surface routing for constant-thickness, untwisted,
+  HF-welded I-foot fins on round tubes.
+- Implemented explicitly idealized radial-sector-cut volume, material-density
+  fin mass and external geometric surface components. Segment/slit count is
+  explicit; segment and kerf tip arc widths have deterministic closure.
+- Reused existing core-tube geometry, validation, contact conventions and
+  bundle fin-envelope clearance. External area is derived, with no override.
+- Added engineering provenance, diagnostics, geometric invariant/audit tests
+  and rejection coverage through direct APIs and Rating/Simulation.
+- Declared distinct flow-area bases and serrated-efficiency provider contracts
+  in Phase A. No solid-fin fallback or correction multiplier is installed.
+  Existing solid-fin physics and numerical behavior are unchanged.
+
+See [the geometry and explicit physics guide](docs/serrated_fins.md) and
+[Phase B validation](docs/validation/serrated_physics_v095.md).
+
 ## [Unreleased]
 
 - Added tube-section-independent `TubeBankLattice` identities and explicit

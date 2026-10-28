@@ -25,6 +25,7 @@ import math
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.serrated_finned_tube import SerratedCircularFinnedTube
 from core.geometry.tube import BaseTube
 from core.geometry.lattice import LayoutClass, TubeBankLattice
 
@@ -131,6 +132,8 @@ class TubeBundle:
     lattice : TubeBankLattice | None
         Optional explicit physical identity, authoritative over legacy layout.
         SHIFTED has geometry support but no automatic HTC/pressure provider.
+        Serrated tubes require CONVENTIONAL_STAGGERED and reject INLINE/SHIFTED
+        at construction, including when an explicit lattice overrides the label.
     n_passes_tube : int
         Number of tube-side passes (biegów).
     flow_arrangement : str
@@ -233,6 +236,10 @@ class TubeBundle:
             raise ValueError("layout must be 'inline', 'staggered' or 'shifted'.")
         if self.layout.lower() == 'conventional_staggered':
             object.__setattr__(self, 'layout', 'staggered')
+        if (isinstance(self.tube, SerratedCircularFinnedTube)
+                and self.tube_bank_lattice.layout_class != LayoutClass.CONVENTIONAL_STAGGERED):
+            raise ValueError(
+                'Serrated tube layout requires CONVENTIONAL_STAGGERED; INLINE and SHIFTED are unsupported.')
         if self.layout.lower() == 'shifted' and not float(self.n_tubes_per_row).is_integer():
             raise ValueError('SHIFTED requires an explicit integer site count per row; no conventional row-count inference.')
 
@@ -273,7 +280,7 @@ class TubeBundle:
                     f"{self.n_passes_transverse}."
                 )
 
-        if isinstance(self.tube, CircularFinnedTube):
+        if isinstance(self.tube, (CircularFinnedTube, SerratedCircularFinnedTube)):
             if self.tube_bank_lattice.layout_class != LayoutClass.SHIFTED:
                 self._validate_circular_fin_clearance()
         if self.lattice is not None and self.lattice.site_offsets is not None:
@@ -613,14 +620,14 @@ class TubeBundle:
     @property
     def root_conduction_resistance(self) -> float:
         """Equivalent root-layer resistance of all tubes in parallel [K/W]."""
-        if not isinstance(self.tube, CircularFinnedTube):
+        if not isinstance(self.tube, (CircularFinnedTube, SerratedCircularFinnedTube)):
             return 0.0
         return self.tube.root_conduction_resistance_for_tubes(self.n_tubes_total)
 
     @property
     def fin_contact_thermal_resistance(self) -> float:
         """Equivalent declared fin/root contact resistance [K/W]."""
-        if not isinstance(self.tube, CircularFinnedTube):
+        if not isinstance(self.tube, (CircularFinnedTube, SerratedCircularFinnedTube)):
             return 0.0
         return self.tube.contact_thermal_resistance_for_tubes(self.n_tubes_total)
 

@@ -35,6 +35,7 @@ from dataclasses import dataclass
 import math
 
 from core.geometry.finned_tube import CircularFinnedTube
+from core.geometry.serrated_finned_tube import reject_serrated_physics
 from core.heat_transfer.modified_bessel import (
     scaled_bessel_i0,
     scaled_bessel_i1,
@@ -418,6 +419,7 @@ def _validate_fin_efficiency_inputs(
     outside_htc: float,
     radial_cells: int,
 ) -> None:
+    reject_serrated_physics(tube, "Annular fin efficiency")
     if not isinstance(tube, CircularFinnedTube):
         raise TypeError("tube must be a CircularFinnedTube instance.")
     if not math.isfinite(outside_htc) or outside_htc <= 0.0:
@@ -463,6 +465,7 @@ def overall_surface_efficiency(
     fin_efficiency_value: float,
 ) -> float:
     """Return ``(A_primary + eta_fin*A_fin) / A_outside_gross``."""
+    reject_serrated_physics(tube, "Overall surface efficiency")
     if not isinstance(tube, CircularFinnedTube):
         raise TypeError("tube must be a CircularFinnedTube instance.")
     if (
