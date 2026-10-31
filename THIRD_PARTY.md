@@ -45,3 +45,21 @@ tool reads separately obtained, hash-checked sources, retains their notices
 in generated C++, and runs them in a separate process. No generated native
 source/binary is distributed or linked with the production package.
 See [the equation and interface map](docs/elmahdy_mitalas.md).
+# Continuous-sheet Schmidt kernel (experimental)
+
+`core/heat_transfer/continuous_fin_efficiency.py` selectively adapts the small
+`PlainContinuousFin._rho_eq` and efficiency kernel from python-hvac
+[`94247560a667905bfbf67e45a58965a58254fce8`](https://github.com/TomLXXVI/python-hvac/tree/94247560a667905bfbf67e45a58965a58254fce8),
+`hvac/heat_transfer/finned_surface/fins.py`.
+Copyright (c) 2023 Tom Christiaens; MIT. The full notice is preserved in
+`core/heat_transfer/python_hvac_MIT.txt` and must accompany distributions.
+Changes: native SI scalars, both lattice pitches used for bisector distances,
+topology guards, stable zero-HTC limit, adiabatic symmetry boundaries (no
+exposed-tip thickness extension), explicit unresolved finite edge cells.
+Scientific source: Schmidt (1949), *Heat Transfer Calculations for Extended
+Surfaces*; Thulukkanam (2013), section 4.7.2.2.
+
+Continuous geometry and Wang equation kernels are independent implementations
+from geometric derivations and the forensic scientific handover. No upstream
+geometry, exchanger solver, ACHP code or full python-hvac runtime is included.
+
