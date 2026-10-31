@@ -28,6 +28,7 @@ from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.serrated_finned_tube import SerratedCircularFinnedTube
 from core.geometry.tube import BaseTube
 from core.geometry.lattice import LayoutClass, TubeBankLattice
+from core.geometry.continuous_plate_fin import ContinuousPlateFinGeometry, ContinuousPlateFinSurface
 
 
 def _deterministic_nearest_step(value: float, step: float) -> float:
@@ -203,6 +204,8 @@ class TubeBundle:
     n_passes_transverse: int | None = None
     row_parity_mode: RowParityMode = RowParityMode.RESET
     lattice: TubeBankLattice | None = field(default=None, kw_only=True)
+    continuous_fin_geometry: ContinuousPlateFinGeometry | None = field(default=None, kw_only=True)
+    _continuous_fin_surface: ContinuousPlateFinSurface | None = field(default=None, init=False, repr=False, compare=False)
     _tube_count_normalization_warning: ModelWarning | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -285,6 +288,15 @@ class TubeBundle:
                 self._validate_circular_fin_clearance()
         if self.lattice is not None and self.lattice.site_offsets is not None:
             self.tube_center_coordinates
+        if self.continuous_fin_geometry is not None:
+            if not isinstance(self.continuous_fin_geometry, ContinuousPlateFinGeometry):
+                raise TypeError("continuous_fin_geometry must be ContinuousPlateFinGeometry.")
+            object.__setattr__(self, "_continuous_fin_surface", self.continuous_fin_geometry.evaluate(self))
+
+    @property
+    def continuous_fin_surface(self) -> ContinuousPlateFinSurface | None:
+        """Immutable physical surface/flow ledger for the common sheets."""
+        return self._continuous_fin_surface
 
     @property
     def tube_bank_lattice(self) -> TubeBankLattice:
@@ -593,27 +605,37 @@ class TubeBundle:
 
     @property
     def total_outer_area(self) -> float:
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.total_area
         return self.n_tubes_total * self.tube.area_outer
 
     @property
     def total_primary_outside_area(self) -> float:
         """Exposed primary outside area for all tubes [m2]."""
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.primary_area
         area = getattr(self.tube, "area_primary_outside", self.tube.area_outer)
         return self.n_tubes_total * float(area)
 
     @property
     def total_fin_area(self) -> float:
         """Fin-attributed gross solver area for all tubes [m2]."""
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.fin_area
         return self.n_tubes_total * float(getattr(self.tube, "area_fin", 0.0))
 
     @property
     def total_fin_geometric_area(self) -> float:
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.fin_area
         return self.n_tubes_total * float(
             getattr(self.tube, "area_fin_geometric", 0.0)
         )
 
     @property
     def total_outer_geometric_area(self) -> float:
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.total_area
         area = getattr(self.tube, "area_outside_geometric", self.tube.area_outer)
         return self.n_tubes_total * float(area)
 
@@ -674,6 +696,8 @@ class TubeBundle:
 
         Blockage by tubes is neglected (to be refined later).
         """
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.frontal_area
         tube = self.tube
         if not hasattr(tube, "length_effective"):
             raise ValueError("Tube object must provide length_effective.")
@@ -684,6 +708,8 @@ class TubeBundle:
     @property
     def projected_blocking_area_per_length(self) -> float:
         """Per-tube flow-normal periodic blockage [m2/m]."""
+        if self.continuous_fin_geometry is not None:
+            raise ValueError("Common sheets have no per-tube periodic projected blockage.")
         return float(self.tube.projected_blocking_area_per_length)
 
     @property
@@ -716,6 +742,8 @@ class TubeBundle:
 
     @property
     def minimum_free_flow_gap(self) -> float:
+        if self.continuous_fin_geometry is not None:
+            raise ValueError("Common sheets require the finite pack flow area, not a periodic gap.")
         # __post_init__ canonicalizes explicit lattice identity into layout.
         # Keep legacy round-bank hot paths free of lattice allocations.
         if self.layout.lower() == 'shifted':
@@ -738,6 +766,8 @@ class TubeBundle:
     @property
     def minimum_free_flow_area(self) -> float:
         """Minimum periodic open cross-section, face-area compatible [m2]."""
+        if self.continuous_fin_surface is not None:
+            return self.continuous_fin_surface.minimum_free_flow_area
         area = (
             self.n_tubes_per_row
             * float(getattr(self.tube, "length_effective"))
