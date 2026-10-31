@@ -19,7 +19,8 @@ def test_surface_ledger_counts_each_sheet_and_every_aperture_once():
     assert b.n_tubes_total == 8
     assert s.aperture_count == 80
     assert s.fin_face_area == pytest.approx(20*(.075*.06-8*math.pi*.0102**2/4))
-    assert s.fin_edge_area == pytest.approx(20*.0001*(.075+.06))
+    assert s.fin_edge_area == pytest.approx(20*.0001*.075)
+    assert s.sealed_fin_edge_area == pytest.approx(20*.0001*.06)
     assert s.exposed_tube_area == pytest.approx(8*math.pi*.01*(.02-10*.0018))
     assert s.exposed_collar_area == pytest.approx(8*math.pi*.0102*10*.0017)
     assert s.collar_lip_area == pytest.approx(8*20*math.pi*(.0102**2-.01**2)/4)
@@ -52,6 +53,8 @@ def test_finite_single_row_flow_area_independent_hand_calculation():
     assert s.free_flow_ratio == pytest.approx(s.minimum_free_flow_area/s.frontal_area)
     assert s.compact_hydraulic_diameter == pytest.approx(4*s.minimum_free_flow_area*.02/s.source_face_cylinder_area)
     assert s.collar_lip_area == 0.
+    assert s.fin_face_area == pytest.approx(19*(.075*.02-3*math.pi*.0102**2/4))
+    assert s.sealed_fin_face_area == pytest.approx(.075*.02-3*math.pi*.0102**2/4)
 
 
 def test_diagonal_passage_and_actual_edge_margins():
@@ -78,3 +81,35 @@ def test_plain_bundle_remains_independent():
     plain = replace(b, continuous_fin_geometry=None)
     assert plain.total_outer_area == plain.n_tubes_total*plain.tube.area_outer
     assert plain.frontal_flow_area != b.frontal_flow_area or plain.total_outer_area != b.total_outer_area
+
+
+def test_finite_separator_against_independent_exhaustive_chain_enumeration():
+    from itertools import permutations
+    from core.geometry.continuous_plate_fin import _finite_throat_width
+    centers = ((0.,0.), (.012,.014), (0.,.028), (.012,.042))
+    lower, upper, diameter = -.009, .053, .010
+    candidates = [upper-lower]
+    for size in range(1, len(centers)+1):
+        for chain in permutations(centers, size):
+            candidates.append(chain[0][1]-lower-diameter/2+
+                sum(math.dist(a,b)-diameter for a,b in zip(chain,chain[1:]))+
+                upper-chain[-1][1]-diameter/2)
+    assert _finite_throat_width(centers,lower,upper,diameter) == pytest.approx(min(candidates))
+
+
+def test_finite_pack_superposes_real_bare_and_collar_passages():
+    b = bank(rows=1, count=3.)
+    s = b.continuous_fin_surface
+    bare_width = .075-3*.01
+    collar_width = .075-3*.0102
+    assert s.minimum_free_flow_area == pytest.approx((.02-10*.0018)*bare_width+10*(.0018-.0001)*collar_width)
+    assert b.frontal_flow_area == pytest.approx(.075*.02)
+
+
+def test_both_flush_end_sheets_exclude_their_sealed_broad_faces():
+    b = bank(rows=1, count=3., first_sheet_position=0., collar_height=.0001)
+    b = replace(b, tube=replace(b.tube, length_effective=.0181))
+    s = b.continuous_fin_surface
+    one_face = .075*.02-3*math.pi*.0102**2/4
+    assert s.fin_face_area == pytest.approx(18*one_face)
+    assert s.sealed_fin_face_area == pytest.approx(2*one_face)

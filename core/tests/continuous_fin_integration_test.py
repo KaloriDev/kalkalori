@@ -86,6 +86,8 @@ def test_signed_density_term_is_not_multiplied_or_reaggregated():
     assert c.dp_acceleration == a.dp_acceleration
     assert c.dp_total == pytest.approx(3*a.dp_drag+a.dp_acceleration)
     assert c.reference_diameter == .00975
+    assert c.reference_density == pytest.approx(2/(1/AIR.rho+1/warmer.rho))
+    assert c.reference_velocity == pytest.approx(c.reference_mass_flux/c.reference_density)
     path = build_outside_pressure_drop_result(c)
     assert isinstance(path, SourceDomainPressureEstimateResult)
     assert path.dp_total == c.dp_total and not path.validated_bank_irreversible
@@ -171,6 +173,14 @@ def test_external_wet_provider_rejected_and_default_unchanged():
         hx().simulate(HXSideInput(provider=WATER, m_dot=.1, T_in=280., p=101325.),
             HXSideInput(provider=wet, m_dot=.15, T_in=350., p=101325.))
     assert ElmahdyMitalasWetCoilProvider().model_id == "elmahdy_mitalas_energyplus_v25_2_adapted"
+
+
+@pytest.mark.parametrize("provider_name", ["elmahdy", "legacy"])
+def test_builtin_wet_provider_direct_call_cannot_treat_common_sheets_as_bare(provider_name):
+    from core.phase_change.wet_coil_provider import ElmahdyMitalasWetCoilProvider, LegacyBulkMeanWetCoilProvider, WetCoilProviderUnsupportedError
+    provider = ElmahdyMitalasWetCoilProvider() if provider_name == "elmahdy" else LegacyBulkMeanWetCoilProvider()
+    with pytest.raises(WetCoilProviderUnsupportedError, match="continuous-sheet"):
+        provider.simulate(hx(), None, None, settings=None, wet_solver_options=None, context=None)
 
 
 def test_strict_source_validation_cannot_be_overridden_by_correction():

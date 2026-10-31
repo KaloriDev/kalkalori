@@ -27,6 +27,10 @@ def test_five_provisional_arithmetic_references(N, Do, Pt, Pl, Fp, Re, j, f):
     args = dict(Re_Dc=Re, N=N, D_c=dc, F_p=Fp, P_t=Pt, P_l=Pl, D_h=4*ac*depth/ao)
     assert wang2000_j(**args) == pytest.approx(j, rel=1e-5)
     assert wang2000_f(**args) == pytest.approx(f, rel=2e-5)
+    expected = {1:(60.435,8.579), 2:(44.310,8.208), 4:(80.653,71.454), 6:(49.584,71.912), 3:(80.383,123.615)}[N]
+    gc = Re*1.85e-5/dc
+    assert wang2000_j(**args)*gc*1007/.71**(2/3) == pytest.approx(expected[0], rel=2e-5)
+    assert wang2000_f(**args)*(ao/ac)*gc**2/(2*1.18) == pytest.approx(expected[1], rel=8e-5)
 
 
 @pytest.mark.parametrize("N", [0, 7, True, 2.5])
@@ -67,3 +71,25 @@ def test_unsupported_source_lattice(layout):
 def test_signed_density_term_and_no_extra_factor_four():
     assert wang_density_change_estimate(mass_flux=2., sigma=.5, density_in=1., density_out=2.) == pytest.approx(-1.25)
     assert wang_density_change_estimate(mass_flux=2., sigma=.5, density_in=1., density_out=1.) == 0.
+
+
+@pytest.mark.parametrize("diameter", [.025, .05])
+def test_industrial_tube_sizes_have_geometry_but_no_wang_physics(diameter):
+    b = bank()
+    tube = replace(b.tube, D_o=diameter, D_i=diameter-.002)
+    fin = replace(b.continuous_fin_geometry, collar_outer_diameter=diameter+.0002,
+        height=.3, depth=.3, transverse_origin=-.05, streamwise_origin=-.05)
+    industrial = replace(b, tube=tube, pitch_transverse=.1, pitch_longitudinal=.1, continuous_fin_geometry=fin)
+    assert industrial.total_outer_area > 0.
+    with pytest.raises(ContinuousFinSourceError, match="tube_OD"):
+        ContinuousFinRequest(industrial, .1, FluidTransportProperties(1., 2e-5, .03, 1000.))
+
+
+def test_unresolved_low_reynolds_is_never_labelled_source_valid():
+    b = bank()
+    props = FluidTransportProperties(1., 2e-5, .03, 1000.)
+    mass = 100*props.mu*b.minimum_free_flow_area/b.continuous_fin_geometry.collar_outer_diameter
+    r = ExperimentalWang2000HTC().evaluate(ContinuousFinRequest(b, mass, props))
+    assert r.reynolds_number == pytest.approx(100.)
+    assert r.metadata.reynolds_domain_status == "SOURCE_DOMAIN_UNKNOWN"
+    assert any(w.code == "CONTINUOUS_FIN_RE_DOMAIN_UNKNOWN" for w in r.warnings)

@@ -85,8 +85,13 @@ class IncompatibleOutsideCorrelationProviderError(TypeError):
 class OutsideThermalDispatchResult:
     """Physical outside-film result selected by the surface dispatcher.
 
-    ``alpha_physical`` is the mean film coefficient returned directly by the
-    selected correlation.  It intentionally does *not* include extended
+    For experimental continuous sheets, ``alpha_physical`` retains the shared
+    API name but denotes the source's effective reduced HTC, including empirical
+    contact. Its source card explicitly prevents an intrinsic-film interpretation.
+
+    Except for that empirical continuous-sheet case, ``alpha_physical`` is
+    the mean film coefficient returned directly by the selected correlation.
+    It intentionally does *not* include extended
     surface efficiency, contact resistance, area enhancement, or root-layer
     conduction.  Those geometry/topology effects are applied only by
     :func:`calculate_resistance_network`, which produces the separately

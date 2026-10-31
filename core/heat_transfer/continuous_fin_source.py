@@ -32,6 +32,7 @@ class ContinuousFinSourceCard:
     validation_status: str = "SYNTHETIC_ARITHMETIC_ONLY"
     reynolds_domain_status: str = "SOURCE_DOMAIN_UNKNOWN"
     reynolds_basis: str = "Re_Dc=(m_dot/A_min)*collar_OD/mu"
+    heat_transfer_interpretation: str = "effective_reduced_HTC_with_empirically_included_contact; not_independent_intrinsic_gas_film"
     area_basis: str = "candidate_fin_faces_plus_exposed_tube_and_collar_cylinders; source closure pending"
     coefficient_basis: str = "compact_HX_f_Ao_over_Ac; no extra factor four"
     contact_policy: ContactPolicy = ContactPolicy.EMPIRICAL_INCLUDED

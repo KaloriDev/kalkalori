@@ -67,3 +67,13 @@ def test_replacements_are_independent_and_baseline_is_frozen():
             return AirsideCorrection("replacement_test", h_film_replacement=50., pressure_drop_replacement=2.)
     r = ExperimentalWang2000Model(True, Replace()).evaluate(bank(), .005, AIR)
     assert r.alpha == 50. and r.core_friction_estimate == 2.
+
+
+def test_sealed_terminal_sheet_has_one_convecting_face():
+    b = bank(first_sheet_position=0.)
+    r = SchmidtEquivalentCell().evaluate(b, 60.)
+    assert r.single_face_sheet_count == 1
+    assert r.single_face_efficiency > r.two_face_efficiency
+    assert r.fin_efficiency == pytest.approx((18*r.two_face_efficiency+r.single_face_efficiency)/19)
+    assert r.single_face_efficiency == pytest.approx(
+        SchmidtEquivalentCell().evaluate(bank(), 30.).fin_efficiency)

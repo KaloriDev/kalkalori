@@ -39,6 +39,13 @@ See [the geometry and explicit physics guide](docs/serrated_fins.md) and
 
 ## [Unreleased]
 
+- Added finite continuous plate-fin bundle geometry and an explicit experimental
+  dry Wang/Schmidt profile, with separate HTC/pressure contracts, immutable
+  correction snapshots and Rating/Simulation/steam propagation. Source and
+  experimental validation gates remain open; AUTO and version promotion remain
+  unavailable. See [the feature guide](docs/continuous_plate_fins.md) and
+  [implementation record](docs/validation/continuous_plate_fin_implementation_2026-10-31.md).
+
 - Added tube-section-independent `TubeBankLattice` identities and explicit
   per-site SHIFTED offsets, with unresolved phase represented without invented
   coordinates. Legacy INLINE/STAGGERED numerical behavior is preserved.

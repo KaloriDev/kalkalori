@@ -37,6 +37,10 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ## Current Capabilities (v0.9.5 development)
 
+The feature branch adds [continuous plate-fin geometry and a research-only dry
+profile](docs/continuous_plate_fins.md). Wang source/experimental validation is
+incomplete; this is not an approved v0.9.6 production release.
+
 v0.9.5 adds [serrated helical-fin geometry and explicit STAGGERED physics](docs/serrated_fins.md)
 for untwisted constant-thickness welded I-foot fins. Phase A geometric volume,
 mass and area remain unchanged. Phase B combines separate Holfeld source flow

@@ -104,6 +104,15 @@ class ContinuousFinBankHydraulicResult:
     components_resolved: bool = False
     pressure_basis: str = "experimental_compact_HX_core_plus_source_density_term_entry_exit_unresolved"
 
+    @property
+    def reference_density(self):
+        """Harmonic endpoint density actually used in the core estimate [kg/m3]."""
+        return self.midpoint.coefficient/self.mean_coefficient_over_rho
+
+    @property
+    def reference_velocity(self):
+        return self.reference_mass_flux/self.reference_density
+
 
 def calculate_continuous_fin_hydraulics(*, bundle, m_dot, model,
         property_provider=None, temperature_in=None, temperature_out=None, pressure=None,

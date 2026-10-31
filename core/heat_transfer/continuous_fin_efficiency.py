@@ -31,6 +31,9 @@ class ContinuousFinEfficiencyResult:
     cell_basis: str = "periodic_staggered_bisector_hexagon; finite_edge_cells_unresolved"
     tip_temperature_ratio: None = None
     warnings: tuple = ()
+    two_face_efficiency: float = 1.
+    single_face_efficiency: float = 1.
+    single_face_sheet_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -63,10 +66,20 @@ class SchmidtEquivalentCell:
         # Adiabatic cell boundary: unlike upstream's exposed-tip correction,
         # do not append t/2 at a symmetry boundary shared with the next cell.
         corrected_length = (radius-r)*(1+.35*math.log(radius_ratio))
-        argument = math.sqrt(2*h/(fin.conductivity*fin.thickness))*corrected_length
-        eta = 1. if argument == 0 else math.tanh(argument)/argument
+        def face_efficiency(exposed_faces):
+            # Thin-sheet energy balance: m^2 = exposed_faces*h/(k*t).
+            argument = math.sqrt(exposed_faces*h/(fin.conductivity*fin.thickness))*corrected_length
+            return 1. if argument == 0 else math.tanh(argument)/argument
+        eta_two, eta_one = face_efficiency(2), face_efficiency(1)
+        one_face_area = fin.height*fin.depth-bundle.n_tubes_total*math.pi*r*r
+        single_sheets = round(surface.sealed_fin_face_area/one_face_area)
+        double_sheets = fin.sheet_count-single_sheets
+        exposed_faces = 2*double_sheets+single_sheets
+        eta = (2*double_sheets*eta_two+single_sheets*eta_one)/exposed_faces
         active = surface.primary_area+eta*surface.fin_face_area
         warning = make_warning(code="CONTINUOUS_FIN_EDGE_CELL_APPROXIMATION",
             message="Schmidt uses pitch-dependent periodic cells; finite boundary cells and inter-zone common-sheet conduction remain unvalidated. Edges/lips are adiabatic.",
             source="schmidt_equivalent_cell", severity="warning")
-        return ContinuousFinEfficiencyResult(eta, active/surface.total_area, active, radius, M, L, warnings=(warning,))
+        return ContinuousFinEfficiencyResult(eta, active/surface.total_area, active, radius, M, L,
+            warnings=(warning,), two_face_efficiency=eta_two, single_face_efficiency=eta_one,
+            single_face_sheet_count=single_sheets)

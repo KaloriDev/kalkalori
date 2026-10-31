@@ -79,8 +79,18 @@ class ContinuousPlateFinGeometry:
         count, nt = self.sheet_count, len(centers)
         if nt != bundle.n_tubes_total:
             raise ValueError("Lattice coordinates disagree with authoritative bundle tube count.")
-        faces = 2*count*(self.height*self.depth - nt*math.pi*dc**2/4)
-        edges = 2*count*self.thickness*(self.height+self.depth)
+        one_face = self.height*self.depth - nt*math.pi*dc**2/4
+        face_count = 2*count
+        if self.first_sheet_position == 0.:
+            face_count -= 1
+        if math.isclose(self.sheet_positions[-1]+self.thickness, length, rel_tol=0., abs_tol=1e-12):
+            face_count -= 1
+        faces = face_count*one_face
+        # Only inlet/outlet edges face gas. The two transverse sheet edges
+        # contact the sealed side walls of this explicitly bounded duct.
+        edges = 2*count*self.thickness*self.height
+        sealed_faces = (2*count-face_count)*one_face
+        sealed_edges = 2*count*self.thickness*self.depth
         bare_length = max(0., length-count*self.collar_height)
         collar_length = count*(self.collar_height-self.thickness)
         tube_area = nt*math.pi*do*bare_length
@@ -102,7 +112,7 @@ class ContinuousPlateFinGeometry:
         return ContinuousPlateFinSurface(
             tube_area, collar_area, faces, edges, lips, contact,
             self.height*length, area_min, self.depth, margins,
-            bare_cut, collar_cut, nt*count,
+            bare_cut, collar_cut, nt*count, sealed_faces, sealed_edges,
         )
 
 
@@ -148,6 +158,8 @@ class ContinuousPlateFinSurface:
     bare_throat_width: float
     collar_throat_width: float
     aperture_count: int
+    sealed_fin_face_area: float = 0.
+    sealed_fin_edge_area: float = 0.
     flow_area_basis: str = "finite_wall_to_wall_transverse_or_diagonal_separator"
 
     @property
