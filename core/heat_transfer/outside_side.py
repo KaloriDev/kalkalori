@@ -79,6 +79,8 @@ def evaluate_outside_side(
     effective coefficient; each phase zone builds its own full resistance
     network with its actual inside coefficient.
     """
+    from core.heat_transfer.outside_dispatch import guard_outside_execution
+    guard_outside_execution(hx, outside_provider=provider)
     T_mean = 0.5 * (T_in + T_out)
     props = properties_mean or _transport(provider.at(T=T_mean, p=p))
     thermal = evaluate_outside_thermal(
@@ -87,6 +89,8 @@ def evaluate_outside_side(
         props=_outside_fluid_props(props),
         euler_provider=euler_provider,
         finned_heat_transfer_provider=finned_heat_transfer_provider,
+        airside_model=hx.airside_model,
+        strict_source_domain=hx.strict_source_domain,
     )
     hydraulics = evaluate_outside_hydraulics(
         bundle=hx.bundle,
@@ -98,6 +102,7 @@ def evaluate_outside_side(
         euler_provider=euler_provider,
         finned_pressure_drop_provider=finned_pressure_drop_provider,
         strict_source_domain=hx.strict_source_domain,
+        airside_model=hx.airside_model,
     )
     # The effective outside coefficient depends only on the physical film
     # coefficient, declared fin topology and gross-area outside fouling.
@@ -109,6 +114,8 @@ def evaluate_outside_side(
         outside_alpha_physical=thermal.alpha_physical,
         resistance_core_wall=0.0,
         fouling_resistance_outside=hx.fouling_resistance_outside,
+        airside_model=hx.airside_model,
+        outside_thermal_result=thermal,
     )
     warnings = _deduplicate((*thermal.warnings, *hydraulics.warnings))
     return OutsideSideEvaluation(

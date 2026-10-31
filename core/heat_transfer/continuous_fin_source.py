@@ -73,6 +73,8 @@ class ContinuousFinRequest:
     strict_source_domain: bool = False
 
     def __post_init__(self):
+        if not isinstance(self.strict_source_domain, bool):
+            raise TypeError("strict_source_domain must be boolean.")
         positive(self.mass_flow, "mass_flow")
         for name in ("rho", "mu", "k", "cp"):
             positive(getattr(self.props, name), name)

@@ -56,6 +56,9 @@ from core.pressure_drop.finned_tube_pressure_drop import (
 from core.pressure_drop.outside_pressure_drop import EulerProvider
 from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel, Zhao2017AirsideResult
 from core.pressure_drop.finned_ellipse import Zhao2017BankHydraulicResult, Zhao2017HydraulicPoint, calculate_finned_ellipse_hydraulics
+from core.heat_transfer.continuous_airside import ExperimentalWang2000Model, ContinuousAirsideResult, require_continuous_profile
+from core.heat_transfer.continuous_fin_efficiency import ContinuousFinEfficiencyResult
+from core.pressure_drop.continuous_fin import ContinuousFinBankHydraulicResult, ContinuousFinHydraulicPoint
 
 if TYPE_CHECKING:
     from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
@@ -64,6 +67,14 @@ if TYPE_CHECKING:
 DEFAULT_BARE_EULER_PROVIDER = "zukauskas"
 DEFAULT_FINNED_HT_PROVIDER = "auto"
 DEFAULT_FINNED_DP_PROVIDER = "auto"
+
+
+def guard_outside_execution(hx, *, inside_provider=None, outside_provider=None):
+    """Provider-owned applicability before any dry/wet process dispatch."""
+    from core.heat_transfer.serrated_airside import guard_serrated_execution
+    from core.heat_transfer.continuous_airside import guard_continuous_execution
+    guard_serrated_execution(hx, inside_provider=inside_provider, outside_provider=outside_provider)
+    guard_continuous_execution(hx, outside_provider=outside_provider)
 
 
 class IncompatibleOutsideCorrelationProviderError(TypeError):
@@ -95,6 +106,7 @@ class OutsideThermalDispatchResult:
     finned_result: FinnedTubeHeatTransferResult | None = None
     airside_result: Zhao2017AirsideResult | None = None
     serrated_fin_efficiency_result: SerratedFinEfficiencyResult | None = None
+    continuous_result: ContinuousAirsideResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -171,7 +183,7 @@ class ThermalResistanceNetwork:
     resistance_total: float
     UA: float
     U_gross_outside: float
-    fin_efficiency_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | None = None
+    fin_efficiency_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | ContinuousFinEfficiencyResult | None = None
     fouling_resistance_inside: float = 0.0
     fouling_resistance_outside: float = 0.0
     resistance_fouling_inside: float = 0.0
@@ -273,9 +285,10 @@ class FinnedTubeDiagnostics:
     resistance_fouling_outside: float = 0.0
     airside_result: Zhao2017AirsideResult | None = None
     hydraulic_airside_result: Zhao2017AirsideResult | None = None
-    fin_efficiency_result: ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | None = None
+    fin_efficiency_result: ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | ContinuousFinEfficiencyResult | None = None
     heat_transfer_result: FinnedTubeHeatTransferResult | None = None
-    hydraulic_result: FinnedTubeBankHydraulicResult | None = None
+    hydraulic_result: FinnedTubeBankHydraulicResult | ContinuousFinBankHydraulicResult | None = None
+    continuous_result: ContinuousAirsideResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -374,13 +387,15 @@ class FinnedTubeDiagnostics:
         return self.outside_dp_total
 
 
-OutsideBankHydraulicResult = OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult | Zhao2017BankHydraulicResult
-OutsideBankHydraulicPoint = OutsideHydraulicPoint | FinnedTubeHydraulicPoint | Zhao2017HydraulicPoint
+OutsideBankHydraulicResult = OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult | Zhao2017BankHydraulicResult | ContinuousFinBankHydraulicResult
+OutsideBankHydraulicPoint = OutsideHydraulicPoint | FinnedTubeHydraulicPoint | Zhao2017HydraulicPoint | ContinuousFinHydraulicPoint
 
 
 def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
     """Resolve and validate the explicit outside-surface discriminator."""
 
+    if bundle.continuous_fin_geometry is not None:
+        return TubeSurfaceType.CONTINUOUS_PLATE_FIN
     value = getattr(bundle.tube, "surface_type", None)
     if value is TubeSurfaceType.PLAIN:
         return TubeSurfaceType.PLAIN
@@ -416,7 +431,7 @@ def _require_serrated_selectors(euler_provider, finned_provider, default):
     # selected. Any other circular/bare choice is an incompatible override.
     if euler_provider != DEFAULT_BARE_EULER_PROVIDER or finned_provider != default:
         raise IncompatibleOutsideCorrelationProviderError(
-            "Explicit serrated airside_model cannot be combined with solid/bare provider selectors.")
+            "Explicit airside_model cannot be combined with solid/bare provider selectors.")
 
 
 def evaluate_outside_thermal(
@@ -440,6 +455,16 @@ def evaluate_outside_thermal(
     from core.geometry.applicability import require_automatic_outside_bank
     require_automatic_outside_bank(bundle.tube, 'Automatic outside bank HTC', airside_model=airside_model)
     surface = tube_surface_type(bundle)
+    if surface is TubeSurfaceType.CONTINUOUS_PLATE_FIN:
+        require_continuous_profile(bundle, airside_model)
+        _require_serrated_selectors(euler_provider, finned_heat_transfer_provider, DEFAULT_FINNED_HT_PROVIDER)
+        result = airside_model.evaluate(bundle, m_dot, props, strict_source_domain=strict_source_domain)
+        ht = result.baseline.heat_transfer
+        dc = bundle.continuous_fin_geometry.collar_outer_diameter
+        nu = result.alpha*dc/props.k
+        return OutsideThermalDispatchResult(surface, bundle.face_velocity(m_dot, props.rho),
+            bundle.reference_velocity(m_dot, props.rho), ht.reynolds_number, ht.prandtl_number,
+            nu, ht.alpha*dc/props.k, 1., result.alpha, result.warnings, continuous_result=result)
     if surface is TubeSurfaceType.SERRATED_HELICAL_FIN:
         _require_serrated_selectors(euler_provider, finned_heat_transfer_provider, DEFAULT_FINNED_HT_PROVIDER)
         result, eta = airside_model.evaluate_thermal(bundle, m_dot, props)
@@ -567,6 +592,15 @@ def evaluate_outside_hydraulics(
     from core.geometry.applicability import require_automatic_outside_bank
     require_automatic_outside_bank(bundle.tube, 'Automatic outside bank pressure drop', airside_model=airside_model)
     surface = tube_surface_type(bundle)
+    if surface is TubeSurfaceType.CONTINUOUS_PLATE_FIN:
+        require_continuous_profile(bundle, airside_model)
+        _require_serrated_selectors(euler_provider, finned_pressure_drop_provider, DEFAULT_FINNED_DP_PROVIDER)
+        from core.pressure_drop.continuous_fin import calculate_continuous_fin_hydraulics
+        return calculate_continuous_fin_hydraulics(bundle=bundle, m_dot=m_dot, model=airside_model,
+            property_provider=property_provider, temperature_in=temperature_in, temperature_out=temperature_out,
+            pressure=pressure, inlet_props=inlet_props, midpoint_props=midpoint_props, outlet_props=outlet_props,
+            m_dot_inlet=m_dot_inlet, m_dot_midpoint=m_dot_midpoint, m_dot_outlet=m_dot_outlet,
+            strict_source_domain=strict_source_domain)
     if surface is TubeSurfaceType.SERRATED_HELICAL_FIN:
         _require_serrated_selectors(euler_provider, finned_pressure_drop_provider, DEFAULT_FINNED_DP_PROVIDER)
         from core.pressure_drop.serrated_holfeld import calculate_holfeld_serrated_hydraulics
@@ -710,7 +744,7 @@ def calculate_resistance_network(
     fouling_resistance_inside: float | None = None,
     fouling_resistance_outside: float | None = None,
     fin_efficiency_model: ThinPlateFinEfficiency2D | None = None,
-    airside_model: Holfeld2016SerratedStaggeredModel | None = None,
+    airside_model: Holfeld2016SerratedStaggeredModel | ExperimentalWang2000Model | None = None,
     outside_thermal_result: OutsideThermalDispatchResult | None = None,
 ) -> ThermalResistanceNetwork:
     """Build core terms and the full topology-correct outside resistance.
@@ -744,6 +778,10 @@ def calculate_resistance_network(
         raise ValueError("resistance_core_wall must be finite and non-negative.")
 
     surface = tube_surface_type(bundle)
+    if surface is TubeSurfaceType.CONTINUOUS_PLATE_FIN:
+        require_continuous_profile(bundle, airside_model)
+        if outside_thermal_result is not None and outside_thermal_result.alpha_physical != outside_alpha_physical:
+            raise ValueError("Continuous sheet network requires the evaluated corrected HTC.")
     if surface is TubeSurfaceType.SERRATED_HELICAL_FIN:
         if (not isinstance(airside_model, Holfeld2016SerratedStaggeredModel)
                 or outside_thermal_result is None
@@ -762,7 +800,7 @@ def calculate_resistance_network(
     fouling_o = normalize_fouling_resistance(fouling_resistance_outside, "fouling_resistance_outside")
     resistance_fi, resistance_fo = fouling_i / area_i, fouling_o / area_gross
     resistance_i += resistance_fi
-    fin_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | None = None
+    fin_result: FinEfficiencyResult | ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | ContinuousFinEfficiencyResult | None = None
     if fin_efficiency_model is not None and surface is not TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
         raise ValueError("fin_efficiency_model applies only to rectangular-individual-finned elliptical tubes.")
 
@@ -790,6 +828,25 @@ def calculate_resistance_network(
         # Preserve the exact historical bare-tube value instead of producing
         # a numerically equivalent reciprocal round trip.
         outside_alpha_effective_gross = outside_alpha_physical
+    elif surface is TubeSurfaceType.CONTINUOUS_PLATE_FIN:
+        surface_geometry = bundle.continuous_fin_surface
+        fin_result = (outside_thermal_result.continuous_result.efficiency
+            if outside_thermal_result is not None and outside_thermal_result.continuous_result is not None
+            else airside_model.fin_efficiency_provider.evaluate(bundle, outside_alpha_physical))
+        area_primary, area_fin = surface_geometry.primary_area, surface_geometry.fin_area
+        area_geometric = surface_geometry.total_area
+        area_effective = fin_result.effective_area
+        eta_fin, eta_overall = fin_result.fin_efficiency, fin_result.overall_surface_efficiency
+        conductance_primary = outside_alpha_physical*area_primary
+        conductance_fin = outside_alpha_physical*eta_fin*surface_geometry.fin_face_area
+        resistance_root = resistance_contact = common_root_contact = 0.
+        contact_input_mode = "empirical_included"
+        fin_contact_efficiency_input = None
+        fin_contact_efficiency_effective = 1.
+        contact_resistance_equivalent_areal = contact_resistance_used = 0.
+        contact_area = surface_geometry.contact_area
+        contact_area_basis = "expanded_tube_circumference_times_total_collar_coverage"
+        contact_topology = "empirical_contact_in_htc_no_additional_resistance"
     elif surface is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
         tube = bundle.tube
         fin_result = (fin_efficiency_model or ThinPlateFinEfficiency2D()).evaluate(tube, outside_alpha_physical)
@@ -1068,7 +1125,7 @@ def build_finned_tube_diagnostics(
     if network.surface_type is TubeSurfaceType.PLAIN:
         return None
     ht = thermal.finned_result
-    bank = hydraulic if isinstance(hydraulic, (FinnedTubeBankHydraulicResult,Zhao2017BankHydraulicResult)) else None
+    bank = hydraulic if isinstance(hydraulic, (FinnedTubeBankHydraulicResult,Zhao2017BankHydraulicResult,ContinuousFinBankHydraulicResult)) else None
     midpoint = None if bank is None else bank.midpoint
     warnings = _deduplicate_warnings(
         (*geometry_warnings, *thermal.warnings, *((bank.warnings) if bank else ()))
@@ -1115,7 +1172,8 @@ def build_finned_tube_diagnostics(
         reynolds_number=thermal.reynolds_number,
         prandtl_number=thermal.prandtl_number,
         nusselt_number=thermal.nusselt_number,
-        colburn_j_factor=(thermal.airside_result.factors.j_prime if thermal.airside_result is not None
+        colburn_j_factor=(thermal.continuous_result.baseline.heat_transfer.colburn_j_factor if thermal.continuous_result is not None
+                         else thermal.airside_result.factors.j_prime if thermal.airside_result is not None
                          else math.nan if ht is None else ht.colburn_j_factor),
         pressure_drop_coefficient=math.nan if midpoint is None else midpoint.coefficient,
         pressure_drop_coefficient_definition=(
@@ -1124,7 +1182,7 @@ def build_finned_tube_diagnostics(
         outside_dp_drag=math.nan if bank is None else bank.dp_drag,
         outside_dp_acceleration=math.nan if bank is None else bank.dp_acceleration,
         outside_dp_total=math.nan if bank is None else bank.dp_total,
-        heat_transfer_metadata=thermal.airside_result if thermal.airside_result is not None else None if ht is None else ht.metadata,
+        heat_transfer_metadata=thermal.continuous_result.metadata if thermal.continuous_result is not None else thermal.airside_result if thermal.airside_result is not None else None if ht is None else ht.metadata,
         pressure_drop_metadata=None if bank is None else bank.metadata,
         warnings=warnings,
         outside_dp_dry_reference=math.nan if bank is None else bank.dp_total,
@@ -1132,9 +1190,10 @@ def build_finned_tube_diagnostics(
         outside_dp_reference_only=False,
         airside_result=thermal.airside_result,
         heat_transfer_result=ht,
-        hydraulic_result=bank if isinstance(bank, FinnedTubeBankHydraulicResult) else None,
+        hydraulic_result=bank if isinstance(bank, (FinnedTubeBankHydraulicResult, ContinuousFinBankHydraulicResult)) else None,
         hydraulic_airside_result=bank.metadata if isinstance(bank,Zhao2017BankHydraulicResult) else None,
-        fin_efficiency_result=network.fin_efficiency_result if isinstance(network.fin_efficiency_result,(ThinPlateFinEfficiencyResult,SerratedFinEfficiencyResult)) else None,
+        fin_efficiency_result=network.fin_efficiency_result if isinstance(network.fin_efficiency_result,(ThinPlateFinEfficiencyResult,SerratedFinEfficiencyResult,ContinuousFinEfficiencyResult)) else None,
+        continuous_result=thermal.continuous_result,
     )
 
 

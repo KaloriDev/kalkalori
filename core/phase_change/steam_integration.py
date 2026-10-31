@@ -1112,6 +1112,8 @@ def _water_steam_diagnostics(
         alpha_inside=solution.inside_alpha_equivalent,
         outside_alpha_physical=outside_evaluation.alpha_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        airside_model=hx.airside_model,
+        outside_thermal_result=outside_evaluation.outside_dispatch,
         fouling_resistance_inside=hx.fouling_resistance_inside,
         fouling_resistance_outside=hx.fouling_resistance_outside,
     )
@@ -1215,7 +1217,10 @@ def _water_steam_wall_diagnostics(
         )
         primary_surface = fin_base = fin_tip = fin_tip_ratio = None
         skin_min = skin_max = T_wall_o
-        if is_finned:
+        if is_finned and resistance_network.fin_efficiency_result.tip_temperature_ratio is None:
+            primary_surface = fin_base = T_wall_o
+            skin_min = skin_max = math.nan
+        elif is_finned:
             primary_surface, fin_base, fin_tip, skin_min, skin_max = fin_surface_temperatures(
                 network=resistance_network,
                 outside_wall_temperature=T_wall_o,

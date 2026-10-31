@@ -61,6 +61,9 @@ class ExperimentalWang2000Model:
     def validate_bundle(self, bundle):
         from core.properties.common import FluidTransportProperties
         ContinuousFinRequest(bundle, 1., FluidTransportProperties(1., 2e-5, .026, 1000.))
+        fin = bundle.continuous_fin_geometry
+        if fin.first_sheet_position > fin.pitch or bundle.tube.length_effective-fin.pack_extent[1] > fin.pitch:
+            raise ContinuousFinSourceError("Wang pack has unsupported unfinned axial bypass regions; each sealed end gap must not exceed one fin pitch.")
         self.fin_efficiency_provider.evaluate(bundle, 0.)
 
     def guard_property_provider(self, provider):
@@ -70,6 +73,9 @@ class ExperimentalWang2000Model:
         cap = detect_phase_change_capability(provider)
         if cap.capable or cap.provider_kind:
             raise ContinuousFinSourceError("Continuous-fin dry-air profile rejects external wet/condensing property providers.")
+        from core.properties.tabulated_liquid import TabulatedLiquidProvider
+        if isinstance(provider, TabulatedLiquidProvider):
+            raise ContinuousFinSourceError("Wang source fluid is dry air, not a tabulated liquid.")
         # Named fluid providers retain their physical identity; custom constants
         # explicitly assert dry air. Do not reinterpret a known liquid as air.
         fluid = getattr(provider, "fluid", None)
