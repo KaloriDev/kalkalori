@@ -39,6 +39,10 @@ See [the geometry and explicit physics guide](docs/serrated_fins.md) and
 
 ## [Unreleased]
 
+- Allow Robinson-Briggs 1966 STAGGERED solid circular-finned banks with 1-3 rows
+  using the actual row count and an explicit unvalidated short-bank extrapolation
+  warning. Existing results and diagnostics for at least four rows are unchanged.
+
 - Added finite continuous plate-fin bundle geometry and an explicit experimental
   dry Wang/Schmidt profile, with separate HTC/pressure contracts, immutable
   correction snapshots and Rating/Simulation/steam propagation. Source and
