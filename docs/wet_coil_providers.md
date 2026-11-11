@@ -119,9 +119,19 @@ real nonuniform wet-area distribution remain limitations.
 The [integrated v0.9.7 review](validation/v0.9.7_integrated_validation.md)
 also documents a pre-existing duty switch between dry epsilon-NTU and active
 arithmetic-mean sensible balances, plus historical high-effectiveness
-enthalpy/phase-domain failures. The wall-envelope correction does not reconcile
-those process closures. Its conditional literature comparisons do not establish
-predictive duty or condensate accuracy.
+enthalpy/phase-domain failures. v0.9.8 replaces the arithmetic transport means
+with analytic uniform-source area means, recovering dry epsilon-NTU at zero
+condensate. Explicitly selected Bulk-Mean dry and wet calculations use the same
+finite stream enthalpy capacity rates and wall-property reference. Existing
+correlations, radial fin equations and wet-area approximations remain in use.
+Activation uses the configured onset tolerance; the activation band remains a
+near-onset diagnostic. The nonlinear solver damps conserved enthalpy/humidity
+before inversion and, if needed, solves the same bounded residual equations.
+No accepted outlet may exceed its vapor saturation limit. Classified failures
+distinguish bad brackets, backend errors and numerical stagnation; a failed
+iteration alone does not prove physical infeasibility. See the
+[v0.9.8 implementation record](validation/v0.9.8_wet_closure_numerical_patch.md).
+Conditional literature comparisons do not establish predictive accuracy.
 See [wall and surface temperature definitions](wall_surface_temperatures.md)
 for the separate metal, exposed-surface, fin and interface diagnostics.
 

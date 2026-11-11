@@ -931,6 +931,8 @@ def solve_iterative_thermal_state(
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
     relaxation_factor: float = 0.5,
+    _capacity_rates=None,
+    _duty_area_scale: float = 1.0,
 ) -> IterativeThermalState:
     """Iteratively resolve mean bulk state and both wall temperatures.
 
@@ -977,6 +979,10 @@ def solve_iterative_thermal_state(
     ):
         T_mean_inside = mean_temperature(T_in_inside, T_out_inside)
         T_mean_outside = mean_temperature(T_in_outside, T_out_outside)
+        outside_property_temperature = T_wall_outside_prev
+        if _capacity_rates is not None and hasattr(_capacity_rates,"outside_property_temperature"):
+            outside_property_temperature = _capacity_rates.outside_property_temperature(
+                T_wall_inside_prev,T_wall_outside_prev)
 
         local = _evaluate_local_wall_state(
             hx,
@@ -986,7 +992,7 @@ def solve_iterative_thermal_state(
             outside_bulk_temperature=T_mean_outside,
             p_inside=p_inside, p_outside=p_outside,
             inside_wall_temperature=T_wall_inside_prev,
-            outside_wall_temperature=T_wall_outside_prev,
+            outside_wall_temperature=outside_property_temperature,
             euler_provider=euler_provider,
             finned_heat_transfer_provider=finned_heat_transfer_provider,
         )
@@ -994,6 +1000,8 @@ def solve_iterative_thermal_state(
         props_bulk_outside = local.outside_bulk_props
         C_inside = m_dot_inside * props_bulk_inside.cp
         C_outside = m_dot_outside * props_bulk_outside.cp
+        if _capacity_rates is not None:
+            C_inside,C_outside = _capacity_rates(T_out_inside,T_out_outside,C_inside,C_outside)
         UA = local.resistance_network.UA
 
         if hot_is_inside:
@@ -1006,7 +1014,7 @@ def solve_iterative_thermal_state(
         eps = effectiveness_ntu(
             C_hot=hot_stream.capacity_rate(),
             C_cold=cold_stream.capacity_rate(),
-            UA=UA,
+            UA=UA*_duty_area_scale,
             flow_arrangement=flow_arrangement,
             C_inside=C_inside,
             C_outside=C_outside,
@@ -1017,6 +1025,11 @@ def solve_iterative_thermal_state(
             T_out_inside_calc, T_out_outside_calc = T_hot_out, T_cold_out
         else:
             T_out_outside_calc, T_out_inside_calc = T_hot_out, T_cold_out
+
+        wall_means = None
+        if _capacity_rates is not None and hasattr(_capacity_rates,"wall_means"):
+            wall_means = _capacity_rates.wall_means(local.resistance_network,
+                                                   C_inside,C_outside,_duty_area_scale)
 
         return {
             "T_mean_inside": T_mean_inside,
@@ -1032,8 +1045,8 @@ def solve_iterative_thermal_state(
             "UA": UA,
             "T_out_inside_calc": T_out_inside_calc,
             "T_out_outside_calc": T_out_outside_calc,
-            "T_wall_inside_calc": local.inside_wall_temperature,
-            "T_wall_outside_calc": local.outside_wall_temperature,
+            "T_wall_inside_calc": local.inside_wall_temperature if wall_means is None else wall_means[0],
+            "T_wall_outside_calc": local.outside_wall_temperature if wall_means is None else wall_means[1],
             "internal_diag": local.internal_diagnostics,
             "outside_Nu_base": local.outside_nusselt_base,
             "outside_Nu_corrected": local.outside_nusselt,

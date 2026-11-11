@@ -180,7 +180,7 @@ def local_dew_point_or_triple_point(
     p_h2o = water_partial_pressure(y, p_wet_gas)
     if is_frost_regime(p_h2o):
         return WATER_TRIPLE_POINT_TEMPERATURE_K
-    return water_dew_point(p_h2o)
+    return water_dew_point(p_h2o, tolerance_K=1e-12)
 
 
 def solve_condensing_interface_state(
@@ -291,33 +291,19 @@ def invert_wet_gas_enthalpy(
     T_wall_mean: float,
     T_in_wet_gas: float,
     evaluator: WetGasEnthalpyEvaluator | None = None,
+    T_min: float | None = None,
 ) -> float:
-    """Invert the shared dry-basis wet-gas enthalpy with bounded brackets."""
-    T_lo = max(
-        WATER_TRIPLE_POINT_TEMPERATURE_K + 0.5,
-        min(T_wall_mean, T_in_wet_gas) - 10.0,
+    """Invert within the liquid-condensation domain; never widen on failure.
+
+    A gas outlet can be colder than its whole-surface mean, so that mean is
+    not a lower bound. The triple point and supplied opposite-stream inlet
+    are bounds; a supersaturated trial is excluded by its own dew point.
+    """
+    dew = local_dew_point_or_triple_point(capability, W, p_wet_gas=p_wet_gas)
+    lower = max(WATER_TRIPLE_POINT_TEMPERATURE_K, dew,
+                WATER_TRIPLE_POINT_TEMPERATURE_K if T_min is None else T_min)
+    return temperature_from_h_wet_gas_dry_basis(
+        h_target, p_wet_gas, W, capability,
+        T_bracket=(lower, T_in_wet_gas), tolerance_K=1e-6,
+        evaluator=evaluator,
     )
-    T_hi = T_in_wet_gas + 5.0
-    try:
-        return temperature_from_h_wet_gas_dry_basis(
-            h_target,
-            p_wet_gas,
-            W,
-            capability,
-            T_bracket=(T_lo, T_hi),
-            tolerance_K=1e-6,
-            evaluator=evaluator,
-        )
-    except ValueError:
-        return temperature_from_h_wet_gas_dry_basis(
-            h_target,
-            p_wet_gas,
-            W,
-            capability,
-            T_bracket=(
-                WATER_TRIPLE_POINT_TEMPERATURE_K + 0.5,
-                T_in_wet_gas + 10.0,
-            ),
-            tolerance_K=1e-6,
-            evaluator=evaluator,
-        )

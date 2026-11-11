@@ -56,8 +56,10 @@ def run_legacy_simulation(hx, inside, outside, *, settings, context, **options):
         outside.provider, T_in=outside.T_in, p=outside.p)
     dry_inside = inside if guarded_inside is inside.provider else replace(inside, provider=guarded_inside)
     dry_outside = outside if guarded_outside is outside.provider else replace(outside, provider=guarded_outside)
+    from core.phase_change.bulk_mean_caloric import bulk_mean_caloric_rates
     try:
-        dry = run_simulation(hx, dry_inside, dry_outside, **options)
+        dry = run_simulation(hx, dry_inside, dry_outside,
+            _capacity_rates=bulk_mean_caloric_rates(hx,dry_inside,dry_outside),**options)
     except ValueError as exc:
         translate_saturation_crossing_error(inside, exc, outside)
     reject_outside_pure_water_evaporation_crossing(outside, T_out=dry.T_out_outside)
@@ -71,6 +73,7 @@ def run_legacy_simulation(hx, inside, outside, *, settings, context, **options):
         euler_provider=options.get("euler_provider", "zukauskas"),
         finned_heat_transfer_provider=options.get("finned_heat_transfer_provider", DEFAULT_FINNED_HT_PROVIDER),
         finned_pressure_drop_provider=options.get("finned_pressure_drop_provider", DEFAULT_FINNED_DP_PROVIDER),
+        flow_arrangement=options.get("flow_arrangement"),
     )
     context.check()
     return _attach_legacy_diagnostics(result, settings=settings)
@@ -217,6 +220,7 @@ def _apply_legacy_outside(
     finned_pressure_drop_provider: object = DEFAULT_FINNED_DP_PROVIDER,
     settings: PhaseChangeSettings | None = None,
     check=None,
+    flow_arrangement=None,
 ):
     """Return a new ``HXSimulationResult`` with phase-change results applied.
 
@@ -269,14 +273,16 @@ def _apply_legacy_outside(
     inside_near_onset = bool(inside_onset is not None and inside_onset.near_onset)
     outside_near_onset = bool(outside_onset is not None and outside_onset.near_onset)
 
-    # "Auto possible" here means "clearly past onset" (OnsetDecision.active),
-    # not merely "possible" (which also covers the near-onset band that must
-    # stay on the dry path -- see core.phase_change.regime).
+    # Bulk-Mean outside transport has the same dry limit on either side of
+    # onset. The activation band remains diagnostic; the configured onset
+    # tolerance decides activation. Inside retains its original routing.
     inside_auto_possible = (
         inside_onset is not None and inside_onset.active and inside.phase_change_mode is PhaseChangeMode.AUTO
     )
     outside_auto_possible = (
-        outside_onset is not None and outside_onset.active and outside.phase_change_mode is PhaseChangeMode.AUTO
+        outside_onset is not None
+        and outside_onset.margin_K > settings.onset_tolerance_K
+        and outside.phase_change_mode is PhaseChangeMode.AUTO
     )
 
     reject_circular_finned_tube_wet_surface(
@@ -365,6 +371,7 @@ def _apply_legacy_outside(
             hx,
             surface_margin=dry_result.surface_margin,
             check=check,
+            flow_arrangement=flow_arrangement,
             inside_provider=inside.provider,
             m_dot_inside=inside.m_dot,
             T_in_inside=inside.T_in,
@@ -575,7 +582,7 @@ def _apply_legacy_outside(
         capable=True,
         possible=True,
         active=True,
-        near_onset=False,
+        near_onset=outside_near_onset,
         onset_margin_K=None if outside_onset is None else outside_onset.margin_K,
         onset_wall_temperature=outside_wall_min,
         onset_temperature_method=ONSET_TEMPERATURE_METHOD,

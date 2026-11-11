@@ -48,3 +48,43 @@ def test_uniform_source_against_independent_boundary_value_problem(flow, h, c, l
     assert r.heat_total == pytest.approx(h*(360-y[0,-1])+latent, abs=1e-7)
     assert r.gas_temperature == pytest.approx(simpson(y[0], x=x), abs=1e-8)
     assert r.other_temperature == pytest.approx(simpson(y[1], x=x), abs=1e-8)
+
+
+@pytest.mark.parametrize("gas_side", ["inside", "outside"])
+def test_crossflow_uniform_source_against_nested_stream_energy_integrals(gas_side):
+    from scipy.integrate import solve_ivp
+    g,h,c,L,b = 800.,200.,300.,2000.,.7
+    # Numerically integrate each unmixed path, then its mixed-stream energy
+    # equation. This checks the source coefficient without the closed forms.
+    def outside_derivative(x,y):
+        mixed = y[0]
+        if gas_side == "outside":
+            local = solve_ivp(lambda z,v: [(g*(mixed-v[0])+b*L)/c,v[0]],
+                              (0,1),[290.,0.],rtol=1e-10,atol=1e-10)
+            unmixed_mean = local.y[1,-1]
+            return [(-g*(mixed-unmixed_mean)+(1-b)*L)/h,mixed]
+        local = solve_ivp(lambda z,v: [(-g*(v[0]-mixed)+(1-b)*L)/h,v[0]],
+                          (0,1),[360.,0.],rtol=1e-10,atol=1e-10)
+        unmixed_mean = local.y[1,-1]
+        return [(g*(unmixed_mean-mixed)+b*L)/c,mixed]
+    mixed_in = 360. if gas_side == "outside" else 290.
+    solved = solve_ivp(outside_derivative,(0,1),[mixed_in,0.],rtol=1e-10,atol=1e-10)
+    expected = (h*(360-solved.y[0,-1])+L if gas_side == "outside"
+                else c*(solved.y[0,-1]-290))
+    r = uniform_source_bulk_means(UA=g,C_gas=h,C_other=c,T_gas_in=360.,
+        T_other_in=290.,Q_latent=L,gas_film_fraction=b,flow_arrangement="crossflow",gas_side=gas_side)
+    assert r.heat_total == pytest.approx(expected,abs=2e-6)
+    mixed_mean = r.gas_temperature if gas_side == "outside" else r.other_temperature
+    assert mixed_mean == pytest.approx(solved.y[1,-1],abs=1e-8)
+
+
+@pytest.mark.parametrize("flow", ["counterflow","cocurrentflow","crossflow"])
+def test_dry_heat_reversal_and_equal_inlet_limit(flow):
+    def solve(hot,cold):
+        return uniform_source_bulk_means(UA=300,C_gas=200,C_other=400,
+            T_gas_in=hot,T_other_in=cold,Q_latent=0,gas_film_fraction=.7,flow_arrangement=flow)
+    assert solve(360,290).heat_total == pytest.approx(-solve(290,360).heat_total)
+    equilibrium = solve(300,300)
+    assert equilibrium.heat_total == 0
+    assert equilibrium.gas_temperature == pytest.approx(300)
+    assert equilibrium.other_temperature == pytest.approx(300)

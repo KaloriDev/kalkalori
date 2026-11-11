@@ -50,6 +50,10 @@ def outside_surface_envelope(hx, solution, *, inside_mean, outside_mean, surface
     Finned bounds are native radial metal states at the 0D mean operating point;
     an equilibrium cold-zone offset is never presented as actual metal.
     """
+    if solution.transport_other_temperature is not None:
+        inside_mean = solution.transport_other_temperature
+    if solution.transport_gas_temperature is not None:
+        outside_mean = solution.transport_gas_temperature
     scale = 1 + surface_margin
     ri = (1 / (solution.alfa_i * hx.bundle.total_inner_area)
           + hx.resistance_fouling_inside) * scale

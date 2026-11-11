@@ -169,13 +169,12 @@ def test_legacy_zero_freeze_and_positive_fouling(finned):
     opts = dict(wet_coil_provider=BulkMeanAnalogyWetCoilProvider())
     clean = hx.simulate(a, b, **opts)
     zero = fouled(hx, None, None).simulate(a, b, **opts)
-    expected = (452361.78009796015, 309.77365212847946, 336.40912837496386,
-                .04443248677919755, .442604902596629, 6621.439654955228) if finned else (
-                # Same independently balanced v0.9.7 terminal-envelope
-                # correction as legacy_wet_coil_provider_test; no fouling or
-                # provider-rename effect is included in this baseline update.
-                824096.7216155361, 344.191486536459, 343.98893291288994,
-                .13850527172933702, .2987910097982726, 12698.196201321589)
+    expected = (455638.3015293523,309.988287110326,338.0164030822758,
+                .0501044642061371,.49872509533064124,6750.748042813086) if finned else (
+                # Shared v0.9.8 topology/caloric correction; independently
+                # balanced in the provider tests and numerical receipt.
+                810045.3039164187,343.2635773739106,345.6796511792785,
+                .1371238601796123,.29925950167934245,12752.372738207137)
     for r in (clean, zero):
         assert (r.q, r.T_out_inside, r.T_out_outside, r.outside_phase_change.m_dot_condensate,
                 r.outside_phase_change.wet_surface_fraction, r.UA) == pytest.approx(expected)

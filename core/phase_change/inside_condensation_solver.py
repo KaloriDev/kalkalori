@@ -26,7 +26,7 @@ from core.phase_change.condensation_solver_helpers import (
 )
 from core.phase_change.types import PhaseChangeCapability
 from core.phase_change.wet_gas_composition import wet_gas_provider_at_water_ratio
-from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator
+from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyEvaluator, WetGasEnthalpyError
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.properties.averaging import mean_temperature
 from core.properties.common import FluidTransportProperties
@@ -144,6 +144,8 @@ def solve_inside_condensation(
     W_in = inside_capability.W_in
 
     T_out_inside = T_out_inside_init
+    T_out_inside = max(T_out_inside,local_dew_point_or_triple_point(
+        inside_capability,W_in,p_wet_gas=p_inside))
     T_out_outside = T_out_outside_init
     W_out = W_in
     wet_surface_fraction = 1.0
@@ -291,24 +293,31 @@ def solve_inside_condensation(
         # Relaxing T only after that inversion is too late: the bounded root
         # solve has already failed.  Interpolating h and W first preserves
         # the final fixed point while keeping intermediate states physical.
-        W_out_relaxed = W_out + relaxation_factor * (W_out_new - W_out)
         h_out_current = enthalpy_evaluator.enthalpy(T_out_inside, W_out)
-        h_out_relaxed = h_out_current + relaxation_factor * (
-            h_out_target - h_out_current
-        )
-        T_out_inside_relaxed = invert_wet_gas_enthalpy(
-            h_target=h_out_relaxed,
-            p_wet_gas=p_inside,
-            W=W_out_relaxed,
-            capability=inside_capability,
-            T_wall_mean=T_wall_inside,
-            T_in_wet_gas=T_in_inside,
-            evaluator=enthalpy_evaluator,
-        )
+        step = relaxation_factor
+        for backtrack in range(24):
+            W_out_relaxed = W_out+step*(W_out_new-W_out)
+            h_out_relaxed = h_out_current+step*(h_out_target-h_out_current)
+            try:
+                T_out_inside_relaxed = invert_wet_gas_enthalpy(
+                    h_target=h_out_relaxed,p_wet_gas=p_inside,W=W_out_relaxed,
+                    capability=inside_capability,T_wall_mean=T_wall_inside,
+                    T_in_wet_gas=T_in_inside,T_min=T_in_outside,evaluator=enthalpy_evaluator)
+                break
+            except WetGasEnthalpyError as exc:
+                if exc.reason != "bad_bracket":
+                    raise
+                step *= .5
+        else:
+            raise WetGasEnthalpyError("numerical_stagnation",
+                "Inside condensation iteration found no admissible enthalpy/humidity step",
+                diagnostics=dict(iteration=iteration, gas_out_K=T_out_inside,
+                    W_out=W_out, h_current=h_out_current, h_target=h_out_target,
+                    W_target=W_out_new, backtracks=24))
         cp_outside = outside_provider.at(T=T_mean_outside, p=p_outside).cp
         T_out_outside_new = T_in_outside + Q_total / (m_dot_outside * cp_outside)
 
-        T_out_outside_relaxed = T_out_outside + relaxation_factor * (
+        T_out_outside_relaxed = T_out_outside + step * (
             T_out_outside_new - T_out_outside
         )
         T_wall_outside = T_mean_outside + Q_total * R_o
@@ -339,6 +348,8 @@ def solve_inside_condensation(
             wet_wall_residual = abs(T_wall_wet_mean - T_wall_wet_mean_prev)
 
         residuals = {
+            "admissible_step_fraction": step,
+            "outlet_domain_backtracks": float(backtrack),
             "Q_rel": (
                 abs(Q_total - Q_total_prev) / max(abs(Q_total_prev), 1e-9)
                 if Q_total_prev is not None

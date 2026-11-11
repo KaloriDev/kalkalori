@@ -74,6 +74,12 @@ condensate, and nonzero wet area are distinct diagnostics.
 
 The bulk-mean analogy's bare wet-area model closes representative interface
 balances using current mean-property resistances and a uniform latent source.
+In v0.9.8 its transport balance uses analytic area means of the applicable
+counter/cocurrent or outside-mixed crossflow energy equations. At zero latent
+source this is the dry epsilon-NTU law. Correlations still use their established
+bulk property convention; finite stream enthalpy increments supply common dry
+and wet capacity rates. Area-mean wall temperatures remain distinct from
+arithmetic terminal means and exposed-surface extrema.
 Both stream terminal changes enter counter/cocurrent pairs. For unresolved
 crossflow it retains the opposite-stream mean approximation: a conservative
 rectangle bound cannot be interpreted as an area distribution. The inside
@@ -96,7 +102,8 @@ No generic 0D profile overwrites it. Private external providers retain their
 own definitions. `axial_wet_fraction`, radial wet fractions and aggregate wet
 area fractions cannot be substituted for one another.
 
-No liquid-film resistance or unsupported wet geometry is introduced. Gas
-enthalpy inversion, active wet hydraulics, and a distributed v2.x model remain
-separate work. See the [provider guide](wet_coil_providers.md) and
-[implementation evidence](validation/v0.9.7_wall_temperature_envelope_patch.md).
+No liquid-film resistance or unsupported wet geometry is introduced. Active
+wet hydraulics and a distributed model remain separate work. Bounded gas
+enthalpy inversion now rejects supersaturated trials and classifies failures.
+See the [provider guide](wet_coil_providers.md) and
+[v0.9.8 evidence](validation/v0.9.8_wet_closure_numerical_patch.md).

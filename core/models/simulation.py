@@ -799,6 +799,7 @@ def run_simulation(
     relative_duty_tolerance: float = 1e-4,
     relaxation_factor: float = 0.5,
     relative_alfa_tolerance: float = 1e-3,
+    _capacity_rates=None,
 ) -> HXSimulationResult:
     """Simulate a plain- or circular-finned-tube exchanger.
 
@@ -859,6 +860,8 @@ def run_simulation(
 
         C_inside = inside.m_dot * props_in.cp
         C_outside = outside.m_dot * props_out.cp
+        if _capacity_rates is not None:
+            C_inside,C_outside = _capacity_rates(T_out_inside,T_out_outside,C_inside,C_outside)
 
         if hot_is_inside:
             hot_stream = SensibleHeatStream(C=C_inside, T_in=inside.T_in)
@@ -1208,22 +1211,28 @@ def run_simulation(
         wall_temperature_tolerance_K=temperature_tolerance_K,
         relative_alfa_tolerance=relative_alfa_tolerance,
         relaxation_factor=relaxation_factor,
+        _capacity_rates=_capacity_rates,
+        _duty_area_scale=(1/(1+surface_margin) if _capacity_rates is not None else 1.0),
     )
 
     # Build the final snapshot after thermal convergence.  The tube-side
     # hydraulic state is evaluated from the actual inlet/outlet temperatures;
     # no one-state hydraulic result is propagated or used here.
+    C_inside = inside.m_dot*thermal_state.inside_bulk_props.cp
+    C_outside = outside.m_dot*thermal_state.outside_bulk_props.cp
+    if _capacity_rates is not None:
+        C_inside,C_outside = _capacity_rates(
+            2*thermal_state.inside_bulk_temperature-inside.T_in,
+            2*thermal_state.outside_bulk_temperature-outside.T_in,C_inside,C_outside)
     if hot_is_inside:
-        hot_stream = SensibleHeatStream(C=inside.m_dot * thermal_state.inside_bulk_props.cp, T_in=inside.T_in)
-        cold_stream = SensibleHeatStream(C=outside.m_dot * thermal_state.outside_bulk_props.cp, T_in=outside.T_in)
+        hot_stream = SensibleHeatStream(C=C_inside, T_in=inside.T_in)
+        cold_stream = SensibleHeatStream(C=C_outside, T_in=outside.T_in)
     else:
-        hot_stream = SensibleHeatStream(C=outside.m_dot * thermal_state.outside_bulk_props.cp, T_in=outside.T_in)
-        cold_stream = SensibleHeatStream(C=inside.m_dot * thermal_state.inside_bulk_props.cp, T_in=inside.T_in)
+        hot_stream = SensibleHeatStream(C=C_outside, T_in=outside.T_in)
+        cold_stream = SensibleHeatStream(C=C_inside, T_in=inside.T_in)
 
     # Achievable duty/outlet temperatures from the CORRECTED UA (reuses the
     # existing epsilon-NTU relations; no correlation is duplicated here).
-    C_inside = inside.m_dot * thermal_state.inside_bulk_props.cp
-    C_outside = outside.m_dot * thermal_state.outside_bulk_props.cp
     eps_full = effectiveness_ntu(
         C_hot=hot_stream.capacity_rate(),
         C_cold=cold_stream.capacity_rate(),

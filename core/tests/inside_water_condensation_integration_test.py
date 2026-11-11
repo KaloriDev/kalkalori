@@ -254,8 +254,13 @@ def test_inside_water_and_full_enthalpy_balances(partial_result) -> None:
     assert pc.energy_balance_error == pytest.approx(pc.Q_total - Q_enthalpy)
 
 
-def test_large_inside_condensing_geometry_relaxes_before_enthalpy_inversion() -> None:
-    """A strong first wet step must not escape below the water bracket."""
+def test_large_inside_condensing_geometry_rejects_supersaturated_fixed_point() -> None:
+    """v0.9.7 accepted Wout=.058235 at 308.636 K (Wsat=.037787).
+
+    A stalled admissible iteration is not proof that the physical exchanger
+    is infeasible. It must reject this mean-model prediction, rather than
+    widening a caloric bracket to return supersaturated vapor.
+    """
     tube = BareTube(
         D_o=18e-3,
         D_i=16e-3,
@@ -285,35 +290,35 @@ def test_large_inside_condensing_geometry_relaxes_before_enthalpy_inversion() ->
         )
     )
 
-    result = hx.simulate(
-        HXSideInput(
-            provider=wet_provider,
-            m_dot=11_000.0 / 3600.0,
-            T_in=363.15,
-            p=101_325.0,
-        ),
-        HXSideInput(
-            provider=DryAirPropertyProvider(),
-            m_dot=11_000.0 / 3600.0,
-            T_in=270.15,
-            p=101_325.0,
-        ),
-        surface_margin=0.10,
-        euler_provider="gaddis_gnielinski",
-    )
+    from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyError
+    with pytest.raises(WetGasEnthalpyError) as caught:
+        hx.simulate(
+            HXSideInput(
+                provider=wet_provider,
+                m_dot=11_000.0 / 3600.0,
+                T_in=363.15,
+                p=101_325.0,
+            ),
+            HXSideInput(
+                provider=DryAirPropertyProvider(),
+                m_dot=11_000.0 / 3600.0,
+                T_in=270.15,
+                p=101_325.0,
+            ),
+            surface_margin=0.10,
+            euler_provider="gaddis_gnielinski",
+        )
+    assert caught.value.reason == "numerical_stagnation"
+    assert caught.value.diagnostics["backtracks"] == 24
 
-    pc = result.inside_phase_change
-    assert pc.active is True
-    assert pc.converged is True
-    assert pc.m_dot_condensate > 0.0
-    assert pc.W_out < pc.W_in
-    assert result.T_out_inside > 273.15
-    assert result.UA_actual == result.UA
-    assert result.UA_process == pytest.approx(abs(result.q) / result.EMTD)
-    assert result.overdesign_factor == pytest.approx(0.10)
-    assert result.overdesign_factor == pytest.approx(
-        result.UA_actual / result.UA_process - 1.0
-    )
+
+def test_valid_inside_condensation_outlet_obeys_saturation(partial_result) -> None:
+    from core.phase_change.water_equilibrium import saturated_water_ratio
+    pc = partial_result.inside_phase_change
+    cap = detect_phase_change_capability(GasMixturePropertyProvider(_wet_spec()))
+    limit = saturated_water_ratio(p_total=101325., T=partial_result.T_out_inside, M_dry=cap.M_dry)
+    assert pc.converged and pc.m_dot_condensate > 0
+    assert 0 <= pc.W_out <= min(pc.W_in, limit)
 
 
 def test_inside_endpoint_properties_and_composition(partial_result) -> None:

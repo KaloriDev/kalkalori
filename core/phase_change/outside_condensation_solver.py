@@ -75,6 +75,9 @@ from core.phase_change.wet_gas_enthalpy import (
     temperature_from_h_wet_gas_dry_basis,
 )
 from core.phase_change.mass_heat_transfer import condensation_rate
+from core.phase_change.bulk_mean_closure import uniform_source_bulk_means
+from core.phase_change.bulk_mean_caloric import gas_capacity
+from core.geometry._thermal_topology import resolve_thermal_topology
 from core.phase_change.wet_surface_fraction import estimate_wet_surface_fraction
 from core.phase_change.wet_finned_surface import (
     WetFinConvergenceError,
@@ -154,9 +157,11 @@ class OutsideCondensationSolution:
     # Actual representative states used by the final physics-active 0D area
     # estimate: (inside bulk, outside bulk, interface), in K.
     surface_temperature_samples: tuple[tuple[float, float, float], ...] = ()
+    transport_gas_temperature: float | None = None
+    transport_other_temperature: float | None = None
 
 
-def solve_outside_condensation(
+def _solve_outside_condensation(
     hx: "BareTubeHeatExchanger",
     *,
     inside_provider: PropertyProvider,
@@ -184,7 +189,12 @@ def solve_outside_condensation(
     wall_temperature_tolerance_K: float = 0.05,
     wet_fraction_tolerance: float = 1e-3,
     relaxation_factor: float = 0.5,
+    flow_arrangement=None,
     check=None,
+    _trial_state=None,
+    _accepted_residuals=None,
+    _enthalpy_evaluator=None,
+    _finned_fallback_locked=False,
 ) -> OutsideCondensationSolution:
     """Iteratively solve the coupled outside condensation state.
 
@@ -264,6 +274,10 @@ def solve_outside_condensation(
     T_out_inside = T_out_inside_init
     T_out_outside = T_out_outside_init
     W_out = W_in
+    # The dry trial can cool below its dew point. Start the wet iteration on
+    # an admissible vapor state; this is an initial guess, never an outlet clamp.
+    T_out_outside = max(T_out_outside, local_dew_point_or_triple_point(
+        outside_capability, W_in, p_wet_gas=p_outside))
     wet_surface_fraction = 1.0
 
     T_wall_inside_prev: float | None = None
@@ -277,12 +291,23 @@ def solve_outside_condensation(
     converged = False
     residuals: dict[str, float] = {}
     solution_state: dict[str, object] = {}
-    enthalpy_evaluator = WetGasEnthalpyEvaluator(
+    enthalpy_evaluator = _enthalpy_evaluator or WetGasEnthalpyEvaluator(
         p_outside,
         outside_capability,
     )
     h_in_outside = enthalpy_evaluator.enthalpy(T_in_outside, W_in)
-    finned_wet_zone_fallback_locked = False
+    finned_wet_zone_fallback_locked = _finned_fallback_locked
+    latent_source = 0.0
+    from core.phase_change.capability import pure_water_saturation_temperature
+    coolant_saturation = pure_water_saturation_temperature(inside_provider, p=p_inside)
+    coolant_upper = T_in_outside
+    if coolant_saturation is not None and T_in_inside < coolant_saturation:
+        coolant_upper = min(coolant_upper, coolant_saturation - 1e-6)
+    from core.heat_transfer.wet_coil_adapters import InsideWallAdapter
+    coolant_caloric = InsideWallAdapter(bundle, inside_provider, m_dot_inside, p_inside)
+    if _trial_state is not None:
+        (T_out_inside, T_out_outside, W_out, latent_source,
+         T_wall_inside_prev, T_wall_outside_prev) = _trial_state
 
     for iteration in range(1, max_iterations + 1):
         if check is not None:
@@ -315,6 +340,28 @@ def solve_outside_condensation(
         cp_gas_bulk = local.outside_bulk_props.cp
         R_i = 1.0 / (alfa_i * A_i) + hx.resistance_fouling_inside * margin_factor
         R_downstream = R_i + R_w + hx.resistance_fouling_outside * margin_factor
+        R_total_dry = margin_factor / local.resistance_network.UA
+        transport = uniform_source_bulk_means(
+            UA=1 / R_total_dry,
+            C_gas=gas_capacity(enthalpy_evaluator,m_dot_dry_carrier,T_in_outside,
+                T_out_outside,W_mean,m_dot_gas_mean*cp_gas_bulk),
+            C_other=coolant_caloric.capacity(T_in_inside,T_out_inside),
+            T_gas_in=T_in_outside, T_other_in=T_in_inside,
+            gas_film_fraction=(R_total_dry - R_downstream) / R_total_dry,
+            Q_latent=latent_source,
+            flow_arrangement=resolve_thermal_topology(hx.bundle, flow_arrangement),
+        )
+        T_transport_gas = transport.gas_temperature
+        T_transport_other = transport.other_temperature
+        # The inherited cold-zone offset is referenced to the terminal-mean
+        # interface. Convert that coordinate to the actual area-mean interface
+        # before applying it to a representative radial field. This is a
+        # resistance-derived change of reference, not a metal-temperature clamp.
+        mean_interface_shift = (
+            (T_transport_gas-T_mean_outside)*R_downstream
+            +(T_transport_other-T_mean_inside)*(R_total_dry-R_downstream)
+        )/R_total_dry
+        finned_equilibrium_offset = finned_condensation_temperature_offset_K-mean_interface_shift
         wet_finned_surface = None
         surface_temperature_samples = ()
 
@@ -334,8 +381,8 @@ def solve_outside_condensation(
                         hx.bundle,
                         local.resistance_network,
                         check=check,
-                        gas_bulk_temperature=T_mean_outside,
-                        inside_bulk_temperature=T_mean_inside,
+                        gas_bulk_temperature=T_transport_gas,
+                        inside_bulk_temperature=T_transport_other,
                         cp_gas=cp_gas_bulk,
                         W_bulk=W_mean,
                         p_total=p_outside,
@@ -400,7 +447,7 @@ def solve_outside_condensation(
                         finned_condensation_area_fraction
                     ),
                     condensation_temperature_offset_K=(
-                        finned_condensation_temperature_offset_K
+                        finned_equilibrium_offset
                     ),
                 )
             else:
@@ -426,7 +473,7 @@ def solve_outside_condensation(
                         finned_condensation_area_fraction
                     ),
                     condensation_temperature_offset_K=(
-                        finned_condensation_temperature_offset_K
+                        finned_equilibrium_offset
                     ),
                 )
                 finned_wet_zone_fallback_used = True
@@ -466,20 +513,19 @@ def solve_outside_condensation(
             # the representative thermal states used by their wet-area input.
             alfa_o_dry = local.alfa_o_physical
             R_o_film = 1.0 / (alfa_o_dry * A_o)
-            from core.geometry._thermal_topology import resolve_thermal_topology
             from core.phase_change.condensation_solver_helpers import representative_interface_envelope
             T_wall_min_iter, T_wall_mean_reference, T_wall_max_iter = representative_interface_envelope(
-                topology=resolve_thermal_topology(hx.bundle), side="outside",
+                topology=resolve_thermal_topology(hx.bundle, flow_arrangement), side="outside",
                 T_in_inside=T_in_inside, T_out_inside=T_out_inside,
                 T_in_outside=T_in_outside, T_out_outside=T_out_outside,
                 R_wet_film=R_o_film, R_downstream=R_downstream,
-                Q_latent=solution_state.get("Q_latent", 0.0),
+                Q_latent=latent_source,
             )
             from core.phase_change.condensation_solver_helpers import representative_wet_bulk_pairs
             bulk_pairs = representative_wet_bulk_pairs(
-                resolve_thermal_topology(hx.bundle), "outside", T_in_inside, T_out_inside,
+                resolve_thermal_topology(hx.bundle, flow_arrangement), "outside", T_in_inside, T_out_inside,
                 T_in_outside, T_out_outside)
-            source = solution_state.get("Q_latent", 0.0)
+            source = latent_source
             surface_temperature_samples = tuple(
                 (ti, to, (to * R_downstream + ti * R_o_film
                           + source * R_o_film * R_downstream) / (R_o_film + R_downstream))
@@ -554,8 +600,8 @@ def solve_outside_condensation(
                 A_total=A_o,
                 A_wet=A_wet,
                 T_wall_wet_mean=T_wall_wet_mean_new,
-                T_bulk_wet_gas=T_mean_outside,
-                T_bulk_other=T_mean_inside,
+                T_bulk_wet_gas=T_transport_gas,
+                T_bulk_other=T_transport_other,
                 R_downstream=R_downstream,
                 cp_gas=cp_gas_bulk,
                 W_bulk=W_mean,
@@ -589,33 +635,72 @@ def solve_outside_condensation(
         )
         h_drained_per_kg_dry = condensate_enthalpy_rate / m_dot_dry_carrier
         h_out_target = h_in_outside - Q_total / m_dot_dry_carrier - h_drained_per_kg_dry
+        T_wall_inside_new = (wet_finned_surface.inside_wall_temperature
+            if wet_finned_surface is not None else T_transport_other+Q_total*R_i)
+        if _trial_state is not None and _accepted_residuals is None:
+            return dict(
+                Q_total=Q_total, Q_latent=Q_latent,
+                mass_residual=m_dot_dry_carrier*(W_in-W_out)-m_dot_condensate,
+                gas_residual=m_dot_dry_carrier*(h_out_target-enthalpy_evaluator.enthalpy(T_out_outside,W_out)),
+                coolant_residual=Q_total-m_dot_inside*coolant_caloric.enthalpy_difference(T_in_inside,T_out_inside),
+                latent_residual=Q_latent-latent_source,
+                cp_gas=cp_gas_bulk, cp_other=local.inside_bulk_props.cp,
+                inside_wall_residual=T_wall_inside_new-T_wall_inside_prev,
+                outside_wall_residual=T_wall_mean-T_wall_outside_prev,
+            )
 
-        T_out_outside_new = invert_wet_gas_enthalpy(
-            h_target=h_out_target,
-            p_wet_gas=p_outside,
-            W=W_out_new,
-            capability=outside_capability,
-            T_wall_mean=T_wall_mean,
-            T_in_wet_gas=T_in_outside,
-            evaluator=enthalpy_evaluator,
-        )
-
+        # Relax conserved quantities before inversion. A raw high-NTU trial
+        # may leave the caloric domain even when its fixed point is admissible.
+        h_out_current = enthalpy_evaluator.enthalpy(T_out_outside, W_out)
+        coolant_h_current = coolant_caloric.enthalpy_difference(T_in_inside, T_out_inside)
         cp_inside_mean = inside_provider.at(T=T_mean_inside, p=p_inside).cp
         T_out_inside_new = T_in_inside + Q_total / (m_dot_inside * cp_inside_mean)
-
-        T_out_inside_relaxed = T_out_inside + outer_relaxation_factor * (
-            T_out_inside_new - T_out_inside
-        )
-        T_out_outside_relaxed = T_out_outside + outer_relaxation_factor * (
-            T_out_outside_new - T_out_outside
-        )
-        W_out_relaxed = W_out + outer_relaxation_factor * (W_out_new - W_out)
-        T_wall_inside_new = (
-            wet_finned_surface.inside_wall_temperature
-            if wet_finned_surface is not None
-            else T_mean_inside + Q_total * R_i
-        )
-
+        step = outer_relaxation_factor
+        from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyError
+        for backtrack in range(24):
+            if check is not None:
+                check()
+            if _accepted_residuals is not None:
+                T_out_inside_relaxed, T_out_outside_relaxed, W_out_relaxed = _trial_state[:3]
+                step = 0.0
+                break
+            W_out_relaxed = W_out + step * (W_out_new - W_out)
+            h_out_relaxed = h_out_current + step * (h_out_target - h_out_current)
+            coolant_h_trial = coolant_h_current + step * (Q_total/m_dot_inside-coolant_h_current)
+            try:
+                if coolant_h_trial < 0:
+                    raise WetGasEnthalpyError("physically_infeasible", "Coolant trial leaves inlet-temperature bounds")
+                if hasattr(inside_provider,"temperature_from_h_p") and hasattr(inside_provider,"specific_enthalpy"):
+                    T_out_inside_relaxed = inside_provider.temperature_from_h_p(
+                        inside_provider.specific_enthalpy(T_in_inside,p_inside)+coolant_h_trial,p_inside)
+                else:
+                    from scipy.optimize import brentq
+                    T_out_inside_relaxed = brentq(
+                        lambda T: coolant_caloric.enthalpy_difference(T_in_inside,T)-coolant_h_trial,
+                        T_in_inside,coolant_upper,xtol=1e-8)
+                if not T_in_inside <= T_out_inside_relaxed < coolant_upper:
+                    raise WetGasEnthalpyError("physically_infeasible", "Coolant enthalpy trial reaches an unsupported phase")
+                T_out_outside_relaxed = invert_wet_gas_enthalpy(
+                    h_target=h_out_relaxed, p_wet_gas=p_outside,
+                    W=W_out_relaxed, capability=outside_capability,
+                    T_wall_mean=T_wall_mean, T_in_wet_gas=T_in_outside,
+                    T_min=T_in_inside, evaluator=enthalpy_evaluator)
+                # Preserve the configured coolant phase guard for trial states.
+                inside_provider.at(T=(T_in_inside+T_out_inside_relaxed)/2, p=p_inside)
+                break
+            except WetGasEnthalpyError as exc:
+                if exc.reason not in ("bad_bracket", "physically_infeasible"):
+                    raise
+                step *= 0.5
+        else:
+            raise WetGasEnthalpyError("numerical_stagnation",
+                "Condensation iteration has no admissible descent step within energy/saturation bounds; "
+                f"iteration={iteration}, T_gas={T_out_outside:.9g} K, W={W_out:.9g}, "
+                f"h_trial={h_out_target:.9g} J/kg, W_trial={W_out_new:.9g}. "
+                "This does not by itself prove that the input problem is physically infeasible.",
+                diagnostics=dict(initial_state=(T_out_inside,T_out_outside,W_out,latent_source,
+                    T_wall_inside_new,T_wall_mean),
+                    finned_fallback_locked=finned_wet_zone_fallback_locked))
         finite_values = [
             Q_sensible,
             Q_latent,
@@ -655,16 +740,16 @@ def solve_outside_condensation(
             )
 
         if wet_finned_surface is None:
-            wall_envelope_center_residual = abs(
-                T_wall_mean - 0.5 * (T_wall_min_iter + T_wall_max_iter)
-            )
+            # The true area mean need not be the midpoint of terminal extrema.
+            # Check closure of the uniform-source transport iterate instead.
+            wall_envelope_center_residual = abs(Q_latent - latent_source) * R_total_dry
             wall_envelope_contains_mean = (
                 T_wall_min_iter <= T_wall_mean <= T_wall_max_iter
             )
         else:
             # The finned bounds are radial exposed-metal extrema, not the
             # centred endpoint-envelope proxy used by the bare 0D model.
-            wall_envelope_center_residual = 0.0
+            wall_envelope_center_residual = abs(Q_latent - latent_source) * R_total_dry
             wall_envelope_contains_mean = True
         mass_balance_residual = abs(
             m_dot_dry_carrier * (W_in - W_out_relaxed)
@@ -679,6 +764,8 @@ def solve_outside_condensation(
             "T_out_outside_K": abs(T_out_outside_relaxed - T_out_outside),
             "W_out": abs(W_out_relaxed - W_out),
             "mass_balance_kg_s": mass_balance_residual,
+            "admissible_step_fraction": step,
+            "outlet_domain_backtracks": float(backtrack),
             "m_dot_condensate_kg_s": (
                 abs(m_dot_condensate - m_dot_condensate_prev)
                 if m_dot_condensate_prev is not None else math.inf
@@ -738,7 +825,28 @@ def solve_outside_condensation(
             wet_finned_surface=wet_finned_surface,
             finned_tube_diagnostics=local.finned_tube_diagnostics,
             surface_temperature_samples=surface_temperature_samples,
+            transport_gas_temperature=T_transport_gas,
+            transport_other_temperature=T_transport_other,
         )
+        if _accepted_residuals is not None:
+            # The bounded residual solver has already verified the original
+            # mass/energy/source gates. Retain its actual outlet state instead
+            # of taking a redundant relaxed fixed-point step.
+            solution_state.update(T_out_inside=_trial_state[0], T_out_outside=_trial_state[1],
+                                  W_out=_trial_state[2])
+            residuals.update(_accepted_residuals)
+            residuals.update(
+                Q_rel=max(abs(residuals["gas_energy_W"]),abs(residuals["coolant_energy_W"]))/max(abs(Q_total),1.),
+                T_out_inside_K=abs(residuals["coolant_energy_W"])/(m_dot_inside*cp_inside_mean),
+                T_out_outside_K=abs(residuals["gas_energy_W"])/(m_dot_dry_carrier*cp_gas_bulk),
+                W_out=residuals["mass_balance_kg_s"]/m_dot_dry_carrier,
+                m_dot_condensate_kg_s=residuals["mass_balance_kg_s"],
+                T_wall_outside_K=abs(T_wall_mean-T_wall_outside_prev),
+                T_wall_wet_mean_K=abs(residuals["latent_source_W"])*R_total_dry,
+                wall_envelope_center_K=abs(residuals["latent_source_W"])*R_total_dry,
+                wet_surface_fraction=0.,wet_surface_fraction_step=0.)
+            converged = True
+            break
 
         Q_total_prev = Q_total
         m_dot_condensate_prev = m_dot_condensate
@@ -749,6 +857,7 @@ def solve_outside_condensation(
             T_out_inside_relaxed, T_out_outside_relaxed, W_out_relaxed,
         )
         wet_surface_fraction = wet_surface_fraction_new
+        latent_source += step * (Q_latent - latent_source)
 
         if (
             iteration >= 2
@@ -833,6 +942,24 @@ def solve_outside_condensation(
             )
         )
 
+    if converged:
+        from core.phase_change.capability import (
+            WET_GAS_INLET_SATURATION_ABSOLUTE_TOLERANCE,
+            WET_GAS_INLET_SATURATION_RELATIVE_TOLERANCE,
+        )
+        from core.properties.water import water_saturation_pressure
+        outlet_T, outlet_W = solution_state["T_out_outside"], solution_state["W_out"]
+        if water_saturation_pressure(outlet_T) < p_outside:
+            limit = saturated_water_ratio(p_total=p_outside,T=outlet_T,M_dry=outside_capability.M_dry)
+            allowance = max(WET_GAS_INLET_SATURATION_ABSOLUTE_TOLERANCE,
+                            limit*WET_GAS_INLET_SATURATION_RELATIVE_TOLERANCE)
+            if outlet_W > limit+allowance:
+                raise WetGasEnthalpyError("physically_infeasible", "Converged Bulk-Mean outlet is supersaturated")
+        if (not 0 <= outlet_W <= W_in
+            or not 0 <= solution_state["m_dot_condensate"] <= m_dot_dry_carrier*W_in
+            or solution_state["Q_sensible"] < 0):
+            raise WetGasEnthalpyError("physically_infeasible", "Converged Bulk-Mean state violates vapor/sensible bounds")
+
     A_o_local = A_o
     if final_wet_finned_surface is not None:
         # Reuse the coefficient reconstructed by the same converged radial
@@ -843,10 +970,7 @@ def solve_outside_condensation(
             .outside_alpha_wet_effective_gross_core_basis
         )
     else:
-        T_bulk_outside_final = mean_temperature(
-            T_in_outside,
-            solution_state["T_out_outside"],
-        )
+        T_bulk_outside_final = solution_state["transport_gas_temperature"]
         delta_T_film = (
             T_bulk_outside_final - solution_state["T_wall_outside"]
         )
@@ -935,7 +1059,33 @@ def solve_outside_condensation(
         wet_finned_surface=solution_state["wet_finned_surface"],
         finned_tube_diagnostics=solution_state["finned_tube_diagnostics"],
         surface_temperature_samples=solution_state["surface_temperature_samples"],
+        transport_gas_temperature=solution_state["transport_gas_temperature"],
+        transport_other_temperature=solution_state["transport_other_temperature"],
     )
+
+
+def solve_outside_condensation(hx, **kwargs):
+    """Solve the same physical equations, using a bounded residual fallback."""
+    from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyError
+    try:
+        result = _solve_outside_condensation(hx, **kwargs)
+        if result.converged or kwargs.get("max_iterations", 50) < 3:
+            return result
+        initial = (result.T_out_inside, result.T_out_outside, result.W_out, result.Q_latent,
+                   result.T_wall_inside, result.T_wall_outside)
+        wet = result.wet_finned_surface
+        locked = wet is not None and (wet.condensation_area_fraction < 1
+                                     or wet.condensation_temperature_offset_K < 0)
+    except WetGasEnthalpyError as exc:
+        if exc.reason != "numerical_stagnation" or kwargs.get("max_iterations",50) < 3:
+            raise
+        initial = exc.diagnostics.get("initial_state")
+        locked = exc.diagnostics.get("finned_fallback_locked",False)
+    from core.phase_change.bulk_mean_numerics import solve_bounded_outlets
+    kwargs = dict(kwargs,_finned_fallback_locked=locked)
+    state, residuals = solve_bounded_outlets(hx, kwargs, _solve_outside_condensation, initial)
+    return _solve_outside_condensation(hx, **kwargs, _trial_state=state,
+                                      _accepted_residuals=residuals)
 
 
 def _sensible_only_wall_temperature(

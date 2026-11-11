@@ -1571,6 +1571,13 @@ class BareTubeHeatExchanger:
         )
 
         try:
+            from core.phase_change.wet_coil_provider import BulkMeanAnalogyWetCoilProvider
+            capacity_rates = None
+            if (isinstance(wet_coil_provider,BulkMeanAnalogyWetCoilProvider)
+                and wet_coil_provider.is_applicable(self,inside,outside,settings=settings,
+                                                   flow_arrangement=flow_arrangement)):
+                from core.phase_change.bulk_mean_caloric import bulk_mean_caloric_rates
+                capacity_rates = bulk_mean_caloric_rates(self,dry_inside,dry_outside)
             dry_result = run_simulation(
                 self,
                 dry_inside,
@@ -1589,6 +1596,7 @@ class BareTubeHeatExchanger:
                 relative_duty_tolerance=relative_duty_tolerance,
                 relaxation_factor=relaxation_factor,
                 relative_alfa_tolerance=relative_alfa_tolerance,
+                _capacity_rates=capacity_rates,
             )
         except ValueError as exc:
             translate_saturation_crossing_error(inside, exc, outside)

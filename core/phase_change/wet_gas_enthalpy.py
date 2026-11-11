@@ -68,7 +68,10 @@ from __future__ import annotations
 import math
 
 from core.properties.gas_mixture import GasMixturePropertyProvider
-from core.properties.water import water_saturation_vapor_enthalpy
+from core.properties.water import (
+    water_saturation_vapor_enthalpy, WATER_TRIPLE_POINT_TEMPERATURE_K,
+    WATER_CRITICAL_TEMPERATURE_K,
+)
 from core.phase_change.types import PhaseChangeCapability
 from core.phase_change.wet_gas_composition import dry_gas_spec
 
@@ -80,6 +83,15 @@ from core.phase_change.wet_gas_composition import dry_gas_spec
 # critical temperature, there is no saturated-vapor state to approximate
 # low-partial-pressure superheated vapor with.
 DEFAULT_TEMPERATURE_BRACKET_K = (274.0, 640.0)
+
+
+class WetGasEnthalpyError(ValueError):
+    """A classified caloric inversion failure, retaining ValueError compatibility."""
+
+    def __init__(self, reason, message, diagnostics=None):
+        self.reason = reason
+        self.diagnostics = {} if diagnostics is None else diagnostics
+        super().__init__(message)
 
 
 class WetGasEnthalpyEvaluator:
@@ -191,6 +203,11 @@ def temperature_from_h_wet_gas_dry_basis(
         ValueError: if ``h_target`` is not bracketed by
             ``h_wet_gas_dry_basis`` evaluated at the bracket endpoints.
     """
+    T_lo, T_hi = T_bracket
+    if (not all(math.isfinite(v) for v in (h_target, p, W, T_lo, T_hi, tolerance_K))
+            or p <= 0 or W < 0 or tolerance_K <= 0 or max_iterations <= 0
+            or not WATER_TRIPLE_POINT_TEMPERATURE_K <= T_lo < T_hi < WATER_CRITICAL_TEMPERATURE_K):
+        raise WetGasEnthalpyError("invalid_input", "Invalid wet-gas caloric inversion input/domain")
     if evaluator is not None:
         if evaluator.p != p or evaluator.capability != capability:
             raise ValueError(
@@ -203,23 +220,42 @@ def temperature_from_h_wet_gas_dry_basis(
             temperature, p, W, capability
         )
 
-    T_lo, T_hi = T_bracket
-    h_lo = evaluate(T_lo)
-    h_hi = evaluate(T_hi)
+    raw_evaluate = evaluate
+    def evaluate(temperature):
+        try:
+            value = raw_evaluate(temperature)
+        except (ValueError, RuntimeError) as exc:
+            raise WetGasEnthalpyError("property_backend_failure",
+                f"Wet-gas property backend failed at T={temperature:.9g} K: {exc}") from exc
+        if not math.isfinite(value):
+            raise WetGasEnthalpyError("property_backend_failure", "Non-finite wet-gas enthalpy")
+        return value
+
+    h_lo, h_hi = evaluate(T_lo), evaluate(T_hi)
+    if h_hi <= h_lo:
+        raise WetGasEnthalpyError("non_monotonic_mapping", "Wet-gas caloric bracket is not increasing")
     if not (h_lo <= h_target <= h_hi):
-        raise ValueError(
+        raise WetGasEnthalpyError("bad_bracket",
             f"temperature_from_h_wet_gas_dry_basis: h_target={h_target:.6g} J/kg "
             f"is not bracketed by [{h_lo:.6g}, {h_hi:.6g}] J/kg over T in "
-            f"[{T_lo:.6g}, {T_hi:.6g}] K. Widen T_bracket."
+            f"[{T_lo:.6g}, {T_hi:.6g}] K. Check the physical energy/domain bounds."
         )
+    if h_target == h_lo:
+        return T_lo
+    if h_target == h_hi:
+        return T_hi
 
     for _ in range(max_iterations):
         T_mid = 0.5 * (T_lo + T_hi)
+        if T_mid == T_lo or T_mid == T_hi:
+            raise WetGasEnthalpyError("numerical_stagnation", "Wet-gas inverse reached floating-point resolution")
         h_mid = evaluate(T_mid)
+        if not h_lo <= h_mid <= h_hi:
+            raise WetGasEnthalpyError("non_monotonic_mapping", "Wet-gas enthalpy is not monotone on its bracket")
         if h_mid < h_target:
-            T_lo = T_mid
+            T_lo, h_lo = T_mid, h_mid
         else:
-            T_hi = T_mid
+            T_hi, h_hi = T_mid, h_mid
         if (T_hi - T_lo) < tolerance_K:
-            break
-    return 0.5 * (T_lo + T_hi)
+            return 0.5 * (T_lo + T_hi)
+    raise WetGasEnthalpyError("numerical_stagnation", "Wet-gas enthalpy inversion exhausted max_iterations")
