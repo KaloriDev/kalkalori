@@ -1,5 +1,10 @@
 # Continuous plate-fin implementation record — 2026-10-31
 
+Historical checkpoint. The [final delta audit of 2026-11-11](v0.9.6_continuous_plate_fin_delta_audit.md)
+supersedes the merge/PR hold recorded below under the user's final integration
+instructions. It does not close source or experimental-validation gates or
+authorize a production release. The original technical evidence is retained.
+
 Decision: **IMPLEMENTED_BUT_SOURCE_BLOCKED**. This is a local implementation
 checkpoint, not release approval. Source and physical validation gates remain
 open even when software tests pass. No final PR is prepared while they are open.

@@ -1,6 +1,6 @@
 # Continuous plate fins: geometry and experimental dry profile
 
-Status: **IMPLEMENTED_BUT_SOURCE_BLOCKED**. This feature branch is preparation
+Status: **IMPLEMENTED_BUT_SOURCE_BLOCKED**. This implementation is preparation
 for v0.9.6, not a production v0.9.6 release. The package version stays 0.9.5.
 Wang source closure and experimental validation remain incomplete. Do not use
 the experimental profile as validated design physics. No provider is added to
@@ -224,9 +224,26 @@ and simultaneous active phase change on both sides are outside this profile.
 Reported core-wall/equivalent base nodes are lumped network quantities, not
 resolved physical tube/collar contact temperatures.
 
-## Release gates
+## Continuous plate-fin — validation status (v0.9.6)
+
+Implementation is complete within the explicit experimental dry-profile scope
+and covered by automated tests, including geometry, efficiency, pressure
+semantics, Rating/Simulation and supported internal-steam integration.
+
+Manual validation against representative industrial exchanger cases and
+independent experimental reference data has not yet been performed. Thermal
+and hydraulic prediction accuracy for this geometry remains subject to future
+validation. This limitation does not imply that the software test suite has
+been skipped. See the [final delta audit](validation/v0.9.6_continuous_plate_fin_delta_audit.md)
+for the current automated test evidence and deferred validation tasks.
+
+## Integration and release gates
 
 See [the implementation and validation record](validation/continuous_plate_fin_implementation_2026-10-31.md).
-No release tag, package publication, version promotion, push or final PR is
-authorized by passing arithmetic tests alone. The original Elmahdy-Mitalas wet
-default is unchanged. No private reporter changes or dependencies are included.
+The final delta audit supersedes the implementation checkpoint's earlier
+merge/PR hold: the experimental implementation may be integrated with its
+source status, warnings and applicability restrictions intact. Open source and
+physical-validation gates still prevent promotion as a validated production
+provider. No release tag, package publication or version promotion is part of
+this closure. The original Elmahdy-Mitalas wet default is unchanged. No private
+reporter changes or dependencies are included.
