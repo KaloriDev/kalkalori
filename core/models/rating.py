@@ -643,6 +643,7 @@ def run_rating(
     check_model_identity(thermal_state.tube_side_enhancement, solve_result.tube_side_enhancement)
     wall_temperature_envelope = estimate_wall_temperature_envelope(
         hx,
+        flow_arrangement=flow_arrangement,
         m_dot_inside=inside.m_dot,
         m_dot_outside=outside.m_dot,
         inside_provider=inside.provider,

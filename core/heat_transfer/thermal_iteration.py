@@ -320,13 +320,19 @@ class WallTemperatureProbe:
     fin_tip_temperature_ratio: float | None = None
     outside_skin_temperature_min: float = math.nan
     outside_skin_temperature_max: float = math.nan
+    outside_surface_temperature_mean: float = math.nan
+    fin_surface_temperature_min: float = math.nan
+    fin_surface_temperature_max: float = math.nan
+    inside_surface_temperature: float = math.nan
 
 
 @dataclass(frozen=True)
 class WallTemperatureEnvelope:
     """Wall-temperature extrema with an explicitly declared sampling method.
 
-    Legacy paths use four independent 0D probes. Eligible outside AUTO uses
+    Dry paths use topology-aware independent resistance probes plus a mean
+    bulk-state probe. Unresolved crossflow returns explicitly labelled bounds.
+    Eligible outside AUTO uses
     the native wet/dry process profile and radial fin states; means are
     axial-area integrals. Neither envelope is an input to the process solve.
 
@@ -354,6 +360,22 @@ class WallTemperatureEnvelope:
     fin_base_max: float = math.nan
     fin_tip_min: float = math.nan
     fin_tip_max: float = math.nan
+    # Additive v0.9.7 definitions. Means describe a representative 0D bulk
+    # state (and geometric surface-area weighting), unless a native provider
+    # explicitly supplies its own integrated profile. NaN means unavailable.
+    outside_skin_mean: float = math.nan
+    primary_surface_mean: float = math.nan
+    fin_base_mean: float = math.nan
+    fin_tip_mean: float = math.nan
+    fin_surface_min: float = math.nan
+    fin_surface_max: float = math.nan
+    inside_surface_min: float = math.nan
+    inside_surface_max: float = math.nan
+    inside_surface_mean: float = math.nan
+    temperature_definition: str = "metal_wall_and_exposed_surface_separate"
+    spatial_assumption: str = "provider_defined"
+    applicability: str = "provider_defined"
+    mean_method: str = "provider_defined"
 
 
 @dataclass(frozen=True)
@@ -383,6 +405,10 @@ class _LocalWallEvaluation:
     fin_tip_temperature_ratio: float | None = None
     outside_skin_temperature_min: float = math.nan
     outside_skin_temperature_max: float = math.nan
+    outside_surface_temperature_mean: float = math.nan
+    fin_surface_temperature_min: float = math.nan
+    fin_surface_temperature_max: float = math.nan
+    inside_surface_temperature: float = math.nan
 
     @property
     def alfa_o(self) -> float:
@@ -534,13 +560,22 @@ def _evaluate_local_wall_state(
         outside_bulk_temperature + heat_rate * network.resistance_outside
     )
     primary_surface = fin_base = fin_tip = fin_tip_ratio = None
-    skin_min = skin_max = outside_wall_temperature_value
+    # Metal and gas-facing surface differ when a lumped fouling layer exists.
+    primary_surface = outside_wall_temperature_value - heat_rate * network.resistance_fouling_outside
+    skin_min = skin_max = surface_mean = primary_surface
+    fin_surface_min = fin_surface_max = math.nan
     if (network.fin_efficiency_result is not None
             and network.fin_efficiency_result.tip_temperature_ratio is None):
-        # Mean eta closes heat flow, not the corrected temperature field.
-        # Ideal weld base is known; skin/tip extrema stay unavailable.
-        primary_surface = fin_base = outside_wall_temperature_value
+        # Mean eta closes heat flow, not a local temperature field. The
+        # continuous sheet's empirical reduced HTC includes unresolved contact;
+        # do not identify its ideal network collar node as a measured fin base.
+        from core.heat_transfer.continuous_fin_efficiency import ContinuousFinEfficiencyResult
+        if not isinstance(network.fin_efficiency_result, ContinuousFinEfficiencyResult):
+            fin_base = primary_surface
         skin_min = skin_max = math.nan
+        surface_mean = outside_bulk_temperature + network.overall_surface_efficiency * (
+            primary_surface - outside_bulk_temperature
+        )
     if (network.fin_efficiency_result is not None
             and network.fin_efficiency_result.tip_temperature_ratio is not None):
         primary_surface, fin_base, fin_tip, skin_min, skin_max = fin_surface_temperatures(
@@ -550,6 +585,14 @@ def _evaluate_local_wall_state(
             heat_rate=heat_rate,
         )
         fin_tip_ratio = network.fin_efficiency_result.tip_temperature_ratio
+        fin_surface_min, fin_surface_max = sorted((fin_base, fin_tip))
+        # For uniform h, eta = integral(theta dA)/(A_fin*theta_base).
+        # This is geometric area weighting, not a base/tip midpoint.
+        fin_mean = outside_bulk_temperature + network.fin_efficiency * (
+            fin_base - outside_bulk_temperature
+        )
+        surface_mean = (network.area_primary_outside * primary_surface
+                        + network.area_fin * fin_mean) / network.area_outside_gross
 
     return _LocalWallEvaluation(
         inside_bulk_props=bulk_i,
@@ -577,6 +620,11 @@ def _evaluate_local_wall_state(
         fin_tip_temperature_ratio=fin_tip_ratio,
         outside_skin_temperature_min=skin_min,
         outside_skin_temperature_max=skin_max,
+        outside_surface_temperature_mean=surface_mean,
+        fin_surface_temperature_min=fin_surface_min,
+        fin_surface_temperature_max=fin_surface_max,
+        inside_surface_temperature=(inside_bulk_temperature - heat_rate
+                                    / (alfa_i * network.area_inside)),
         finned_tube_diagnostics=finned_diagnostics,
         warnings=tuple(warnings),
     )
@@ -698,12 +746,19 @@ def _solve_wall_temperature_probe(
         residual=residual,
         outside_alpha_physical=final.alfa_o_physical,
         outside_alpha_effective_gross=final.alfa_o_effective_gross,
-        outside_primary_surface_temperature=final.outside_primary_surface_temperature,
+        # Preserve the pre-v0.9.7 bare-probe convention (None); the exposed
+        # bare surface remains available through the explicitly named fields.
+        outside_primary_surface_temperature=(final.outside_primary_surface_temperature
+            if final.resistance_network.fin_efficiency_result is not None else None),
         fin_base_temperature=final.fin_base_temperature,
         fin_tip_temperature=final.fin_tip_temperature,
         fin_tip_temperature_ratio=final.fin_tip_temperature_ratio,
         outside_skin_temperature_min=final.outside_skin_temperature_min,
         outside_skin_temperature_max=final.outside_skin_temperature_max,
+        outside_surface_temperature_mean=final.outside_surface_temperature_mean,
+        fin_surface_temperature_min=final.fin_surface_temperature_min,
+        fin_surface_temperature_max=final.fin_surface_temperature_max,
+        inside_surface_temperature=final.inside_surface_temperature,
     )
 
 
@@ -726,14 +781,27 @@ def estimate_wall_temperature_envelope(
     wall_temperature_tolerance_K: float = 0.05,
     relative_alfa_tolerance: float = 1e-3,
     relaxation_factor: float = 0.5,
+    flow_arrangement: object = None,
 ) -> WallTemperatureEnvelope:
-    """Estimate a conservative 0D endpoint envelope; no spatial coupling is implied."""
-    pairs = (
-        (inside_inlet_temperature, outside_inlet_temperature),
-        (inside_inlet_temperature, outside_outlet_temperature),
-        (inside_outlet_temperature, outside_inlet_temperature),
-        (inside_outlet_temperature, outside_outlet_temperature),
+    """Sample topology-compatible resistance states, not a resolved 1D profile.
+
+    Unresolved crossflow uses bulk-rectangle *bounds*, not local extrema.
+    The separate mean-state sample prevents a nonlinear property response from
+    being silently represented by an arithmetic midpoint of endpoint extrema.
+    These diagnostic probes never change achieved duty or its global solve.
+    """
+    from core.geometry._thermal_topology import resolve_thermal_topology
+    from core.heat_transfer.topology_reporting import representative_temperature_pairs
+    topology = resolve_thermal_topology(hx.bundle, flow_arrangement)
+    pairs, spatial_assumption = representative_temperature_pairs(
+        topology, inside_inlet_temperature, inside_outlet_temperature,
+        outside_inlet_temperature, outside_outlet_temperature,
     )
+    mean_pair = (mean_temperature(inside_inlet_temperature, inside_outlet_temperature),
+                 mean_temperature(outside_inlet_temperature, outside_outlet_temperature))
+    # The central state is an actual resistance calculation, not a numerical
+    # clamp. It also samples possible nonlinear interior property behaviour.
+    pairs = (*pairs, mean_pair)
     probes_list: list[WallTemperatureProbe] = []
     for T_i, T_o in pairs:
         try:
@@ -778,16 +846,16 @@ def estimate_wall_temperature_envelope(
     warnings = [make_warning(
         code="wall_temperature_envelope_0d_estimate",
         message=("Wall-temperature minimum and maximum are estimated from a 0D inlet/outlet "
-                 "endpoint envelope. They are not local extrema from a spatially segmented exchanger model."),
+                 f"resistance envelope ({spatial_assumption}). They are not resolved local extrema."),
         source="thermal_iteration",
         severity="info",
     )]
     for probe in probes:
         warnings.extend(probe.warnings)
-    if len(valid) < 4:
+    if len(valid) < len(probes):
         warnings.append(make_warning(
             code="wall_temperature_envelope_incomplete",
-            message=f"Only {len(valid)} of 4 wall-temperature endpoint probes converged.",
+            message=f"Only {len(valid)} of {len(probes)} wall-temperature probes converged.",
             source="thermal_iteration",
         ))
     inside_min = min((p.inside_wall_temperature for p in valid), default=math.nan)
@@ -798,21 +866,41 @@ def estimate_wall_temperature_envelope(
     outside_skin_max = max((p.outside_skin_temperature_max for p in valid), default=math.nan)
     fin_base_values = [p.fin_base_temperature for p in valid if p.fin_base_temperature is not None]
     fin_tip_values = [p.fin_tip_temperature for p in valid if p.fin_tip_temperature is not None]
+    mean_probe = probes[-1]
+    def representative(name):
+        value = getattr(mean_probe, name)
+        return value if mean_probe.converged and value is not None else math.nan
     return WallTemperatureEnvelope(
         inside_min=inside_min,
         inside_max=inside_max,
         outside_min=outside_min,
         outside_max=outside_max,
         probes=probes,
+        method="0d_topology_resistance_envelope",
         warnings=tuple(warnings),
-        inside_mean=0.5 * (inside_min + inside_max),
-        outside_mean=0.5 * (outside_min + outside_max),
+        inside_mean=representative("inside_wall_temperature"),
+        outside_mean=representative("outside_wall_temperature"),
         outside_skin_min=outside_skin_min,
         outside_skin_max=outside_skin_max,
         fin_base_min=min(fin_base_values, default=math.nan),
         fin_base_max=max(fin_base_values, default=math.nan),
         fin_tip_min=min(fin_tip_values, default=math.nan),
         fin_tip_max=max(fin_tip_values, default=math.nan),
+        outside_skin_mean=representative("outside_surface_temperature_mean"),
+        primary_surface_mean=(representative("outside_primary_surface_temperature")
+            if mean_probe.outside_primary_surface_temperature is not None
+            else representative("outside_surface_temperature_mean")),
+        fin_base_mean=representative("fin_base_temperature"),
+        fin_tip_mean=representative("fin_tip_temperature"),
+        fin_surface_min=min((p.fin_surface_temperature_min for p in valid), default=math.nan),
+        fin_surface_max=max((p.fin_surface_temperature_max for p in valid), default=math.nan),
+        inside_surface_min=min((p.inside_surface_temperature for p in valid), default=math.nan),
+        inside_surface_max=max((p.inside_surface_temperature for p in valid), default=math.nan),
+        inside_surface_mean=representative("inside_surface_temperature"),
+        spatial_assumption=spatial_assumption,
+        applicability=("bulk_temperature_bounds_only" if "unresolved" in spatial_assumption
+                       else "equivalent_flow_representative_states"),
+        mean_method="0d_mean_bulk_resistance_state_with_surface_area_weighting",
     )
 
 

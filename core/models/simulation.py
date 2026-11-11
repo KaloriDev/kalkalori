@@ -1073,6 +1073,7 @@ def run_simulation(
 
         envelope = estimate_wall_temperature_envelope(
             hx,
+            flow_arrangement=flow_arrangement,
             m_dot_inside=inside.m_dot,
             m_dot_outside=outside.m_dot,
             inside_provider=inside.provider,

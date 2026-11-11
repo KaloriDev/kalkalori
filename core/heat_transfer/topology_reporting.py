@@ -4,6 +4,23 @@ import math
 from core.geometry._thermal_topology import CounterCrossflowTopology
 
 
+def representative_temperature_pairs(topology, ti, ui, to, uo):
+    """Terminal pairs for an equivalent 0D topology, with explicit provenance.
+
+    Counter/cocurrent pairs share a physical terminal plane of the equivalent
+    flow model. Crossflow and counter-crossflow do not expose a circuit/row
+    map: their Cartesian rectangle is only a bulk-temperature bound, never a
+    claimed set of co-located states. No longitudinal pass map is inferred.
+    """
+    if topology == "counterflow":
+        return ((ti, uo), (ui, to)), "equivalent_counterflow_terminal_pairs"
+    if topology == "cocurrentflow":
+        return ((ti, to), (ui, uo)), "equivalent_cocurrent_terminal_pairs"
+    if topology == "crossflow" or isinstance(topology, CounterCrossflowTopology):
+        return ((ti, to), (ti, uo), (ui, to), (ui, uo)), "unresolved_crossflow_bulk_rectangle_bounds"
+    raise ValueError(f"Unsupported thermal topology for temperature envelope: {topology!r}")
+
+
 def dry_topology_diagnostics(topology, ti, to, ui, uo, emtd):
     """Physical inside/outside inlet/outlet temperatures; EMTD keeps its basis."""
     if isinstance(topology, CounterCrossflowTopology):
