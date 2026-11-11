@@ -21,6 +21,12 @@ come from a separate representative mean-bulk resistance calculation, replacing
 the former midpoint of extrema. In particular, a Rating's specified terminal
 program need not equal the achievable Simulation used by its property iteration.
 Do not mix a global wall mean with an envelope of a different surface definition.
+Active inside carrier-gas results with nonzero inside fouling now correctly
+report the inner **metal** wall on the thermal state, rather than the gas-facing
+interface. This is a correction to the documented metal meaning of that public
+field. `inside_surface_*` and the phase result retain the interface definition.
+The active inside envelope uses its own accepted wet states, not dry probes at
+wet outlets, and honors the selected per-call flow arrangement.
 
 ## Dry envelope
 

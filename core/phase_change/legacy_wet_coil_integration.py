@@ -13,7 +13,7 @@ from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeSurfaceType
-from core.heat_transfer.thermal_iteration import IterativeThermalState, estimate_wall_temperature_envelope
+from core.heat_transfer.thermal_iteration import IterativeThermalState
 from core.heat_transfer.outside_dispatch import (
     DEFAULT_FINNED_DP_PROVIDER, DEFAULT_FINNED_HT_PROVIDER, evaluate_outside_hydraulics,
 )

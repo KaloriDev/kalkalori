@@ -5,6 +5,43 @@ import math
 from core.heat_transfer.thermal_iteration import WallTemperatureEnvelope, WallTemperatureProbe
 
 
+def inside_surface_envelope(hx, solution, *, inside_mean, outside_mean):
+    """Native inside-gas interface and tube metal; no independent dry re-solve."""
+    rfi = hx.resistance_fouling_inside
+    rfo = hx.resistance_fouling_outside
+    ro = 1 / (solution.alfa_o * hx.bundle.total_outer_area)
+    downstream = rfi + hx.tube_wall_resistance() + ro
+    probes = []
+    def append(ti, to, ts, q):
+        wi, wo = ts - q * rfi, to + q * ro
+        exposed = wo - q * rfo
+        probes.append(WallTemperatureProbe(
+            ti, to, wi, wo, solution.alfa_i_effective, solution.alfa_o,
+            solution.converged, solution.iterations, heat_rate_probe=q,
+            outside_skin_temperature_min=exposed, outside_skin_temperature_max=exposed,
+            outside_surface_temperature_mean=exposed, inside_surface_temperature=ts))
+    for ti, to, ts in getattr(solution, "surface_temperature_samples", ()):
+        append(ti, to, ts, (ts - to) / downstream)
+    append(inside_mean, outside_mean, solution.T_wall_inside, solution.Q_total)
+    mean = probes[-1]
+    return WallTemperatureEnvelope(
+        min(p.inside_wall_temperature for p in probes), max(p.inside_wall_temperature for p in probes),
+        min(p.outside_wall_temperature for p in probes), max(p.outside_wall_temperature for p in probes),
+        tuple(probes), method="inside_bulk_mean_native_interface_envelope",
+        inside_mean=mean.inside_wall_temperature, outside_mean=mean.outside_wall_temperature,
+        outside_skin_min=min(p.outside_skin_temperature_min for p in probes),
+        outside_skin_max=max(p.outside_skin_temperature_max for p in probes),
+        outside_skin_mean=mean.outside_surface_temperature_mean,
+        primary_surface_mean=mean.outside_surface_temperature_mean,
+        inside_surface_min=min(p.inside_surface_temperature for p in probes),
+        inside_surface_max=max(p.inside_surface_temperature for p in probes),
+        inside_surface_mean=mean.inside_surface_temperature,
+        temperature_definition="inside_gas_facing_interface_separate_from_tube_metal",
+        spatial_assumption="native_0d_interface_iterate_with_resistance_sensitivities",
+        applicability="inside_carrier_gas_condensation_native_states",
+        mean_method="global_interface_balance")
+
+
 def outside_surface_envelope(hx, solution, *, inside_mean, outside_mean, surface_margin):
     """Provider-specific metal, interface and radial diagnostics, all in K.
 

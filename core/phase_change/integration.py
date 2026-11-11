@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
-from core.heat_transfer.thermal_iteration import IterativeThermalState, estimate_wall_temperature_envelope
+from core.heat_transfer.thermal_iteration import IterativeThermalState
 from core.heat_transfer.outside_dispatch import DEFAULT_FINNED_DP_PROVIDER, DEFAULT_FINNED_HT_PROVIDER
 from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 from core.properties.averaging import mean_temperature
@@ -371,6 +371,7 @@ def apply_phase_change(
             finned_heat_transfer_provider=finned_heat_transfer_provider,
             finned_pressure_drop_provider=finned_pressure_drop_provider,
             settings=settings,
+            flow_arrangement=flow_arrangement,
         )
 
     inside_result = build_capability_side_result(
@@ -467,6 +468,7 @@ def _apply_inside_condensation(
     finned_heat_transfer_provider: object,
     finned_pressure_drop_provider: object,
     settings: PhaseChangeSettings,
+    flow_arrangement=None,
 ):
     """Apply the active inside wet-gas solution to a dry Simulation result."""
     outside_result = build_capability_side_result(
@@ -525,6 +527,7 @@ def _apply_inside_condensation(
     try:
         solution = solve_inside_condensation(
             hx,
+            flow_arrangement=flow_arrangement,
             inside_capability=inside_capability,
             m_dot_dry_carrier=m_dot_dry_carrier,
             T_in_inside=inside.T_in,
@@ -801,26 +804,14 @@ def _apply_inside_condensation(
         ),
     )
 
-    envelope_wet = estimate_wall_temperature_envelope(
-        hx,
-        m_dot_inside=m_dot_gas_mid,
-        m_dot_outside=outside.m_dot,
-        inside_provider=inside_provider_mid,
-        outside_provider=outside.provider,
-        inside_inlet_temperature=inside.T_in,
-        inside_outlet_temperature=solution.T_out_inside,
-        outside_inlet_temperature=outside.T_in,
-        outside_outlet_temperature=solution.T_out_outside,
-        p_inside=inside.p,
-        p_outside=outside.p,
-        euler_provider=euler_provider,
-        finned_heat_transfer_provider=finned_heat_transfer_provider,
-    )
+    from core.phase_change.bulk_mean_surface_reporting import inside_surface_envelope
+    envelope_wet = inside_surface_envelope(
+        hx, solution, inside_mean=T_mean_inside, outside_mean=T_mean_outside)
     wet_thermal_state = IterativeThermalState(
         inside_bulk_temperature=T_mean_inside,
         outside_bulk_temperature=T_mean_outside,
-        inside_wall_temperature=solution.T_wall_inside,
-        outside_wall_temperature=solution.T_wall_outside,
+        inside_wall_temperature=envelope_wet.inside_mean,
+        outside_wall_temperature=envelope_wet.outside_mean,
         inside_bulk_props=solution.inside_bulk_props,
         inside_wall_props=solution.inside_wall_props,
         outside_bulk_props=solution.outside_bulk_props,
