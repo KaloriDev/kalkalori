@@ -187,27 +187,16 @@ def solve_inside_condensation(
         R_o = 1.0 / (alfa_o * A_o)
         R_downstream = R_w + R_o + hx.resistance_fouling_inside
 
-        T_wall_inlet_raw = sensible_only_wall_temperature(
-            T_bulk_wet_gas=T_in_inside,
-            T_bulk_other=T_mean_outside,
-            R_wet_film=R_i_film,
-            R_downstream=R_downstream,
+        from core.geometry._thermal_topology import resolve_thermal_topology
+        from core.phase_change.condensation_solver_helpers import representative_interface_envelope
+        wall_min, wall_mean_reference, wall_max = representative_interface_envelope(
+            topology=resolve_thermal_topology(hx.bundle), side="inside",
+            T_in_inside=T_in_inside, T_out_inside=T_out_inside,
+            T_in_outside=T_in_outside, T_out_outside=T_out_outside,
+            R_wet_film=R_i_film, R_downstream=R_downstream,
+            Q_latent=state.get("Q_latent", 0.0),
+            reference_interface_temperature=T_wall_inside_prev,
         )
-        T_wall_outlet_raw = sensible_only_wall_temperature(
-            T_bulk_wet_gas=T_out_inside,
-            T_bulk_other=T_mean_outside,
-            R_wet_film=R_i_film,
-            R_downstream=R_downstream,
-        )
-        wall_min_raw = min(T_wall_inlet_raw, T_wall_outlet_raw)
-        wall_max_raw = max(T_wall_inlet_raw, T_wall_outlet_raw)
-        shape_mean = 0.5 * (wall_min_raw + wall_max_raw)
-        wall_mean_reference = (
-            T_wall_inside_prev if T_wall_inside_prev is not None else shape_mean
-        )
-        shift = wall_mean_reference - shape_mean
-        wall_min = wall_min_raw + shift
-        wall_max = wall_max_raw + shift
 
         dew_point = local_dew_point_or_triple_point(
             inside_capability,

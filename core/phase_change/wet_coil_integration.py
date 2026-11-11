@@ -295,6 +295,17 @@ def _envelope(r, thermo, adapter, inside, outside, alpha):
         fin_base_max=max((p.fin_base_temperature for p in fins), default=float("nan")),
         fin_tip_min=min((p.fin_tip_temperature for p in fins), default=float("nan")),
         fin_tip_max=max((p.fin_tip_temperature for p in fins), default=float("nan")),
+        outside_skin_mean=sum(p[7] * p[8] for p in samples),
+        primary_surface_mean=sum(p[4] * p[8] for p in samples),
+        fin_base_mean=sum(p[5] * p[8] for p in samples) if fins else float("nan"),
+        fin_tip_mean=sum(p[6] * p[8] for p in samples) if fins else float("nan"),
+        fin_surface_min=min((min(p.fin_base_temperature, p.fin_tip_temperature)
+                             for p in fins), default=float("nan")),
+        fin_surface_max=max((max(p.fin_base_temperature, p.fin_tip_temperature)
+                             for p in fins), default=float("nan")),
+        spatial_assumption="native_elmahdy_source_profile_and_radial_fin_response",
+        applicability="provider_supported_wet_or_dry_source_profile",
+        mean_method="native_axial_quadrature_with_radial_surface_area_weighting",
     )
     return envelope, sum(p[7] * p[8] for p in samples)
 
@@ -560,17 +571,27 @@ def _public_simulation(
     d["surface"] = dict(
         surface_temperature_min=envelope.outside_skin_min,
         surface_temperature_max=envelope.outside_skin_max,
+        surface_temperature_mean=surface_mean,
         surface_temperature_wet_mean=wet_mean,
         dew_point_in=thermo.dewpoint(wi),
         dew_point_out=thermo.dewpoint(wo),
         onset_margin=-r.onset_margin,  # dew point minus dry cold surface [K]
         wet_regime=r.regime,
         axial_wet_fraction=r.wet_fraction,
+        wet_surface_fraction=wet_area / thermal_area,
+        temperature_definition="native_gas_facing_interface_and_fin_surface; separate_metal_wall",
+        wall_envelope_method=envelope.method,
+        spatial_assumption=envelope.spatial_assumption,
+        applicability=envelope.applicability,
+        mean_method=envelope.mean_method,
         metal_wall_temperature_min=envelope.outside_min,
         metal_wall_temperature_max=envelope.outside_max,
         metal_wall_temperature_mean=envelope.outside_mean,
         interface_temperature=tuple(p.outside_primary_surface_temperature
                                     for p in envelope.probes),
+        interface_temperature_min=min(p.outside_primary_surface_temperature for p in envelope.probes),
+        interface_temperature_max=max(p.outside_primary_surface_temperature for p in envelope.probes),
+        interface_temperature_mean=envelope.primary_surface_mean,
         metal_wall_temperature=tuple(p.outside_wall_temperature for p in envelope.probes),
     )
     if fins is not None:

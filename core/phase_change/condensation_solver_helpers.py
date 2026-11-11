@@ -103,6 +103,66 @@ def sensible_only_wall_temperature(
     return T_bulk_wet_gas - q * R_wet_film
 
 
+def representative_wet_bulk_pairs(topology, side, ti, ui, to, uo):
+    """Use paired terminals only when topology supplies their correspondence.
+
+    A crossflow rectangle is a bound, not an area distribution. Retain the
+    established opposite-stream mean approximation for its physics-active
+    wet-area estimate rather than converting that bound into a local profile.
+    """
+    from core.heat_transfer.topology_reporting import representative_temperature_pairs
+    pairs, assumption = representative_temperature_pairs(topology, ti, ui, to, uo)
+    if "unresolved" in assumption:
+        if side == "outside":
+            return (((ti + ui) / 2, to), ((ti + ui) / 2, uo))
+        return ((ti, (to + uo) / 2), (ui, (to + uo) / 2))
+    return pairs
+
+
+def representative_interface_envelope(
+    *, topology, side, T_in_inside, T_out_inside, T_in_outside, T_out_outside,
+    R_wet_film, R_downstream, Q_latent=0.0, reference_interface_temperature=None,
+):
+    """Return (minimum, mean, maximum) interface temperatures [K].
+
+    Each state closes (T_gas-T_s)/R_film + Q_latent =
+    (T_s-T_other)/R_downstream. The 0D approximation keeps the current
+    mean-property resistances and latent source per representative full-area
+    state. It is not a local latent-flux profile. Counter/cocurrent states
+    pair matching terminal planes; unresolved crossflow retains the historical
+    opposite-stream mean. Bulk-rectangle bounds cannot define a wet area.
+    This replaces an unexplained translation of a one-stream-only envelope.
+    """
+    if side not in ("inside", "outside"):
+        raise ValueError("side must be 'inside' or 'outside'.")
+    if not all(math.isfinite(x) for x in (R_wet_film, R_downstream, Q_latent)):
+        raise ValueError("Interface envelope resistances and latent heat must be finite.")
+    if R_wet_film <= 0.0 or R_downstream <= 0.0 or Q_latent < 0.0:
+        raise ValueError("Interface envelope requires positive resistances and nonnegative latent heat.")
+    pairs = representative_wet_bulk_pairs(
+        topology, side, T_in_inside, T_out_inside, T_in_outside, T_out_outside)
+
+    def interface(ti, to):
+        gas, other = (ti, to) if side == "inside" else (to, ti)
+        return (gas * R_downstream + other * R_wet_film
+                + Q_latent * R_wet_film * R_downstream) / (R_wet_film + R_downstream)
+
+    mean = interface((T_in_inside + T_out_inside) / 2,
+                     (T_in_outside + T_out_outside) / 2)
+    if reference_interface_temperature is None:
+        states = [interface(*pair) for pair in pairs]
+    else:
+        # Linearize the same resistance balance around the current global
+        # interface iterate. This retains the established inside solver's
+        # fixed-point path; at convergence its uniform source is Q_latent.
+        # Only resistance-derived sensitivities to both bulk states enter.
+        if not math.isfinite(reference_interface_temperature):
+            raise ValueError("reference interface temperature must be finite.")
+        states = [reference_interface_temperature + (interface(*pair) - mean) for pair in pairs]
+        mean = reference_interface_temperature
+    return min(states), mean, max(states)
+
+
 def local_dew_point_or_triple_point(
     capability: PhaseChangeCapability,
     W: float,

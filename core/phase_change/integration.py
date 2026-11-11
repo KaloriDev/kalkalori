@@ -226,9 +226,15 @@ def evaluate_side_onset(
         wall_min = skin_min if math.isfinite(skin_min) else envelope.outside_min
         wall_max = skin_max if math.isfinite(skin_max) else envelope.outside_max
     else:
-        wall_min = envelope.inside_min
-        wall_max = envelope.inside_max
+        wall_min = getattr(envelope, "inside_surface_min", math.nan)
+        wall_max = getattr(envelope, "inside_surface_max", math.nan)
+        if not math.isfinite(wall_min):
+            wall_min, wall_max = envelope.inside_min, envelope.inside_max
     wall_mean = representative_wall_temperature(side=side, thermal_state=thermal_state, wall_envelope=envelope)
+    surface_mean = getattr(envelope, "outside_skin_mean" if side == "outside"
+                           else "inside_surface_mean", math.nan)
+    if math.isfinite(surface_mean):
+        wall_mean = surface_mean
 
     onset = evaluate_condensation_onset(
         dew_point_temperature=dew_point,
