@@ -177,8 +177,8 @@ def test_external_wet_provider_rejected_and_default_unchanged():
 
 @pytest.mark.parametrize("provider_name", ["elmahdy", "legacy"])
 def test_builtin_wet_provider_direct_call_cannot_treat_common_sheets_as_bare(provider_name):
-    from core.phase_change.wet_coil_provider import ElmahdyMitalasWetCoilProvider, LegacyBulkMeanWetCoilProvider, WetCoilProviderUnsupportedError
-    provider = ElmahdyMitalasWetCoilProvider() if provider_name == "elmahdy" else LegacyBulkMeanWetCoilProvider()
+    from core.phase_change.wet_coil_provider import ElmahdyMitalasWetCoilProvider, BulkMeanAnalogyWetCoilProvider, WetCoilProviderUnsupportedError
+    provider = ElmahdyMitalasWetCoilProvider() if provider_name == "elmahdy" else BulkMeanAnalogyWetCoilProvider()
     with pytest.raises(WetCoilProviderUnsupportedError, match="continuous-sheet"):
         provider.simulate(hx(), None, None, settings=None, wet_solver_options=None, context=None)
 

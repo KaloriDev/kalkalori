@@ -51,29 +51,71 @@ thermal surface-margin semantics. Rating solves required thermal area / area
 scale with installed hydraulics; it does not infer required physical tube
 length. The Elmahdy adapter retains the same equations and solver options. Its
 BareTube numerical implementation uses exact property reuse and staged Rating
-with a strict final solve; finned and Legacy behavior remain unchanged. See
+with a strict final solve; that optimization preserves finned and bulk-mean
+equations. The v0.9.7 surface-state correction is described separately below. See
 [numerical performance](wet_numerical_performance.md).
 
 `ElmahdyMitalasWetCoilProvider` remains the default for Simulation and Rating.
-`LegacyBulkMeanWetCoilProvider` is available only by explicit selection and
+`BulkMeanAnalogyWetCoilProvider` is available only by explicit selection and
 supports Simulation only:
 
 ```python
-from core import LegacyBulkMeanWetCoilProvider
+from core import BulkMeanAnalogyWetCoilProvider
 
 result = hx.simulate(
     inside, outside,
     surface_margin=0.10,
-    wet_coil_provider=LegacyBulkMeanWetCoilProvider(),
+    wet_coil_provider=BulkMeanAnalogyWetCoilProvider(),
 )
 ```
 
-Legacy restores the historical KalKalori bulk-mean outside-condensation model
+## Bulk-Mean Heat/Mass Transfer Analogy
+
+`BulkMeanAnalogyWetCoilProvider` has `model_id="bulk_mean_analogy"` and
+`model_name="Bulk-Mean Heat/Mass Transfer Analogy"`. This intentionally replaces
+`LegacyBulkMeanWetCoilProvider` without a compatibility alias. The previous
+`legacy_outside_condensation_0d_bulk_mean` identifier can remain in saved
+benchmark outputs for provenance; new results use the descriptive identity.
+Persisted-result readers should preserve the identity stored with each result.
+
+The provider implements the historical KalKalori bulk-mean outside-condensation model
 from `c80e779` (v0.8.2): a dry onset screen, whole-HX coupled enthalpy/water/wall
 iteration, fully drained condensate, and Chilton-Colburn/Lewis mass transfer.
 Its wall/wet-area envelope is a **0D estimate**, not an axial distribution.
 CircularFinnedTube uses the historical nonlinear wet annular-fin FVM, including
 its endpoint cold-zone fallback and dry-collapse behavior.
+
+The scientific heat/mass-transfer basis is the Chilton–Colburn analogy:
+`h_m = (h_dry/cp_gas) * Le**(-2/3)`, on a dry-carrier humidity-ratio basis.
+The `lewis_number` argument is configurable and defaults to `Le=1`; this is
+a model assumption rather than a measured universal gas property. Condensation
+uses positive `W_bulk-W_sat(T_wet)` only, bounded by available vapor. Sensible
+convection uses the whole active surface; mass and latent transfer use the
+estimated wet area. The global resistance balance couples sensible and latent
+heat to the coolant. Vapor/dry-carrier conservation and gas enthalpy loss minus
+liquid drainage close the process balance. The analogy is a scientific
+component, not an attribution of this entire implementation to one publication.
+Sources are recorded in `mass_heat_transfer.py` and [references](references.md);
+the envelope and cold-zone approximations are KalKalori implementation choices.
+
+In v0.9.7, onset screens the cold **exposed** surface against the inlet water
+dew point. Solver activation, positive condensate and nonzero wet area remain
+separate outcomes. During the wet iteration, the dew point uses current mean
+vapor composition. The bare two-point counter/cocurrent envelope uses compatible
+fluid terminals and the same mean-property resistance/latent balance as the
+global wall state. Both stream changes enter its span. Unresolved crossflow
+retains the opposite-stream mean approximation: conservative dry rectangle
+bounds cannot define a wet-area distribution. The unchanged linear temperature
+distribution estimates wet area and its representative equilibrium temperature,
+not a measured axial wet length.
+
+Circular fins retain the nonlinear radial temperature/wetting solution, distinct
+tube metal, root/base, tip and primary nodes, and existing contact resistances.
+An optional 0D cold-zone equilibrium offset is separate from physical metal.
+No wet continuous-sheet model, liquid-film resistance, distributed row/circuit
+resolution or wet pressure-drop correction is introduced. Numerical conservation
+tests are not independent experimental validation. Property averaging and the
+real nonuniform wet-area distribution remain limitations.
 
 The supported outside phase change is H2O condensation from a carrier gas on
 BareTube or CircularFinnedTube, with a sensible inside fluid (liquid or the
@@ -91,8 +133,9 @@ nonnegative thermal `surface_margin`. Active inside/outside thermal areas are
 inside-film, wall, fin/root and contact resistances scale inversely with active
 area. Physical HTC correlations still use the installed geometry. Sensible and
 latent duty, condensate and outlet/wall states are solved together on this
-process surface. Zero-margin behavior remains numerically compatible with
-v0.8.3. Legacy remains Simulation-only; Rating raises the existing controlled
+process surface. Zero-margin finned nominal behavior remains compatible with
+v0.8.3; corrected v0.9.7 bare partial-wet envelopes can change duty/condensate.
+The provider remains Simulation-only; Rating raises the existing controlled
 provider error. Omission or `None` continues to select Elmahdy.
 
 `final_result.A_i` / `A_o` retain installed physical areas. Legacy diagnostics
@@ -107,7 +150,7 @@ division does not derate duty again. Legacy's historical `Q_full` alias still
 equals the achieved wet duty; it does not represent a separate zero-margin
 simulation.
 
-Legacy uses the existing `phase_change_*` convergence settings. Generic wet
+The bulk-mean provider uses the existing `phase_change_*` convergence settings. Generic wet
 energy/mass/outlet-temperature tolerances are not reinterpreted as legacy
 residual tolerances. The same operation deadline is checked before/after the
 dry baseline and during the global and radial iterations.
@@ -149,7 +192,7 @@ reports these aliases of its existing accepted solution:
 Missing diagnostics are omitted rather than estimated. Providers may preserve
 additional native values alongside the generic surface dictionary.
 
-Legacy preserves the historical method under `wet_coil_diagnostics["native_method"]`
+The bulk-mean provider preserves the historical method under `wet_coil_diagnostics["native_method"]`
 before the dispatcher attaches its provider identity. Its `surface` dictionary
 maps native wall minima/maxima/wet mean, inlet/outlet dew points and onset margin;
 `wet_surface_fraction` retains its original area definition and is **not** named
@@ -158,8 +201,9 @@ remain separate. When a native wet-fin state exists, fin base/tip temperatures,
 wet/dry boundary radius (possibly `None`), fin wet fraction, primary surface,
 core wall and root surface temperatures are also reported. A distinct
 condensate-film interface temperature is not synthesized.
-Finned extrema retain their radial exposed-surface meaning, including any
-native cold-zone offset; the onset envelope remains identified as a 0D estimate.
+Finned extrema retain their radial exposed-surface meaning. A cold-zone offset
+is reported separately as an equilibrium proxy, never as actual metal.
+The onset envelope remains identified as a 0D estimate.
 `H_drain` retains the model's drained-condensate enthalpy rate (W).
 
 ## Wet-gas process phase fractions

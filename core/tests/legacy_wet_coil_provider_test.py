@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from core import (LegacyBulkMeanWetCoilProvider, ElmahdyMitalasWetCoilProvider,
+from core import (BulkMeanAnalogyWetCoilProvider, ElmahdyMitalasWetCoilProvider,
                   WetCoilProviderUnsupportedError, WetCoilSolverOptions, WetCoilTimeoutError)
 from core.models.simulation import run_simulation
 from core.phase_change.types import PhaseChangeMode
@@ -13,7 +13,7 @@ from core.tests.wet_coil_public_test import context, specs
 from core.tests.wet_finned_simulation_test import _wet_finned_hx, _side_inputs
 from core.tests.outside_water_condensation_integration_test import hx as historical_bare_hx
 
-LEGACY = LegacyBulkMeanWetCoilProvider()
+LEGACY = BulkMeanAnalogyWetCoilProvider()
 
 
 def historical_case(finned):

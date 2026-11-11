@@ -272,7 +272,7 @@ finite-width clearance correlation remains future work.
 - Elmahdy-Mitalas is the public default for Simulation and area-based Rating.
   Rating sizes `A_required` / thermal area scale only; installed hydraulics
   always use installed geometry.
-- `LegacyBulkMeanWetCoilProvider` restores the historical bulk-mean model
+- `BulkMeanAnalogyWetCoilProvider` restores the historical bulk-mean model
   through explicit Simulation-only selection; it does not support Rating.
 - Selection uses direct provider objects. `wet_coil_provider=None` retains
   the Elmahdy default. Unsupported explicit selections raise a controlled

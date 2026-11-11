@@ -15,7 +15,7 @@ See [source provenance and tolerances](elmahdy_mitalas.md).
 `wet_coil_adapters.py` supplies configured gas properties, sensible inside-fluid capacity /
 inside-wall resistance, and BareTube or CircularFinnedTube surface quantities.
 The public API accepts direct `wet_coil_provider` objects; `None` selects
-Elmahdy. The explicit historical `LegacyBulkMeanWetCoilProvider` supports
+Elmahdy. The explicit historical `BulkMeanAnalogyWetCoilProvider` supports
 Simulation only. Unsupported explicit operations raise
 `WetCoilProviderUnsupportedError`; there is no silent fallback, registry,
 discovery or string-based selection. External implementations may satisfy the
