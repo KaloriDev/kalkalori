@@ -178,7 +178,9 @@ def test_active_auto_rating_uses_installed_geometry_and_native_radial_profile() 
     assert phase_change.Q_total == pytest.approx(
         phase_change.Q_sensible+phase_change.Q_latent,rel=1e-12)
     assert abs(phase_change.mass_balance_error) < 1e-6
-    assert abs(phase_change.energy_balance_error) < 1e-6
+    # Reconstructed whole-coil balance: retain a 1 uW absolute floor and
+    # allow 1e-10 of duty for nested iteration (configured energy gate: 2e-4 W).
+    assert abs(phase_change.energy_balance_error) <= 1e-6 + 1e-10 * abs(phase_change.Q_total)
     assert phase_change.wet_area == pytest.approx(
         phase_change.outside_total_area*phase_change.wet_surface_fraction,rel=1e-12)
     profile = native["process_profile"]
