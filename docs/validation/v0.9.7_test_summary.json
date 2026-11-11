@@ -1,0 +1,44 @@
+{
+  "source_code_head": "f674f5a60ab37b375bb8258eafb4fe4fadd03bf1",
+  "base_main_commit": "e2cb153425e6f3787f29b69b7fc346b7b73069d6",
+  "collected": 2740,
+  "modules": 122,
+  "full_original_run": {
+    "executed": 2730,
+    "passed": 2724,
+    "failed": 6,
+    "error": 0,
+    "skipped": 0
+  },
+  "current_unique_public": {
+    "executed": 2740,
+    "passed": 2739,
+    "failed": 1,
+    "error": 0,
+    "skipped": 0
+  },
+  "missing": [],
+  "unexpected": [],
+  "collection_id_sha256": "a3eeb0fd25dcca396cc8531cd6e5f50b9c63a5d68d1040d4167536efe9a8f098",
+  "failing_tests": [
+    {
+      "node": "core/tests/wet_finned_rating_test.py::test_inverse_area_rating_with_default_deadline[True]",
+      "status": "failed",
+      "receipt": ".pytest_cache\\v097-deadline-current.xml",
+      "also_fails_on_base": true
+    }
+  ],
+  "private_pytest": {
+    "executed": 21,
+    "passed": 21,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0
+  },
+  "private_export_selfchecks": 18,
+  "historical_fixture_executions": 22,
+  "historical_fixture_converged": 22,
+  "changelog_changed": false,
+  "release_finalization": "not_authorized",
+  "merge_readiness": "NOT_READY"
+}

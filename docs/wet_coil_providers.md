@@ -116,6 +116,8 @@ No wet continuous-sheet model, liquid-film resistance, distributed row/circuit
 resolution or wet pressure-drop correction is introduced. Numerical conservation
 tests are not independent experimental validation. Property averaging and the
 real nonuniform wet-area distribution remain limitations.
+See [wall and surface temperature definitions](wall_surface_temperatures.md)
+for the separate metal, exposed-surface, fin and interface diagnostics.
 
 The supported outside phase change is H2O condensation from a carrier gas on
 BareTube or CircularFinnedTube, with a sensible inside fluid (liquid or the
