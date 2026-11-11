@@ -409,8 +409,8 @@ def _evaluate_local_wall_state(
     """Evaluate correlations and the resistance split at one fixed bulk pair."""
     from core.geometry.applicability import require_automatic_outside_bank
     require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=hx.airside_model)
-    from core.heat_transfer.serrated_airside import guard_serrated_execution
-    guard_serrated_execution(hx, inside_provider=inside_provider, outside_provider=outside_provider)
+    from core.heat_transfer.outside_dispatch import guard_outside_execution
+    guard_outside_execution(hx, inside_provider=inside_provider, outside_provider=outside_provider)
     from core.properties.adapters import to_internal_fluid_props, to_outside_fluid_props
 
     bundle = hx.bundle

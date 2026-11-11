@@ -20,6 +20,12 @@ class WetCoilProviderUnsupportedError(ValueError):
     """Selected provider cannot perform the requested operation or case."""
 
 
+def _reject_builtin_continuous_sheet(hx):
+    if getattr(hx.bundle, "continuous_fin_geometry", None) is not None:
+        raise WetCoilProviderUnsupportedError(
+            "Built-in wet providers have no continuous-sheet wet surface model; dry Wang/Schmidt cannot supply wet-sheet physics.")
+
+
 class WetCoilOperationContext(Protocol):
     """The existing whole-operation budget, shared by all nested solves.
 
@@ -84,12 +90,15 @@ class ElmahdyMitalasWetCoilProvider:
 
     def is_applicable(self, hx, inside, outside, *, settings, **options):
         from core.phase_change.wet_coil_integration import _eligible
+        if getattr(hx.bundle, "continuous_fin_geometry", None) is not None:
+            return False
         flow = options.get("flow_arrangement") or hx.bundle.flow_arrangement_resolved
         return (_eligible(inside, outside) and hx.tube_side_enhancement is None
                 and flow != "cocurrentflow" and settings.lewis_number == 1.0)
 
     def simulate(self, hx, inside, outside, *, settings, wet_solver_options, context, **options):
         from core.phase_change.wet_coil_integration import _run_elmahdy
+        _reject_builtin_continuous_sheet(hx)
         # This engine has no dry baseline; these controls belong only to
         # providers that run the historical sensible Simulation first.
         for name in ("max_iter", "temperature_tolerance_K", "relative_duty_tolerance",
@@ -100,6 +109,7 @@ class ElmahdyMitalasWetCoilProvider:
 
     def rate(self, hx, inside, outside, *, settings, wet_solver_options, context, **options):
         from core.phase_change.wet_coil_integration import _run_elmahdy
+        _reject_builtin_continuous_sheet(hx)
         return _run_elmahdy(hx, inside, outside, mode="rating", settings=settings,
                             wet_solver_options=wet_solver_options, _budget=context, **options)
 
@@ -127,6 +137,7 @@ class LegacyBulkMeanWetCoilProvider:
         flow = options.get("flow_arrangement") or hx.bundle.flow_arrangement_resolved
         return (
             cap.capable and cap.component == "H2O" and cap.provider_kind == "gas_mixture"
+            and getattr(hx.bundle, "continuous_fin_geometry", None) is None
             and hx.bundle.tube.surface_type in (TubeSurfaceType.PLAIN, TubeSurfaceType.CIRCULAR_FINNED)
             and hx.tube_side_enhancement is None
             and flow == hx.bundle.flow_arrangement_resolved
@@ -135,6 +146,7 @@ class LegacyBulkMeanWetCoilProvider:
     def simulate(self, hx, inside, outside, *, settings, wet_solver_options, context, **options):
         from core.phase_change.legacy_wet_coil_integration import run_legacy_simulation
 
+        _reject_builtin_continuous_sheet(hx)
         return run_legacy_simulation(hx, inside, outside, settings=settings,
                                      context=context, **options)
 

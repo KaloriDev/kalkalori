@@ -248,8 +248,13 @@ __all__ += [
 from .serrated_fin_efficiency import HashizumeSerratedFinEfficiencyProvider, SerratedFinEfficiencyResult
 from .serrated_holfeld import Holfeld2016SerratedStaggeredHeatTransferProvider
 from .serrated_airside import Holfeld2016SerratedStaggeredModel
+from .continuous_airside import ExperimentalWang2000Model
+from .continuous_fin_efficiency import SchmidtEquivalentCell, ContinuousFinEfficiencyResult
+from .continuous_fin_source import ContinuousFinRequest, ContinuousFinHTCProvider, ExperimentalWang2000HTC, ContinuousFinSourceError, ContactPolicy
 
 __all__ += [
+    "ExperimentalWang2000Model", "SchmidtEquivalentCell", "ContinuousFinEfficiencyResult",
+    "ContinuousFinRequest", "ContinuousFinHTCProvider", "ExperimentalWang2000HTC", "ContinuousFinSourceError", "ContactPolicy",
     "HashizumeSerratedFinEfficiencyProvider", "SerratedFinEfficiencyResult",
     "Holfeld2016SerratedStaggeredHeatTransferProvider", "Holfeld2016SerratedStaggeredModel",
 ]

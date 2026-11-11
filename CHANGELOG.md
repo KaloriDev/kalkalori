@@ -39,6 +39,23 @@ See [the geometry and explicit physics guide](docs/serrated_fins.md) and
 
 ## [Unreleased]
 
+- Completed the v0.9.6 continuous plate-fin delta audit and documented the
+  distinction between implementation completeness, automated verification and
+  pending industrial/experimental validation. The experimental opt-in, source
+  restrictions and production-release limitations remain in force. See the
+  [final audit](docs/validation/v0.9.6_continuous_plate_fin_delta_audit.md).
+
+- Allow Robinson-Briggs 1966 STAGGERED solid circular-finned banks with 1-3 rows
+  using the actual row count and an explicit unvalidated short-bank extrapolation
+  warning. Existing results and diagnostics for at least four rows are unchanged.
+
+- Added finite continuous plate-fin bundle geometry and an explicit experimental
+  dry Wang/Schmidt profile, with separate HTC/pressure contracts, immutable
+  correction snapshots and Rating/Simulation/steam propagation. Source and
+  experimental validation gates remain open; AUTO and version promotion remain
+  unavailable. See [the feature guide](docs/continuous_plate_fins.md) and
+  [implementation record](docs/validation/continuous_plate_fin_implementation_2026-10-31.md).
+
 - Added tube-section-independent `TubeBankLattice` identities and explicit
   per-site SHIFTED offsets, with unresolved phase represented without invented
   coordinates. Legacy INLINE/STAGGERED numerical behavior is preserved.

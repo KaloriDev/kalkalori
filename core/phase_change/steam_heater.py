@@ -1331,6 +1331,7 @@ def _evaluate_zone(
         alpha_inside=alpha_inside,
         outside_alpha_physical=alpha_outside_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        airside_model=hx.airside_model,
         fouling_resistance_inside=hx.fouling_resistance_inside,
         fouling_resistance_outside=hx.fouling_resistance_outside,
     )
@@ -1509,6 +1510,7 @@ def _build_solution(
         alpha_inside=1.0,
         outside_alpha_physical=trial.outside_alpha_physical,
         resistance_core_wall=hx.tube_wall_resistance(),
+        airside_model=hx.airside_model,
         fouling_resistance_inside=hx.fouling_resistance_inside,
         fouling_resistance_outside=hx.fouling_resistance_outside,
     )

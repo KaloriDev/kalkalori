@@ -23,6 +23,7 @@ from .serrated_flow_area import SerratedFlowAreaBasis, SerratedFlowAreaProvider,
 from .rectangular_finned_tube import RectangularIndividualFin, RectangularFinnedEllipticalTube
 from .applicability import TubeGeometryApplicabilityError
 from .bundle import TubeBundle, TubePathType, RowParityMode
+from .continuous_plate_fin import ContinuousPlateFinGeometry, ContinuousPlateFinSurface, FinAttachment
 from .serrated_source import HolfeldSerratedSourceGeometry, SerratedTubeBankRequest, SerratedSourceDomainError
 from .lattice import LayoutClass, TubeBankLattice
 
@@ -76,6 +77,9 @@ __all__ = [
     "TubeGeometry",
     "EXTERNAL_AREA_OVERRIDE_RELATIVE_WARNING_THRESHOLD",
     "TubeBundle",
+    "ContinuousPlateFinGeometry",
+    "ContinuousPlateFinSurface",
+    "FinAttachment",
     "LayoutClass",
     "TubeBankLattice",
     "TubePathType",

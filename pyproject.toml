@@ -22,3 +22,6 @@ coolprop = [
 
 [tool.setuptools.dynamic]
 version = {attr = "core.__version__"}
+
+[tool.setuptools.package-data]
+"core.heat_transfer" = ["python_hvac_MIT.txt"]

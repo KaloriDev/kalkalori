@@ -347,6 +347,76 @@ def test_correlation_row_extensions_are_explicit_and_drag_scales_per_row() -> No
     } >= {"robinson_briggs_1966_row_count_secondary_extension"}
 
 
+@pytest.mark.parametrize("n_rows", [1, 2, 3, 4, 6])
+def test_robinson_briggs_row_counts_use_actual_rows_with_explicit_diagnostics(
+    n_rows: int,
+) -> None:
+    bundle = _published_range_bundle(n_rows=n_rows)
+    props = _published_range_properties()
+    result = RobinsonBriggs1966Provider().evaluate(
+        _pressure_request(bundle, props, 3.0)
+    )
+
+    # Frozen pre-patch six-row result; no short-bank correction or row clamp.
+    assert result.coefficient == pytest.approx(0.24477791977885155, rel=1e-14)
+    assert result.dp_drag == pytest.approx(100.91684533160976 * n_rows / 6, rel=1e-14)
+    assert result.n_rows_effective == n_rows
+    if n_rows < 4:
+        assert len(result.warnings) == 1
+        warning = result.warnings[0]
+        assert warning.code == "robinson_briggs_1966_small_row_count_extrapolation"
+        assert warning.severity == "warning"
+        assert warning.source == "finned_tube_pressure_drop"
+        assert "unvalidated short-bank extrapolation" in warning.message
+        assert "original six-row experimental correlation" in warning.message
+        assert str(n_rows) in warning.message
+    elif n_rows == 4:
+        assert [(w.code, w.severity) for w in result.warnings] == [
+            ("robinson_briggs_1966_row_count_secondary_extension", "info")
+        ]
+    else:
+        assert result.warnings == ()
+
+
+@pytest.mark.parametrize("provider", ["robinson_briggs_1966", "auto"])
+def test_robinson_briggs_two_row_staggered_public_apis(provider: str) -> None:
+    """Representative COOLER2 geometry without loading private notebooks."""
+    bundle = _published_range_bundle(n_rows=2)
+    props = _published_range_properties()
+    single = calculate_finned_tube_pressure_drop(3.0, bundle, props, provider=provider)
+    bank = calculate_finned_tube_bank_hydraulics(
+        3.0, bundle, inlet_props=props, pressure_drop_provider=provider
+    )
+
+    assert single.method == bank.metadata.method == "robinson_briggs_1966"
+    assert single.n_rows_effective == bank.n_rows_effective == 2
+    assert single.dp_drag == pytest.approx(100.91684533160976 / 3, rel=1e-14)
+    assert bank.dp_drag == pytest.approx(single.dp_drag)
+    assert bank.dp_total == pytest.approx(single.dp_drag)
+    assert bank.dp_acceleration == 0.0
+    assert [(w.code, w.severity) for w in bank.warnings] == [
+        ("robinson_briggs_1966_small_row_count_extrapolation", "warning")
+    ]
+    assert bank.warnings == single.warnings
+
+
+def test_robinson_briggs_short_bank_preserves_other_applicability_warnings() -> None:
+    bundle = _published_range_bundle(fin_thickness_tip=0.0003)
+    props = _published_range_properties()
+    request = replace(_pressure_request(bundle, props, 0.2), fluid_family="flue_gas")
+    provider = RobinsonBriggs1966Provider()
+    six_rows = provider.evaluate(request)
+    two_rows = provider.evaluate(replace(request, n_rows=2))
+
+    assert two_rows.dp_drag == pytest.approx(six_rows.dp_drag / 3)
+    assert tuple(w for w in two_rows.warnings if "row_count" not in w.code) == six_rows.warnings
+    assert {w.code for w in two_rows.warnings} >= {
+        "robinson_briggs_1966_reynolds_below_range",
+        "robinson_briggs_1966_linear_taper_mean_thickness_mapping",
+        "robinson_briggs_1966_non_air_source_extrapolation",
+    }
+
+
 @pytest.mark.parametrize("n_rows", [1, 2, 3])
 def test_briggs_young_small_row_counts_calculate_with_dedicated_warning(
     n_rows: int,
@@ -487,13 +557,15 @@ def test_briggs_young_small_row_warning_coexists_with_other_diagnostics() -> Non
         (True, TypeError),
     ],
 )
-def test_finned_heat_transfer_request_rejects_invalid_row_counts(
+@pytest.mark.parametrize("request_factory", [_heat_request, _pressure_request])
+def test_finned_correlation_requests_reject_invalid_row_counts(
     n_rows: object,
     error_type: type[Exception],
+    request_factory,
 ) -> None:
     bundle = _published_range_bundle()
     props = _published_range_properties()
-    request = _heat_request(bundle, props, 3.0)
+    request = request_factory(bundle, props, 3.0)
 
     with pytest.raises(error_type):
         replace(request, n_rows=n_rows)
@@ -561,15 +633,16 @@ def test_briggs_young_hard_rejects_inline_and_isosceles() -> None:
     assert rounded.equilateral_relative_deviation < 1.0e-3
 
 
-def test_robinson_briggs_hard_rejects_inline_fewer_rows_and_isosceles() -> None:
+@pytest.mark.parametrize("n_rows", [2, 6])
+def test_robinson_briggs_hard_rejects_incompatible_geometry(n_rows: int) -> None:
     bundle, props, m_dot = _benchmark_state()
-    request = _pressure_request(bundle, props, m_dot)
+    request = replace(_pressure_request(bundle, props, m_dot), n_rows=n_rows)
     provider = RobinsonBriggs1966Provider()
 
     with pytest.raises(ValueError, match="staggered"):
         provider.evaluate(replace(request, layout="inline"))
-    with pytest.raises(ValueError, match="at least four"):
-        provider.evaluate(replace(request, n_rows=3))
+    with pytest.raises(ValueError, match="solid circular-finned"):
+        provider.evaluate(replace(request, geometry_family="unsupported"))
 
     with pytest.raises(ValueError, match="equilateral"):
         provider.evaluate(

@@ -570,8 +570,8 @@ def run_rating(
     from core.enhancements.integration import guard_side
     guard_side(hx.tube_side_enhancement, inside)
     outside = closed_balance.outside
-    from core.heat_transfer.serrated_airside import guard_serrated_execution
-    guard_serrated_execution(hx, inside_provider=inside.provider, outside_provider=outside.provider)
+    from core.heat_transfer.outside_dispatch import guard_outside_execution
+    guard_outside_execution(hx, inside_provider=inside.provider, outside_provider=outside.provider)
     hot_is_inside = closed_balance.hot_is_inside
 
     T_mean_inside = 0.5 * (inside.T_in + inside.T_out)

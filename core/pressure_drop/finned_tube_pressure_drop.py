@@ -332,12 +332,6 @@ class RobinsonBriggs1966Provider:
                 "RobinsonBriggs1966Provider supports only staggered "
                 "triangular tube banks; inline layout is unsupported."
             )
-        if request.n_rows < 4:
-            raise ValueError(
-                "RobinsonBriggs1966Provider requires at least four tube "
-                "rows; the source correlation was obtained from six-row banks."
-            )
-
         diagonal_pitch = math.hypot(
             request.pitch_longitudinal, 0.5 * request.pitch_transverse
         )
@@ -1014,7 +1008,22 @@ def _robinson_briggs_warnings(
         )
         if warning is not None:
             warnings.append(warning)
-    if request.n_rows != 6:
+    if request.n_rows < 4:
+        warnings.append(
+            make_warning(
+                code="robinson_briggs_1966_small_row_count_extrapolation",
+                message=(
+                    f"The requested {request.n_rows} rows are an unvalidated "
+                    "short-bank extrapolation from the original six-row "
+                    "experimental correlation, below the later >=4-row "
+                    "recommendation. The existing f_RB is multiplied by the "
+                    "actual row count; no row correction has been applied."
+                ),
+                source="finned_tube_pressure_drop",
+                severity="warning",
+            )
+        )
+    elif request.n_rows != 6:
         warnings.append(
             make_warning(
                 code="robinson_briggs_1966_row_count_secondary_extension",

@@ -37,6 +37,10 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ## Current Capabilities (v0.9.5 development)
 
+Continuous plate-fin support adds [finite geometry and a research-only dry
+profile](docs/continuous_plate_fins.md). Wang source/experimental validation is
+incomplete; this is not an approved v0.9.6 production release.
+
 v0.9.5 adds [serrated helical-fin geometry and explicit STAGGERED physics](docs/serrated_fins.md)
 for untwisted constant-thickness welded I-foot fins. Phase A geometric volume,
 mass and area remain unchanged. Phase B combines separate Holfeld source flow
@@ -51,8 +55,10 @@ Mean fin temperature is coupled to the physical film coefficient. Hydraulic
 drag uses mean gas state with separate acceleration and external losses.
 This is qualified non-strict engineering support: heated normalization is
 unapplied, source ranges and loss decomposition remain partial, and strict
-mode rejects unresolved required conditions. Staggered Briggs--Young and
-Robinson--Briggs behavior is unchanged. See the [thermal guide](docs/inline_round_finned_thermal.md)
+mode rejects unresolved required conditions. Staggered Briggs–Young remains
+unchanged. Robinson–Briggs now also permits 1–3 rows with an explicit
+unvalidated short-bank extrapolation warning; results for at least four rows
+are unchanged. See the [thermal guide](docs/inline_round_finned_thermal.md)
 and [native hydraulic guide](docs/inline_round_finned_hydraulics.md).
 
 Staggered round solid-fin banks can explicitly select
