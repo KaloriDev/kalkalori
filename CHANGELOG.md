@@ -5,6 +5,36 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.7] — Wall and surface-temperature consistency
+
+- Corrected topology-paired 0D wall/exposed-surface envelopes, independent
+  representative means, and fin/contact/fouling temperature semantics.
+- Applied compatible interface temperatures to Bulk-Mean wet-area, saturation,
+  latent-heat, condensate-drainage and achieved-duty calculations; retained
+  provider-specific native Elmahdy profiles and formulations.
+- Replaced `LegacyBulkMeanWetCoilProvider` with
+  `BulkMeanAnalogyWetCoilProvider`, identity `bulk_mean_analogy`, without a
+  compatibility alias. Elmahdy–Mitalas remains the default.
+- Updated shared case-study tables and spreadsheet reporting to consume surface
+  definitions and provenance while preserving achieved-duty and UA meanings.
+- Recorded model-consistency consequences: TERMOTECH Bulk-Mean duty
+  245.016315 → 250.508997 kW and condensate 0 → .002439754 kg/s;
+  IPROS118 approximately 155.592 → 169.625 kW. Existing Elmahdy fixture results
+  are unchanged. These are numerical comparisons, not experimentally proven
+  improvements or evidence of provider superiority.
+- Retained 0D/spatial and geometry limits, unsupported wet continuous fins and
+  wet hydraulics, historical Bulk-Mean dry/wet sensible-closure discontinuity
+  and high-NTU enthalpy-domain limits. TERMOTECH's roughly 24 kW AUTO/dry
+  difference is not simply latent heat. No correlation, tolerance, timeout
+  default or applicability was changed to close a failing test.
+- Accepted the reproduced baseline 300-second inverse-Rating failure explicitly;
+  the prior full public receipt remains 2739 passed / 1 failed. Experimental
+  predictive validation remains incomplete.
+
+Local preparation is user-approved; PR, integration and publication are manual.
+See [final acceptance](docs/validation/v0.9.7_final_acceptance.md) and the
+[integrated review](docs/validation/v0.9.7_integrated_validation.md).
+
 ## [0.9.5] - Unreleased: serrated geometry and explicit STAGGERED physics
 
 - Added separate Holfeld source-equivalent flow-area, Hashizume serrated

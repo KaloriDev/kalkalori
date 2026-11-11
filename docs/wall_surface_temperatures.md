@@ -1,4 +1,4 @@
-# Wall and exposed-surface temperatures (v0.9.7 implementation)
+# Wall and exposed-surface temperatures (v0.9.7)
 
 All core temperatures use K. These are 0D estimates unless a provider explicitly
 supplies a native profile. Numerical verification is not experimental validation.
