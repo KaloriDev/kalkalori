@@ -42,22 +42,19 @@ def test_surface_onset_and_independent_whole_exchanger_balances(humidity, regime
     assert pc.m_dot_condensate == pytest.approx(.5*(humidity-pc.W_out), abs=1e-8)
     if regime == "DRY":
         assert not pc.active and pc.m_dot_condensate == 0.
-        qgas = b.m_dot*(gas.full_at(T=b.T_in, p=b.p).h
-                       - gas.full_at(T=r.T_out_outside, p=b.p).h)
     else:
         assert pc.active and pc.possible and pc.m_dot_condensate > 0.
         assert pc.wet_area > 0. and 0. < pc.wet_surface_fraction <= 1.
         if regime == "PARTIALLY_WET":
             assert pc.wet_surface_fraction < 1.
-        # Independent endpoint evaluation with the declared dry-carrier and
-        # saturated-vapor/liquid references, rather than solver duty helpers.
-        dry = wet_gas_provider_at_water_ratio(detect_phase_change_capability(gas), 0.)
-        def enthalpy(T, W):
-            return dry.full_at(T=T, p=b.p).h + W*1000*IAPWS97(T=T, x=1).h
-        qgas = .5*(enthalpy(b.T_in, humidity)-enthalpy(r.T_out_outside, pc.W_out))
-        qgas -= r.wet_coil_diagnostics["H_drain"]
+    # Selected Bulk-Mean shares this caloric basis in both dry and wet paths.
+    # Independent backend calls, not solver duty helpers or wet-mixture h.
+    dry = wet_gas_provider_at_water_ratio(detect_phase_change_capability(gas), 0.)
+    def enthalpy(T, W):
+        return dry.full_at(T=T, p=b.p).h + W*1000*IAPWS97(T=T, x=1).h
+    qgas = .5*(enthalpy(b.T_in, humidity)-enthalpy(r.T_out_outside, pc.W_out))
+    qgas -= r.wet_coil_diagnostics.get("H_drain", 0.) or 0.
     qwater = .4*1000*(IAPWS97(T=r.T_out_inside, P=.6).h-IAPWS97(T=water_in, P=.6).h)
-    # Independent finite-enthalpy increments need not exactly equal the 0D
-    # mean-cp coolant closure. This is a 0.1% numerical engineering check.
+    # Retain the existing 0.1% engineering gates for finite solver accuracy.
     assert qgas == pytest.approx(r.q, rel=1e-3, abs=1.)
     assert qwater == pytest.approx(r.q, rel=1e-3, abs=1.)

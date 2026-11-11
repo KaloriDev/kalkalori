@@ -8,12 +8,17 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--source",type=Path)
 parser.add_argument("--output",type=Path,required=True)
 parser.add_argument("--inside",action="store_true")
+parser.add_argument("--autodetection",action="store_true")
 args = parser.parse_args()
 source = (args.source or Path(__file__).resolve().parents[2]).resolve()
 sys.path.insert(0,str(source))
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.tests.legacy_wet_coil_provider_test import test_endpoint_onset_uses_bounded_0d_wet_zone_when_mean_fin_is_dry
-if args.inside:
+if args.autodetection:
+    from core.tests import phase_change_autodetection_test as auto_tests
+    scenario = getattr(auto_tests, "test_inside_auto_does_not_accept_historical_supersaturated_state",
+                       None) or auto_tests.test_inside_condensation_possible_under_auto_is_active
+elif args.inside:
     from core.tests import inside_water_condensation_integration_test as inside_tests
     scenario = getattr(inside_tests, "test_large_inside_condensing_geometry_relaxes_before_enthalpy_inversion",
                        None) or inside_tests.test_large_inside_condensing_geometry_rejects_supersaturated_fixed_point
@@ -25,7 +30,13 @@ from core.phase_change.water_equilibrium import saturated_water_ratio
 receipt = dict(source=str(source))
 original = BareTubeHeatExchanger.simulate
 def measured(hx,a,b,**kw):
-    r = original(hx,a,b,**kw)
+    try:
+        r = original(hx,a,b,**kw)
+    except Exception as exc:
+        receipt.update(status="REJECTED",error=type(exc).__name__,message=str(exc),
+            failure_classification=getattr(exc,"reason",None),
+            diagnostics=getattr(exc,"diagnostics",{}))
+        raise
     p = r.inside_phase_change if args.inside else r.outside_phase_change
     gas = a if args.inside else b
     gas_out = r.T_out_inside if args.inside else r.T_out_outside

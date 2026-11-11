@@ -54,3 +54,16 @@ def test_conditional_high_ntu_closes_independent_energy_and_outlet_phase(point_i
     assert abs(r.q-qgas) < 1.
     assert abs(r.q-qwater) < 1.
     assert abs(pc.m_dot_dry_carrier*(pc.W_in-pc.W_out)-pc.m_dot_condensate) < 1e-8
+
+
+def test_near_saturated_finned_mean_model_does_not_return_invalid_success():
+    from core.tests.wet_coil_public_test import context
+    from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyError
+    # The exact merged v0.9.7 base returned 289.701 K, W=.0123102,
+    # exceeding Wsat=.0114176. A stalled bounded solve must be explicit;
+    # this does not prove the physical exchanger globally infeasible.
+    hx,a,b = context(finned=True)
+    with pytest.raises(WetGasEnthalpyError) as caught:
+        hx.simulate(a,b,wet_coil_provider=BulkMeanAnalogyWetCoilProvider())
+    assert caught.value.reason == "numerical_stagnation"
+    assert caught.value.diagnostics["residuals"]["gas_residual"] < -1.

@@ -219,14 +219,32 @@ def test_near_onset_does_not_oscillate_across_repeated_calls() -> None:
 # Inside wet-gas condensation possible under AUTO -> active.
 # ---------------------------------------------------------------------------
 def test_inside_condensation_possible_under_auto_is_active() -> None:
-    hx = _hx()
-    inside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.35)), m_dot=1.0, T_in=360.0, p=101325.0)
-    outside = HXSideInput(provider=GasMixturePropertyProvider(_dry_air_spec()), m_dot=25.0, T_in=290.0, p=101325.0)
+    # Use the admissible integration fixture for a routing assertion. The
+    # former high-area/high-humidity state is retained as a rejection below.
+    hx = _hx(n_rows=5, n_tubes_per_row=10)
+    inside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.08)), m_dot=1.0, T_in=360.0, p=101325.0)
+    outside = HXSideInput(provider=GasMixturePropertyProvider(_dry_air_spec()), m_dot=5.0, T_in=290.0, p=101325.0)
 
     result = hx.simulate(inside, outside)
     assert result.inside_phase_change.active is True
     assert result.inside_phase_change.m_dot_condensate > 0.0
-    assert result.inside_phase_change.wet_surface_fraction == pytest.approx(1.0)
+    assert 0.0 < result.inside_phase_change.wet_surface_fraction < 1.0
+    from core.phase_change.water_equilibrium import saturated_water_ratio
+    limit = saturated_water_ratio(p_total=inside.p, T=result.T_out_inside,
+        M_dry=detect_phase_change_capability(inside.provider).M_dry)
+    assert result.inside_phase_change.W_out <= limit
+
+
+def test_inside_auto_does_not_accept_historical_supersaturated_state() -> None:
+    from core.phase_change.wet_gas_enthalpy import WetGasEnthalpyError
+    # Exact merged v0.9.7 returned 301.294 K, W=.1080702 where Wsat=.0235548.
+    # Keep the old operating point, but require an explicit bounded failure.
+    hx = _hx()
+    inside = HXSideInput(provider=GasMixturePropertyProvider(_wet_gas_spec(0.35)), m_dot=1.0, T_in=360.0, p=101325.0)
+    outside = HXSideInput(provider=GasMixturePropertyProvider(_dry_air_spec()), m_dot=25.0, T_in=290.0, p=101325.0)
+    with pytest.raises(WetGasEnthalpyError) as caught:
+        hx.simulate(inside,outside)
+    assert caught.value.reason == "numerical_stagnation"
 
 
 def test_inside_condensation_disabled_gives_sensible_only_with_warning() -> None:
