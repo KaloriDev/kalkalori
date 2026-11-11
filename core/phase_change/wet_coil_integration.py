@@ -304,6 +304,7 @@ def _envelope(r, thermo, adapter, inside, outside, alpha):
         fin_surface_max=max((max(p.fin_base_temperature, p.fin_tip_temperature)
                              for p in fins), default=float("nan")),
         spatial_assumption="native_elmahdy_source_profile_and_radial_fin_response",
+        temperature_definition="native_gas_facing_interface_and_radial_fin_surface; separate_metal_wall",
         applicability="provider_supported_wet_or_dry_source_profile",
         mean_method="native_axial_quadrature_with_radial_surface_area_weighting",
     )

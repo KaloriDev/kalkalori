@@ -1302,6 +1302,7 @@ def _water_steam_wall_diagnostics(
         fin_base_mean=mean_probe.fin_base_temperature if mean_probe.fin_base_temperature is not None else math.nan,
         fin_tip_mean=mean_probe.fin_tip_temperature if mean_probe.fin_tip_temperature is not None else math.nan,
         spatial_assumption=assumption,
+        temperature_definition="equivalent_metal_wall_and_exposed_surface_separate",
         applicability="whole_exchanger_equivalent_htc_not_local_phase_zone",
         mean_method="0d_equivalent_htc_bulk_mean_with_surface_area_weighting",
     )

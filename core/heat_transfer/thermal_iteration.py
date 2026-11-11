@@ -95,8 +95,9 @@ outer T_out relaxation -- see ``heat_duty_from_effectiveness`` above -- but
 never used for wall temperatures), and it is not a caller-supplied "required"
 duty. Every caller of ``solve_iterative_thermal_state`` (currently
 ``BareTubeHeatExchanger.solve_thermal_state`` and ``core.models.rating``)
-gets this same convention because they all funnel through this one
-function; there is no separate wall-temperature calculation elsewhere.
+gets this same dry mean-state convention. Native wet and equivalent-steam
+adapters own their separate interface/metal states; they do not reinterpret a
+dry resistance probe as a solved wet surface.
 
 Call path (v0.5.3)
 ------------------
@@ -107,7 +108,10 @@ resistance evaluation, without rerunning either complete exchanger driver.
 
 Scope
 -----
-0D model only (no axial/finned/segmented refinement). This module does not
+0D mean-property model with existing radial fin reconstruction, but no resolved
+axial/segmented field. Topology-paired endpoint and central probes sample
+representative states; unresolved crossflow returns labelled bulk bounds.
+This module does not
 compute pressure drop; see ``BareTubeHeatExchanger.solve`` for the combined
 thermal + hydraulic single-pass kernel.
 
@@ -339,9 +343,10 @@ class WallTemperatureEnvelope:
     ``outside_min``/``outside_max`` keep their historical meaning: the
     extrema of the existing outside/core-wall network node (see
     :class:`WallTemperatureProbe`). ``outside_skin_min``/``outside_skin_max``
-    are the extrema of the actually exposed outside metal (primary surface,
-    fin base, fin tip for a finned tube; identical to ``outside_min``/
-    ``outside_max`` for a bare tube). ``fin_base_min``/``fin_base_max``/
+    are the extrema of the gas-facing exposed surface (primary/base/tip for
+    a dry finned tube; equal to the bare metal only without outside fouling).
+    A wet provider may define this node as its interface; its provenance
+    explicitly distinguishes that quantity from metal. ``fin_base_min``/``fin_base_max``/
     ``fin_tip_min``/``fin_tip_max`` are NaN for a bare tube.
     """
 
@@ -372,7 +377,7 @@ class WallTemperatureEnvelope:
     inside_surface_min: float = math.nan
     inside_surface_max: float = math.nan
     inside_surface_mean: float = math.nan
-    temperature_definition: str = "metal_wall_and_exposed_surface_separate"
+    temperature_definition: str = "provider_defined"
     spatial_assumption: str = "provider_defined"
     applicability: str = "provider_defined"
     mean_method: str = "provider_defined"
@@ -898,6 +903,7 @@ def estimate_wall_temperature_envelope(
         inside_surface_max=max((p.inside_surface_temperature for p in valid), default=math.nan),
         inside_surface_mean=representative("inside_surface_temperature"),
         spatial_assumption=spatial_assumption,
+        temperature_definition="metal_wall_and_exposed_surface_separate",
         applicability=("bulk_temperature_bounds_only" if "unresolved" in spatial_assumption
                        else "equivalent_flow_representative_states"),
         mean_method="0d_mean_bulk_resistance_state_with_surface_area_weighting",
