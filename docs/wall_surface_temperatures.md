@@ -2,6 +2,9 @@
 
 All core temperatures use K. These are 0D estimates unless a provider explicitly
 supplies a native profile. Numerical verification is not experimental validation.
+The [integrated v0.9.7 review](validation/v0.9.7_integrated_validation.md) traces
+the temperatures used in the actual equations and records the conditional
+experimental comparison and remaining model limitations.
 
 | Physical quantity | Core diagnostic | Meaning |
 | --- | --- | --- |

@@ -116,6 +116,12 @@ No wet continuous-sheet model, liquid-film resistance, distributed row/circuit
 resolution or wet pressure-drop correction is introduced. Numerical conservation
 tests are not independent experimental validation. Property averaging and the
 real nonuniform wet-area distribution remain limitations.
+The [integrated v0.9.7 review](validation/v0.9.7_integrated_validation.md)
+also documents a pre-existing duty switch between dry epsilon-NTU and active
+arithmetic-mean sensible balances, plus historical high-effectiveness
+enthalpy/phase-domain failures. The wall-envelope correction does not reconcile
+those process closures. Its conditional literature comparisons do not establish
+predictive duty or condensate accuracy.
 See [wall and surface temperature definitions](wall_surface_temperatures.md)
 for the separate metal, exposed-surface, fin and interface diagnostics.
 
