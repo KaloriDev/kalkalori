@@ -1,6 +1,6 @@
 # KalKalori - Heat Exchanger Open Engine
 # GNU GPL v3 only
-"""Regression tests for the independent four-point 0D endpoint envelope.
+"""Regression tests for topology-aware 0D resistance envelopes.
 
 Run with: ``python -m core.tests.wall_temperature_envelope_test``.
 """
@@ -66,10 +66,12 @@ def test_four_pairs_properties_coefficients_and_extrema() -> None:
     inside = RecordingProvider(1.1, [])
     outside = RecordingProvider(0.9, [])
     result = envelope(hx, inside, outside)
-    assert result.method == "0d_endpoint_envelope"
-    assert len(result.probes) == 4 and all(p.converged for p in result.probes)
+    assert result.method == "0d_topology_resistance_envelope"
+    assert result.applicability == "bulk_temperature_bounds_only"
+    assert len(result.probes) == 5 and all(p.converged for p in result.probes)
     assert {(p.inside_bulk_temperature, p.outside_bulk_temperature) for p in result.probes} == {
         (650.0, 300.0), (650.0, 390.0), (520.0, 300.0), (520.0, 390.0),
+        (585.0, 345.0),
     }
     # Stored properties prove that every probe evaluated its own bulk state;
     # recorded non-endpoint calls prove that wall properties were evaluated too.
@@ -121,7 +123,7 @@ def test_one_failed_probe_marks_incomplete_envelope() -> None:
     with patch.object(ti, "_solve_wall_temperature_probe", side_effect=one_failure):
         result = envelope(hx, pi, po)
     codes = {warning.code for warning in result.warnings}
-    assert sum(probe.converged for probe in result.probes) == 3
+    assert sum(probe.converged for probe in result.probes) == 4
     assert "wall_temperature_probe_not_converged" in codes
     assert "wall_temperature_envelope_incomplete" in codes
     assert "wall_temperature_envelope_0d_estimate" in codes

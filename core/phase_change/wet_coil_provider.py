@@ -115,11 +115,11 @@ class ElmahdyMitalasWetCoilProvider:
 
 
 @dataclass(frozen=True)
-class LegacyBulkMeanWetCoilProvider:
-    """Historical KalKalori outside-condensation Simulation, explicitly selected."""
+class BulkMeanAnalogyWetCoilProvider:
+    """KalKalori 0D bulk-mean heat/mass analogy, explicitly selected."""
 
-    model_id: str = "legacy_outside_condensation_0d_bulk_mean"
-    model_name: str = "KalKalori legacy bulk-mean outside condensation"
+    model_id: str = "bulk_mean_analogy"
+    model_name: str = "Bulk-Mean Heat/Mass Transfer Analogy"
     source: str = "KalKalori c80e779 (v0.8.2); docs/wet_coil_providers.md"
     applicability: str = (
         "Outside H2O in a carrier gas; sensible inside fluid; BareTube or "
@@ -151,7 +151,7 @@ class LegacyBulkMeanWetCoilProvider:
                                      context=context, **options)
 
     def rate(self, *args, **kwargs):
-        raise WetCoilProviderUnsupportedError("Legacy wet provider does not support rating")
+        raise WetCoilProviderUnsupportedError("Bulk-mean analogy provider does not support rating")
 
 
 def dispatch_wet_coil(hx, inside, outside, *, mode, settings,

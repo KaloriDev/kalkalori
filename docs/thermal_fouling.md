@@ -80,7 +80,7 @@ wet calculations retain their radial heat/mass response downstream of the
 lumped fouling node; metal wall temperatures are distinguished from the
 exposed surface temperatures.
 
-The explicitly selected `LegacyBulkMeanWetCoilProvider` supports both
+The explicitly selected `BulkMeanAnalogyWetCoilProvider` supports both
 fouling inputs in its existing coupled Simulation network, including circular
 fins. Its bulk-mean physics, convergence tolerances and Simulation-only
 restriction remain unchanged. Zero fouling retains historical Legacy results.

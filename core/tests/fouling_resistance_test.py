@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from core import LegacyBulkMeanWetCoilProvider, WetCoilSolverOptions
+from core import BulkMeanAnalogyWetCoilProvider, WetCoilSolverOptions
 from core.heat_transfer.outside_dispatch import calculate_resistance_network
 from core.models.bare_tube import BareTubeHeatExchanger
 from core.models.heat_balance import BalanceSideSpec
@@ -166,13 +166,16 @@ def test_wet_defaults_and_v086_numerical_freeze():
 @pytest.mark.parametrize('finned', [False, True])
 def test_legacy_zero_freeze_and_positive_fouling(finned):
     hx, a, b = historical_case(finned)
-    opts = dict(wet_coil_provider=LegacyBulkMeanWetCoilProvider())
+    opts = dict(wet_coil_provider=BulkMeanAnalogyWetCoilProvider())
     clean = hx.simulate(a, b, **opts)
     zero = fouled(hx, None, None).simulate(a, b, **opts)
     expected = (452361.78009796015, 309.77365212847946, 336.40912837496386,
                 .04443248677919755, .442604902596629, 6621.439654955228) if finned else (
-                702644.68440337, 336.21383345649315, 336.5149577934638,
-                .06982196451578865, .32591996755281527, 10784.936645928527)
+                # Same independently balanced v0.9.7 terminal-envelope
+                # correction as legacy_wet_coil_provider_test; no fouling or
+                # provider-rename effect is included in this baseline update.
+                824096.7216155361, 344.191486536459, 343.98893291288994,
+                .13850527172933702, .2987910097982726, 12698.196201321589)
     for r in (clean, zero):
         assert (r.q, r.T_out_inside, r.T_out_outside, r.outside_phase_change.m_dot_condensate,
                 r.outside_phase_change.wet_surface_fraction, r.UA) == pytest.approx(expected)

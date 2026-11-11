@@ -18,9 +18,11 @@ Three wall-temperature meanings remain separate:
   Saturation, mass-transfer driving force, latent heat and drained-liquid
   enthalpy use this temperature and ``A_wet = A_o * wet_surface_fraction``.
 
-Every outer iteration builds a cheap two-point sensible-only envelope.  Its
-span is retained but both extrema are shifted together so the midpoint
-tracks the current global wall mean.  The neutral linear helper in
+Every outer iteration builds a cheap topology-paired interface envelope.
+Each state closes the same mean-property resistance balance with the current
+latent source held uniform across representative states. Both streams'
+temperature changes enter its span. Unresolved crossflow gives bulk bounds.
+The neutral linear helper in
 ``core.phase_change.wet_surface_fraction`` then returns the wet fraction and
 representative wet-zone temperature from that same envelope.  This remains
 a 0D estimate, not a spatial/row-by-row wall solution.
@@ -149,6 +151,9 @@ class OutsideCondensationSolution:
     W_sat_wet_surface: float | None = None
     wet_finned_surface: "WetFinnedSurfaceResult | None" = None
     finned_tube_diagnostics: FinnedTubeDiagnostics | None = None
+    # Actual representative states used by the final physics-active 0D area
+    # estimate: (inside bulk, outside bulk, interface), in K.
+    surface_temperature_samples: tuple[tuple[float, float, float], ...] = ()
 
 
 def solve_outside_condensation(
@@ -311,6 +316,7 @@ def solve_outside_condensation(
         R_i = 1.0 / (alfa_i * A_i) + hx.resistance_fouling_inside * margin_factor
         R_downstream = R_i + R_w + hx.resistance_fouling_outside * margin_factor
         wet_finned_surface = None
+        surface_temperature_samples = ()
 
         if is_circular_finned:
             # The radial response is the sole outside interface solve for a
@@ -456,33 +462,28 @@ def solve_outside_condensation(
             )
             T_wall_max_iter = max(exposed_temperatures)
         else:
-            # Preserve the established bare-tube wet-interface equations and
-            # convergence path: only circular-finned surfaces branch above.
+            # Preserve the established transport/interface equations; improve
+            # the representative thermal states used by their wet-area input.
             alfa_o_dry = local.alfa_o_physical
             R_o_film = 1.0 / (alfa_o_dry * A_o)
-            T_wall_inlet_est = sensible_only_wall_temperature(
-                T_bulk_wet_gas=T_in_outside,
-                T_bulk_other=T_mean_inside,
-                R_wet_film=R_o_film,
-                R_downstream=R_downstream,
+            from core.geometry._thermal_topology import resolve_thermal_topology
+            from core.phase_change.condensation_solver_helpers import representative_interface_envelope
+            T_wall_min_iter, T_wall_mean_reference, T_wall_max_iter = representative_interface_envelope(
+                topology=resolve_thermal_topology(hx.bundle), side="outside",
+                T_in_inside=T_in_inside, T_out_inside=T_out_inside,
+                T_in_outside=T_in_outside, T_out_outside=T_out_outside,
+                R_wet_film=R_o_film, R_downstream=R_downstream,
+                Q_latent=solution_state.get("Q_latent", 0.0),
             )
-            T_wall_outlet_est = sensible_only_wall_temperature(
-                T_bulk_wet_gas=T_out_outside,
-                T_bulk_other=T_mean_inside,
-                R_wet_film=R_o_film,
-                R_downstream=R_downstream,
-            )
-            T_wall_min_raw = min(T_wall_inlet_est, T_wall_outlet_est)
-            T_wall_max_raw = max(T_wall_inlet_est, T_wall_outlet_est)
-            T_shape_mean = 0.5 * (T_wall_min_raw + T_wall_max_raw)
-            T_wall_mean_reference = (
-                T_wall_outside_prev
-                if T_wall_outside_prev is not None
-                else T_shape_mean
-            )
-            wall_envelope_shift = T_wall_mean_reference - T_shape_mean
-            T_wall_min_iter = T_wall_min_raw + wall_envelope_shift
-            T_wall_max_iter = T_wall_max_raw + wall_envelope_shift
+            from core.phase_change.condensation_solver_helpers import representative_wet_bulk_pairs
+            bulk_pairs = representative_wet_bulk_pairs(
+                resolve_thermal_topology(hx.bundle), "outside", T_in_inside, T_out_inside,
+                T_in_outside, T_out_outside)
+            source = solution_state.get("Q_latent", 0.0)
+            surface_temperature_samples = tuple(
+                (ti, to, (to * R_downstream + ti * R_o_film
+                          + source * R_o_film * R_downstream) / (R_o_film + R_downstream))
+                for ti, to in bulk_pairs)
 
             dew_point_local = local_dew_point_or_triple_point(
                 outside_capability,
@@ -736,6 +737,7 @@ def solve_outside_condensation(
             outside_wall_property_correction=local.outside_wall_property_correction,
             wet_finned_surface=wet_finned_surface,
             finned_tube_diagnostics=local.finned_tube_diagnostics,
+            surface_temperature_samples=surface_temperature_samples,
         )
 
         Q_total_prev = Q_total
@@ -932,6 +934,7 @@ def solve_outside_condensation(
         warnings=tuple(all_warnings),
         wet_finned_surface=solution_state["wet_finned_surface"],
         finned_tube_diagnostics=solution_state["finned_tube_diagnostics"],
+        surface_temperature_samples=solution_state["surface_temperature_samples"],
     )
 
 

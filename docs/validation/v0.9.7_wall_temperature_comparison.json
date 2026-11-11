@@ -1,0 +1,230 @@
+{
+  "base_commit": "e2cb153425e6f3787f29b69b7fc346b7b73069d6",
+  "physical_stage_commit": "342cf94",
+  "units": {
+    "temperatures": "K",
+    "duty": "kW",
+    "condensate": "kg/s"
+  },
+  "source": "Independent public synthetic fixtures; numerical regression, not experimental validation",
+  "before_provider_identity": "legacy_outside_condensation_0d_bulk_mean",
+  "after_provider_identity": "bulk_mean_analogy",
+  "cases": {
+    "dry_crossflow": {
+      "before": {
+        "Q_process_kW": 1074.4218552921172,
+        "m_condensate": 0.0,
+        "T_gas_out": 451.2027233105196,
+        "T_coolant_out": 445.2560240938979,
+        "T_surface_min": 385.55365690374447,
+        "T_surface_max": 566.3082115138449,
+        "T_surface_mean": 475.93093420879467,
+        "wet_regime": "DRY",
+        "wet_surface_fraction": null
+      },
+      "after": {
+        "Q_process_kW": 1074.4218552921172,
+        "m_condensate": 0.0,
+        "T_gas_out": 451.2027233105196,
+        "T_coolant_out": 445.2560240938979,
+        "T_surface_min": 385.55365690374447,
+        "T_surface_max": 566.3082115138449,
+        "T_surface_mean": 475.9420367249975,
+        "wet_regime": "DRY",
+        "wet_surface_fraction": null
+      }
+    },
+    "bulk_mean_bare": {
+      "before": {
+        "Q_process_kW": 702.64468440337,
+        "m_condensate": 0.06982196451578865,
+        "T_gas_out": 336.5149577934638,
+        "T_coolant_out": 336.21383345649315,
+        "T_surface_min": 322.35002226496596,
+        "T_surface_max": 342.92391424585765,
+        "T_surface_mean": 332.63696806322116,
+        "wet_regime": "PARTIALLY_WET",
+        "wet_surface_fraction": 0.32591996755281527
+      },
+      "after": {
+        "Q_process_kW": 824.0967216155361,
+        "m_condensate": 0.13850527172933702,
+        "T_gas_out": 343.98893291288994,
+        "T_coolant_out": 344.191486536459,
+        "T_surface_min": 310.2558074408042,
+        "T_surface_max": 369.82496041071386,
+        "T_surface_mean": 340.04038425973215,
+        "wet_regime": "PARTIALLY_WET",
+        "wet_surface_fraction": 0.2987910097982726
+      }
+    },
+    "bulk_mean_finned": {
+      "before": {
+        "Q_process_kW": 452.36178009796015,
+        "m_condensate": 0.04443248677919755,
+        "T_gas_out": 336.40912837496387,
+        "T_coolant_out": 309.77365212847945,
+        "T_surface_min": 325.6474894681874,
+        "T_surface_max": 330.46927984931256,
+        "T_surface_mean": 329.0506288601894,
+        "wet_regime": "PARTIALLY_WET",
+        "wet_surface_fraction": 0.442604902596629
+      },
+      "after": {
+        "Q_process_kW": 452.36178009796015,
+        "m_condensate": 0.04443248677919755,
+        "T_gas_out": 336.40912837496387,
+        "T_coolant_out": 309.77365212847945,
+        "T_surface_min": 325.6474894681874,
+        "T_surface_max": 330.46927984931256,
+        "T_surface_mean": 329.0506288601894,
+        "wet_regime": "PARTIALLY_WET",
+        "wet_surface_fraction": 0.442604902596629
+      }
+    },
+    "elmahdy_W0.004": {
+      "before": {
+        "Q_process_kW": 2.277264740356474,
+        "m_condensate": 0.0,
+        "T_gas_out": 295.623522638716,
+        "T_coolant_out": 281.5058397165324,
+        "T_surface_min": 281.96017036151545,
+        "T_surface_max": 283.6869271875931,
+        "T_surface_mean": 282.79674162700866,
+        "wet_regime": "DRY",
+        "wet_surface_fraction": 0.0
+      },
+      "after": {
+        "Q_process_kW": 2.277264740356474,
+        "m_condensate": 0.0,
+        "T_gas_out": 295.623522638716,
+        "T_coolant_out": 281.5058397165324,
+        "T_surface_min": 281.96017036151545,
+        "T_surface_max": 283.6869271875931,
+        "T_surface_mean": 282.79674162700866,
+        "wet_regime": "DRY",
+        "wet_surface_fraction": 0.0
+      }
+    },
+    "bulk_mean_W0.004": {
+      "before": {
+        "Q_process_kW": 2.2766144421209407,
+        "m_condensate": 0.0,
+        "T_gas_out": 295.62613977836963,
+        "T_coolant_out": 281.50544361744045,
+        "T_surface_min": 281.9579827484689,
+        "T_surface_max": 283.6876512296226,
+        "T_surface_mean": 282.7617934131499,
+        "wet_regime": "DRY",
+        "wet_surface_fraction": 0.0
+      },
+      "after": {
+        "Q_process_kW": 2.2766144421209407,
+        "m_condensate": 0.0,
+        "T_gas_out": 295.62613977836963,
+        "T_coolant_out": 281.50544361744045,
+        "T_surface_min": 281.9579827484689,
+        "T_surface_max": 283.6876512296226,
+        "T_surface_mean": 282.8226427328098,
+        "wet_regime": "DRY",
+        "wet_surface_fraction": 0.0
+      }
+    },
+    "elmahdy_W0.012": {
+      "before": {
+        "Q_process_kW": 3.4044976980809993,
+        "m_condensate": 0.0005208058465108537,
+        "T_gas_out": 296.0269445136228,
+        "T_coolant_out": 282.17726147615457,
+        "T_surface_min": 283.04678209099586,
+        "T_surface_max": 285.2269481035804,
+        "T_surface_mean": 284.1273832027992,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      },
+      "after": {
+        "Q_process_kW": 3.4044976980809993,
+        "m_condensate": 0.0005208058465108537,
+        "T_gas_out": 296.0269445136228,
+        "T_coolant_out": 282.17726147615457,
+        "T_surface_min": 283.04678209099586,
+        "T_surface_max": 285.2269481035804,
+        "T_surface_mean": 284.1273832027992,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      }
+    },
+    "bulk_mean_W0.012": {
+      "before": {
+        "Q_process_kW": 3.4451368331115972,
+        "m_condensate": 0.0005347997688971457,
+        "T_gas_out": 296.0154316016861,
+        "T_coolant_out": 282.20147931190775,
+        "T_surface_min": 283.9404642352751,
+        "T_surface_max": 284.42667942553976,
+        "T_surface_mean": 284.1835736992771,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      },
+      "after": {
+        "Q_process_kW": 3.4451384594426973,
+        "m_condensate": 0.0005348005384351003,
+        "T_gas_out": 296.01542722186963,
+        "T_coolant_out": 282.2014752896946,
+        "T_surface_min": 283.0353589956019,
+        "T_surface_max": 285.3317945094735,
+        "T_surface_mean": 284.18357064456836,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      }
+    },
+    "elmahdy_W0.02": {
+      "before": {
+        "Q_process_kW": 5.202979079622775,
+        "m_condensate": 0.001365062628356251,
+        "T_gas_out": 296.6618876205664,
+        "T_coolant_out": 283.2488682279978,
+        "T_surface_min": 284.66027865953987,
+        "T_surface_max": 287.81300778467386,
+        "T_surface_mean": 286.23324333127107,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      },
+      "after": {
+        "Q_process_kW": 5.202979079622775,
+        "m_condensate": 0.001365062628356251,
+        "T_gas_out": 296.6618876205664,
+        "T_coolant_out": 283.2488682279978,
+        "T_surface_min": 284.66027865953987,
+        "T_surface_max": 287.81300778467386,
+        "T_surface_mean": 286.23324333127107,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      }
+    },
+    "bulk_mean_W0.02": {
+      "before": {
+        "Q_process_kW": 5.350037181134767,
+        "m_condensate": 0.0014202406599482127,
+        "T_gas_out": 296.64106527685567,
+        "T_coolant_out": 283.33655134553976,
+        "T_surface_min": 286.20053667986156,
+        "T_surface_max": 286.61524822046215,
+        "T_surface_mean": 286.4078937685744,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      },
+      "after": {
+        "Q_process_kW": 5.350036533285534,
+        "m_condensate": 0.001420240162129663,
+        "T_gas_out": 296.6410671975492,
+        "T_coolant_out": 283.3365504399841,
+        "T_surface_min": 284.7955709436076,
+        "T_surface_max": 288.0202199665,
+        "T_surface_mean": 286.4078924785628,
+        "wet_regime": "FULLY_WET",
+        "wet_surface_fraction": 1.0
+      }
+    }
+  }
+}

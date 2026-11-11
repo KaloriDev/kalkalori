@@ -8,8 +8,8 @@ transfer area used by the inside/outside condensation solvers
 (``A_wet = A_side * wet_surface_fraction``), so unlike a purely
 cosmetic diagnostic it must be cheap enough to evaluate every wet-solver
 iteration -- see that module for how ``wall_temperature_min``/``_max`` are
-obtained inexpensively per iteration (a closed-form two-point estimate,
-not the full four-probe ``WallTemperatureEnvelope``).
+obtained inexpensively per iteration (a topology-paired closed-form interface
+balance, not repeated property/correlation probes).
 
 Model: linear interpolation of the local dew point between the estimated
 minimum and maximum wall temperature (spec section 8):
@@ -33,6 +33,8 @@ wet result uses ``T_wall_mean``.  The temperature is intended for
 wet-surface equilibrium and condensate properties; it does not replace the
 global wall mean used by the sensible heat-transfer resistance network.
 
+``wet_surface_fraction_0d`` is the interpretation of this scalar; it is not
+an ``axial_wet_fraction`` or the radial wet fraction of a fin conduction model.
 No 1D/segmented model, row-by-row interpolation, endpoint-area weighting,
 or statistical temperature-distribution model is added here.
 """

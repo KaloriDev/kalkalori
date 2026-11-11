@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from core import (LegacyBulkMeanWetCoilProvider, ElmahdyMitalasWetCoilProvider,
+from core import (BulkMeanAnalogyWetCoilProvider, ElmahdyMitalasWetCoilProvider,
                   WetCoilProviderUnsupportedError, WetCoilSolverOptions, WetCoilTimeoutError)
 from core.models.simulation import run_simulation
 from core.phase_change.types import PhaseChangeMode
@@ -13,7 +13,7 @@ from core.tests.wet_coil_public_test import context, specs
 from core.tests.wet_finned_simulation_test import _wet_finned_hx, _side_inputs
 from core.tests.outside_water_condensation_integration_test import hx as historical_bare_hx
 
-LEGACY = LegacyBulkMeanWetCoilProvider()
+LEGACY = BulkMeanAnalogyWetCoilProvider()
 
 
 def historical_case(finned):
@@ -36,12 +36,17 @@ def margin_sweep(active):
         surface_margin=margin) for margin in (0.05, 0.10))]
 
 
-def test_v083_zero_margin_numerical_freeze(active):
-    """Captured on the merged a8673ca base, before thermal-margin edits."""
+def test_zero_margin_regression_with_documented_v097_wall_correction(active):
+    """Fin baseline is unchanged; bare terminals now include coolant change.
+
+    v0.8.3 bare duty was 702644.6844 W / condensate .0698219645 kg/s.
+    v0.9.7's physically paired cold terminal lowers the wet-zone temperature;
+    independent mass/enthalpy closure is checked below, not fitted to that duty.
+    """
     hx, _, _, r = active
     expected = (
-        (702644.68440337, 336.21383345649315, 336.5149577934638,
-         0.06982196451578865, 0.32591996755281527, 10784.936645928527)
+        (824096.7216155361, 344.191486536459, 343.98893291288994,
+         0.13850527172933702, 0.2987910097982726, 12698.196201321589)
         if hx.bundle.tube.surface_type.value == "plain" else
         (452361.78009796015, 309.77365212847946, 336.40912837496386,
          0.04443248677919755, 0.442604902596629, 6621.439654955228)
@@ -180,17 +185,17 @@ def test_active_balances_and_native_surface(active):
     assert abs(pc.mass_balance_error) < 1e-8
     assert abs(pc.energy_balance_error) < 1e-7
     s = r.wet_coil_diagnostics['surface']
-    assert s['surface_temperature_min'] == pc.wall_temperature_min
-    assert s['surface_temperature_max'] == pc.wall_temperature_max
+    assert s['surface_temperature_min'] == r.wall_temperature_envelope.outside_skin_min
+    assert s['surface_temperature_max'] == r.wall_temperature_envelope.outside_skin_max
+    assert s['surface_temperature_mean'] == r.wall_temperature_envelope.outside_skin_mean
+    assert s['wet_equilibrium_temperature_min'] == pc.wall_temperature_min
     assert s['surface_temperature_wet_mean'] == pc.wall_temperature_wet_mean
     assert s['dew_point_in'] == pc.dew_point_in
     assert s['dew_point_out'] == pc.dew_point_out
     assert s['onset_margin'] == pc.onset_margin_K
     assert s['wet_surface_fraction'] == pc.wet_surface_fraction
-    assert s['onset_envelope_method'] == 'two_point_0d_estimate'
-    assert s['wall_envelope_method'] == (
-        'two_point_0d_estimate' if r.wet_finned_surface is None else
-        'bulk_mean_radial_surface_extrema_with_0d_cold_zone_offset')
+    assert s['onset_envelope_method'] == '0d_topology_resistance_envelope'
+    assert s['wall_envelope_method'] == 'bulk_mean_analogy_native_surface_envelope'
     assert 'axial_wet_fraction' not in s and 'interface_temperature' not in s
     assert pc.method == LEGACY.model_id
     assert r.wet_coil_diagnostics['native_method'].startswith('outside_condensation_0d_')

@@ -1216,10 +1216,12 @@ def _water_steam_wall_diagnostics(
             else None
         )
         primary_surface = fin_base = fin_tip = fin_tip_ratio = None
-        skin_min = skin_max = T_wall_o
+        exposed = T_wall_o - heat_rate_probe * resistance_network.resistance_fouling_outside
+        skin_min = skin_max = surface_mean = exposed
         if is_finned and resistance_network.fin_efficiency_result.tip_temperature_ratio is None:
-            primary_surface = fin_base = T_wall_o
+            primary_surface = exposed
             skin_min = skin_max = math.nan
+            surface_mean = T_o + resistance_network.overall_surface_efficiency * (exposed - T_o)
         elif is_finned:
             primary_surface, fin_base, fin_tip, skin_min, skin_max = fin_surface_temperatures(
                 network=resistance_network,
@@ -1228,6 +1230,9 @@ def _water_steam_wall_diagnostics(
                 heat_rate=heat_rate_probe,
             )
             fin_tip_ratio = resistance_network.fin_efficiency_result.tip_temperature_ratio
+            fin_mean = T_o + resistance_network.fin_efficiency * (fin_base - T_o)
+            surface_mean = (resistance_network.area_primary_outside * primary_surface
+                            + resistance_network.area_fin * fin_mean) / resistance_network.area_outside_gross
         return WallTemperatureProbe(
             inside_bulk_temperature=T_i,
             outside_bulk_temperature=T_o,
@@ -1251,13 +1256,18 @@ def _water_steam_wall_diagnostics(
             fin_tip_temperature_ratio=fin_tip_ratio,
             outside_skin_temperature_min=skin_min,
             outside_skin_temperature_max=skin_max,
+            outside_surface_temperature_mean=surface_mean,
+            inside_surface_temperature=T_i - heat_rate_probe / (
+                solution.inside_alpha_equivalent * hx.bundle.total_inner_area),
         )
 
-    probes = tuple(
-        probe(T_i, T_o)
-        for T_i in (solution.state_in.T, solution.state_out.T)
-        for T_o in (outside_evaluation.T_in, outside_evaluation.T_out)
-    )
+    from core.geometry._thermal_topology import resolve_thermal_topology
+    from core.heat_transfer.topology_reporting import representative_temperature_pairs
+    pairs, assumption = representative_temperature_pairs(
+        resolve_thermal_topology(hx.bundle), solution.state_in.T, solution.state_out.T,
+        outside_evaluation.T_in, outside_evaluation.T_out)
+    mean_probe = probe(T_i_mean, T_o_mean)
+    probes = tuple(probe(*pair) for pair in pairs) + (mean_probe,)
     envelope_warning = make_warning(
         code="wall_temperature_envelope_0d_estimate",
         message=(
@@ -1276,6 +1286,7 @@ def _water_steam_wall_diagnostics(
         outside_min=min(item.outside_wall_temperature for item in probes),
         outside_max=max(item.outside_wall_temperature for item in probes),
         probes=probes,
+        method="0d_equivalent_steam_topology_resistance_envelope",
         warnings=(envelope_warning,),
         inside_mean=probe(T_i_mean, T_o_mean).inside_wall_temperature,
         outside_mean=probe(T_i_mean, T_o_mean).outside_wall_temperature,
@@ -1285,6 +1296,15 @@ def _water_steam_wall_diagnostics(
         fin_base_max=max(fin_base_values, default=math.nan),
         fin_tip_min=min(fin_tip_values, default=math.nan),
         fin_tip_max=max(fin_tip_values, default=math.nan),
+        outside_skin_mean=mean_probe.outside_surface_temperature_mean,
+        primary_surface_mean=(mean_probe.outside_primary_surface_temperature
+                              if is_finned else mean_probe.outside_surface_temperature_mean),
+        fin_base_mean=mean_probe.fin_base_temperature if mean_probe.fin_base_temperature is not None else math.nan,
+        fin_tip_mean=mean_probe.fin_tip_temperature if mean_probe.fin_tip_temperature is not None else math.nan,
+        spatial_assumption=assumption,
+        temperature_definition="equivalent_metal_wall_and_exposed_surface_separate",
+        applicability="whole_exchanger_equivalent_htc_not_local_phase_zone",
+        mean_method="0d_equivalent_htc_bulk_mean_with_surface_area_weighting",
     )
     mean_probe = probe(T_i_mean, T_o_mean)
     inside_nusselt = mean_probe.inside_nusselt

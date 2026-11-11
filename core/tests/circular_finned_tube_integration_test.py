@@ -1034,7 +1034,7 @@ def _assert_finned_wall_ordering(simulation, *, inside_hotter: bool) -> None:
         )
 
     envelope = simulation.wall_temperature_envelope
-    assert len(envelope.probes) == 4
+    assert len(envelope.probes) == 3  # counterflow terminal pairs plus mean state
     for probe in envelope.probes:
         assert probe.converged is True
         if inside_hotter:

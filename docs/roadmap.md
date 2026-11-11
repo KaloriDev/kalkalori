@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.9.3`
+**Current version:** `v0.9.7` — user-approved local preparation; manual PR pending
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
 **Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
@@ -52,6 +52,37 @@ and distributed thermal resolution remain future work.
 ---
 
 ## Roadmap Overview
+
+### v0.9.8 — Wet-process closure and numerical robustness (proposed)
+
+- Reconcile Bulk-Mean dry epsilon-NTU and active arithmetic-mean sensible
+  closures, including the historical onset duty discontinuity.
+- Investigate high-NTU gas-enthalpy/phase-domain failures with justified physical
+  bounds and conservation checks.
+- Address native joint inverse-Rating performance at the existing 300-second
+  deadline, preserving physical accuracy and production controls.
+
+These related numerical/closure problems are proposed for the next patch;
+they are **not delivered in v0.9.7**. Matched independent experimental input
+and duty/condensate acquisition remains a separate validation need.
+
+### v0.9.7 — Wall/surface-temperature consistency (implemented and user-approved)
+
+- Topology-compatible 0D envelopes, separate representative means and explicit
+  metal, exposed, fin and interface definitions.
+- Physics-active Bulk-Mean wet-area/equilibrium temperature corrections and
+  preserved native Elmahdy profile ownership; Elmahdy remains default.
+- Complete provider API/identity replacement by
+  `BulkMeanAnalogyWetCoilProvider` without a compatibility alias, and compatible
+  case-study/table/spreadsheet diagnostics.
+- Source/regression-supported bounded consistency acceptance; no general
+  experimentally validated predictive-accuracy or provider-superiority claim.
+  Spatial resolution, wet continuous-fin applicability and wet hydraulics are
+  unchanged. Historical closure/domain and inverse-performance limits remain.
+
+Local release materials are finalized for the user's manual PR workflow;
+no PR, push, merge, tag or GitHub release is performed by this task.
+See [final acceptance](validation/v0.9.7_final_acceptance.md).
 
 ### v0.9.3 — Chakroun–Al-Fahed 1995 twisted tape (implemented)
 
@@ -272,7 +303,7 @@ finite-width clearance correlation remains future work.
 - Elmahdy-Mitalas is the public default for Simulation and area-based Rating.
   Rating sizes `A_required` / thermal area scale only; installed hydraulics
   always use installed geometry.
-- `LegacyBulkMeanWetCoilProvider` restores the historical bulk-mean model
+- `BulkMeanAnalogyWetCoilProvider` restores the historical bulk-mean model
   through explicit Simulation-only selection; it does not support Rating.
 - Selection uses direct provider objects. `wet_coil_provider=None` retains
   the Elmahdy default. Unsupported explicit selections raise a controlled
@@ -393,6 +424,9 @@ tube families and must be supplied through empirical or provider-based data.
 
 
 ## v1.0.0 — Production-Ready 0D Engine
+
+Broad repository and private-workflow cleanup is deferred until just before
+v1.0.0; it is not part of the v0.9.7 finalization or the proposed v0.9.8 fixes.
 
 This release marks the **maturity of the 0D modelling approach**.
 

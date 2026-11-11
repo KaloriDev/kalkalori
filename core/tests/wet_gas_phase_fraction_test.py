@@ -98,12 +98,14 @@ def test_legacy_wet_gas_phase_fractions_preserve_pre_patch_physics():
     hx, inside, outside = historical_case(False)
     result = hx.simulate(inside, outside, wet_coil_provider=LEGACY)
     pc = result.outside_phase_change
-    # Captured before this bookkeeping patch on the same synthetic bare-bank
-    # case used by the existing Legacy numerical-freeze regression.
+    # Phase-fraction bookkeeping must preserve the current physical solve.
+    # v0.9.7 corrects the paired wet envelope on this same independently
+    # balanced synthetic case (previous duty 702644.68440337 W). The new
+    # baseline is shared with the provider and zero-fouling regressions.
     assert (result.q, result.T_out_inside, result.T_out_outside,
             pc.W_out, pc.m_dot_condensate) == pytest.approx(
-        (702644.68440337, 336.21383345649315, 336.5149577934638,
-         0.10978447100327163, 0.06982196451578865), rel=1e-12,
+        (824096.7216155361, 344.191486536459, 343.98893291288994,
+         0.09693094916391085, 0.13850527172933702), rel=1e-12,
     )
     for position in ("in", "mid", "out"):
         gas = getattr(pc, f"gas_phase_mass_fraction_{position}")

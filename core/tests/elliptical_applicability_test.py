@@ -9,7 +9,7 @@ from core.heat_transfer.fin_efficiency import annular_fin_efficiency
 from core.heat_transfer.wet_coil_surface import annular_response
 from core.heat_transfer.wet_coil_adapters import InsideWallAdapter, BareTubeAdapter
 from core.phase_change.wet_finned_surface import solve_wet_annular_fin, solve_wet_finned_surface
-from core.phase_change.wet_coil_provider import dispatch_wet_coil, ElmahdyMitalasWetCoilProvider, LegacyBulkMeanWetCoilProvider
+from core.phase_change.wet_coil_provider import dispatch_wet_coil, ElmahdyMitalasWetCoilProvider, BulkMeanAnalogyWetCoilProvider
 from core.phase_change.wet_coil_integration import forward_wet_process
 from core.phase_change.inside_condensation_solver import solve_inside_condensation
 from core.phase_change.steam_heater import solve_steam_heater, rate_steam_heater

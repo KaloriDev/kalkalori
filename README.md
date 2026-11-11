@@ -35,11 +35,18 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.5 development)
+## Current Capabilities (v0.9.7)
+
+v0.9.7 corrects 0D wall/surface/interface-temperature consistency and replaces
+the historical wet provider API with `BulkMeanAnalogyWetCoilProvider`.
+Elmahdy–Mitalas remains default. Local finalization is user-approved, with
+documented baseline test exceptions and incomplete experimental predictive
+validation. See [final acceptance](docs/validation/v0.9.7_final_acceptance.md).
 
 Continuous plate-fin support adds [finite geometry and a research-only dry
 profile](docs/continuous_plate_fins.md). Wang source/experimental validation is
-incomplete; this is not an approved v0.9.6 production release.
+incomplete; its experimental profile is not promoted to validated design physics
+by v0.9.7.
 
 v0.9.5 adds [serrated helical-fin geometry and explicit STAGGERED physics](docs/serrated_fins.md)
 for untwisted constant-thickness welded I-foot fins. Phase A geometric volume,

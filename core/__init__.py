@@ -13,7 +13,7 @@ for tubular heat exchangers with air or gas on the external side
 and liquid or steam on the tube side.
 """
 
-__version__ = "0.9.5"
+__version__ = "0.9.7"
 
 from core.heat_transfer.wet_coil_solver import (
     WetCoilSolverOptions, WetCoilConvergenceError, WetCoilTimeoutError,
@@ -21,5 +21,5 @@ from core.heat_transfer.wet_coil_solver import (
 from core.phase_change.wet_coil_provider import (
     WetCoilModelProvider, WetCoilOperationContext,
     WetCoilProviderUnsupportedError, ElmahdyMitalasWetCoilProvider,
-    LegacyBulkMeanWetCoilProvider,
+    BulkMeanAnalogyWetCoilProvider,
 )

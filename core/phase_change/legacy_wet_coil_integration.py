@@ -13,7 +13,7 @@ from core.heat_transfer.topology_reporting import NO_DRY_TOPOLOGY_DIAGNOSTICS
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.tube import TubeSurfaceType
-from core.heat_transfer.thermal_iteration import IterativeThermalState, estimate_wall_temperature_envelope
+from core.heat_transfer.thermal_iteration import IterativeThermalState
 from core.heat_transfer.outside_dispatch import (
     DEFAULT_FINNED_DP_PROVIDER, DEFAULT_FINNED_HT_PROVIDER, evaluate_outside_hydraulics,
 )
@@ -78,21 +78,35 @@ def run_legacy_simulation(hx, inside, outside, *, settings, context, **options):
 
 def _attach_legacy_diagnostics(result, *, settings):
     phase = result.outside_phase_change
+    envelope = result.wall_temperature_envelope
     surface = dict(
-        surface_temperature_min=phase.wall_temperature_min,
-        surface_temperature_max=phase.wall_temperature_max,
+        surface_temperature_min=envelope.outside_skin_min,
+        surface_temperature_max=envelope.outside_skin_max,
+        surface_temperature_mean=envelope.outside_skin_mean,
         surface_temperature_wet_mean=phase.wall_temperature_wet_mean,
         dew_point_in=phase.dew_point_in, dew_point_out=phase.dew_point_out,
         onset_margin=phase.onset_margin_K,
-        wet_regime=("DRY" if not phase.active else
+        wet_regime=("DRY" if not phase.active or not phase.wet_surface_fraction else
                     "FULLY_WET" if math.isclose(phase.wet_surface_fraction, 1.0,
                                                rel_tol=0.0, abs_tol=1e-12)
                     else "PARTIALLY_WET"),
         wet_surface_fraction=phase.wet_surface_fraction,
         wet_surface_fraction_method=phase.wet_surface_fraction_method,
         wall_temperature_mean=phase.wall_temperature_mean,
-        wall_envelope_method="two_point_0d_estimate",
-        onset_envelope_method="two_point_0d_estimate",
+        wall_envelope_method=envelope.method,
+        onset_envelope_method="0d_topology_resistance_envelope",
+        temperature_definition=envelope.temperature_definition,
+        spatial_assumption=envelope.spatial_assumption,
+        applicability=envelope.applicability,
+        mean_method=envelope.mean_method,
+        metal_wall_temperature_min=envelope.outside_min,
+        metal_wall_temperature_max=envelope.outside_max,
+        metal_wall_temperature_mean=envelope.outside_mean,
+        primary_surface_temperature=envelope.primary_surface_mean,
+        wet_equilibrium_temperature_min=phase.wall_temperature_min,
+        wet_solver_activated=phase.active,
+        condensation_possible=phase.possible,
+        positive_condensate=phase.m_dot_condensate > settings.condensate_tolerance_kg_s,
     )
     if result.thermal_state is not None:
         surface["global_core_wall_temperature"] = result.thermal_state.outside_wall_temperature
@@ -108,7 +122,6 @@ def _attach_legacy_diagnostics(result, *, settings):
                         wet_area=phase.wet_area,
                         wall_temperature_wet_mean=phase.wall_temperature_wet_mean))
     if wet is not None:
-        surface["wall_envelope_method"] = "bulk_mean_radial_surface_extrema_with_0d_cold_zone_offset"
         for name in (
             "fin_base_temperature", "fin_tip_temperature", "wet_dry_boundary_radius",
             "fin_wet_fraction", "primary_surface_temperature", "core_wall_temperature",
@@ -116,6 +129,13 @@ def _attach_legacy_diagnostics(result, *, settings):
             "condensation_temperature_offset_K",
         ):
             surface[name] = getattr(wet, name)
+    elif phase.active:
+        # This provider has no separate liquid-film resistance; its solved
+        # gas-facing boundary is the model interface. Do not apply this alias
+        # to a radial fin model with a separate cold-zone equilibrium proxy.
+        surface.update(interface_temperature_min=envelope.outside_skin_min,
+                       interface_temperature_max=envelope.outside_skin_max,
+                       interface_temperature_mean=envelope.outside_skin_mean)
     # Do not identify this 0D area fraction as an axial fraction, or invent a
     # separate condensate-film interface temperature absent from the model.
     return replace(result, wet_coil_diagnostics=dict(
@@ -779,25 +799,10 @@ def _apply_legacy_outside(
             ),
         )
 
-    envelope_wet = estimate_wall_temperature_envelope(
-        hx,
-        m_dot_inside=inside.m_dot,
-        m_dot_outside=m_dot_dry_carrier * (1.0 + W_mean),
-        inside_provider=inside.provider,
-        outside_provider=outside_provider_final,
-        inside_inlet_temperature=inside.T_in,
-        inside_outlet_temperature=solution.T_out_inside,
-        outside_inlet_temperature=outside.T_in,
-        outside_outlet_temperature=solution.T_out_outside,
-        p_inside=inside.p,
-        p_outside=outside.p,
-        euler_provider=euler_provider,
-        finned_heat_transfer_provider=finned_heat_transfer_provider,
-    )
-    # Keep this public endpoint envelope internally consistent with its
-    # four audit probes.  The exact centred two-point envelope that drove
-    # wet area and mass transfer is reported separately, without
-    # post-processing, on ``outside_phase_change``.
+    from core.phase_change.bulk_mean_surface_reporting import outside_surface_envelope
+    envelope_wet = outside_surface_envelope(
+        hx, solution, inside_mean=T_mean_inside, outside_mean=T_mean_outside,
+        surface_margin=dry_result.surface_margin)
 
     # Fix (v0.6.0 patch, spec section 16): build a thermal_state consistent
     # with the wet solution itself -- previously this field was left as the
