@@ -4,8 +4,11 @@ Introduced in **v0.8.6**, the optimized production implementation uses the
 accepted E3 checkpoint as its basis. `ElmahdyMitalasWetCoilProvider` uses
 optimized BareTube wet Simulation/Rating numerics with unchanged physical
 equations and public provider selection.
-CircularFinnedTube wet calculations retain their existing native path; Legacy
-is unchanged. Numerical equivalence is not empirical model validation: faster
+CircularFinnedTube Simulation retains its native path. Since v0.9.8 its native
+inverse Rating search also uses strict exact-state reuse and safeguarded
+region/front continuation, without a coarse predictor. Bulk-Mean's separate
+closure repair is documented in the v0.9.8 validation report.
+Numerical equivalence is not empirical model validation: faster
 convergence does not improve correlation accuracy or extend model applicability.
 
 ## Problem and development
@@ -69,7 +72,8 @@ selector or second Elmahdy provider.
 
 - Common physical equations support optimized and internal native/reference
   numerical paths. Native forward/Rating functions remain regression/debugging
-  oracles. Finned calculations use native numerics.
+  oracles. Finned inverse search reuses strict property/derivative states;
+  its source-profile and radial physical equations remain shared with native.
 - An order-3 cold initializer only seeds a new strict solve. Approximate
   property/inverse caches stay separate and cannot supply an accepted output.
   Rejected initialization resumes generic strict initialization with the

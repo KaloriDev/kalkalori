@@ -793,10 +793,20 @@ def _rate_native(
     _validate_rating_inputs(inside, outside)
     base = 1.0
     cache = {}
-    thermodynamics = WetGasThermodynamics(
-        outside.p, detect_phase_change_capability(outside.provider),
-        _reuse_inverse_state=True,
-    )
+    from core.heat_transfer._wet_thermodynamics import _OptimizedWetThermodynamics
+    from core.heat_transfer._wet_numerics import _WetNumerics
+    # Strict exact-state reuse also benefits the native finned inverse. No
+    # predictor fidelity, interpolated property or acceptance tolerance is used.
+    if isinstance(hx.bundle.tube, CircularFinnedTube):
+        thermodynamics = _OptimizedWetThermodynamics(
+            outside.p, detect_phase_change_capability(outside.provider),
+            options=_WetNumerics(cold_start=False),
+        )
+    else:
+        thermodynamics = WetGasThermodynamics(
+            outside.p, detect_phase_change_capability(outside.provider),
+            _reuse_inverse_state=True,
+        )
 
     def trial(area_scale, mass):
         budget.check(required_area_scale=area_scale, inside_mass_flow=mass)
@@ -940,15 +950,19 @@ def _rate_native(
             )
         cap = detect_phase_change_capability(outside.provider)
         t = WetGasThermodynamics(outside.p, cap)
-        sensible = (
-            outside.m_dot
-            / (1 + cap.W_in)
-            * (t.enthalpy(outside.T_in, cap.W_in) - t.enthalpy(outside.T_out, cap.W_in))
+        # Start the joint solve at the cold-interface condensation duty bound.
+        # The old sensible-only seed ignores the potentially dominant latent
+        # load and starts far from the required coolant capacity. This bound
+        # changes only the initial iterate: every candidate still solves the
+        # full native process and must satisfy both original outlet gates.
+        cold_humidity = min(cap.W_in, t.saturation_humidity(inside.T_in))
+        duty_bound = outside.m_dot / (1 + cap.W_in) * (
+            t.enthalpy(outside.T_in, cap.W_in)
+            - t.enthalpy(outside.T_out, cold_humidity)
+            - (cap.W_in - cold_humidity) * t.condensate_enthalpy(inside.T_in)
         )
-        mass0 = sensible / (
-            inside.provider.at((inside.T_in + inside.T_out) / 2, inside.p).cp
-            * (inside.T_out - inside.T_in)
-        )
+        unit_inside = InsideWallAdapter(hx.bundle, inside.provider, 1.0, inside.p)
+        mass0 = duty_bound / unit_inside.enthalpy_difference(inside.T_in, inside.T_out)
 
         class TargetsMet(Exception):
             def __init__(self, z):

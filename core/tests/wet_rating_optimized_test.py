@@ -72,14 +72,14 @@ def test_joint_rating_and_included_simulation_share_operation_budget(monkeypatch
     assert abs(rating.wet_coil_diagnostics['independent_energy_residual'])<=controls.energy_tolerance_W
 
 
-def test_finned_rating_uses_reference_search(monkeypatch):
+def test_finned_rating_uses_reference_search_with_exact_state_reuse(monkeypatch):
     hx,a,b=context(finned=True,W=.004)
     def forbidden(*args,**kwargs):
         raise AssertionError('Finned must retain native Rating search')
     monkeypatch.setattr(_wet_rating,'_rate_optimized',forbidden)
     target=hx.simulate(a,b,wet_solver_options=WetCoilSolverOptions(timeout_s=None))
     rating=hx.rate(*specs(a,b,target.T_out_outside),wet_solver_options=WetCoilSolverOptions(timeout_s=None))
-    assert rating.wet_coil_diagnostics['numerical_path']=='native'
+    assert rating.wet_coil_diagnostics['numerical_path'] in ('optimized','optimized_with_native_subpath')
     assert 'numerical_rating' not in rating.wet_coil_diagnostics
 
 
