@@ -128,7 +128,10 @@ extrapolation; arbitrary-clearance validity is not established.
 - Pure-water heating and evaporation inside tubes with a dry outside surface,
   including liquid
   preheating, partial or complete evaporation, and optional vapor
-  superheating through Simulation and Rating. The IAPWS-backed model uses
+  superheating through Simulation and Rating. Rating can derive an unknown
+  tube-side water mass flow from an independent duty and an explicit outlet
+  target using `m_dot = Q / (h_out - h_in)`. Complete vaporization requires
+  an explicit target such as `quality_out=1.0`. The IAPWS-backed model uses
   Shah (1982) saturated flow boiling with a self-consistent inside-area heat
   flux; see
   [`docs/property_models.md`](docs/property_models.md#17-v063--pure-water-heating-and-evaporation-inside-tubes)

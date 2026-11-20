@@ -1271,6 +1271,28 @@ physics through an arithmetic alpha. Effectiveness-only Rating is rejected
 for an active phase-changing stream because no unique sensible capacity rate
 defines its duty.
 
+As of v0.9.9, Rating also accepts `inside.m_dot=None` when the outside mass
+flow is known and a water outlet is explicitly specified by `T_out`, `h_out`
+or `quality_out`. An independent positive duty must come from explicit `Q`
+or the complete hot-side temperature program (`m_dot`, `T_in`, `T_out`).
+The flow is `m_dot_water = Q_required / (h_out - h_in)`. The outlet must have
+higher enthalpy than the inlet. If both duty sources are supplied, they must
+agree within `over_specified_tolerance`, using the existing outside model's
+mean-temperature `cp`. Missing duty, missing outlet and two unknown mass
+flows are rejected. Complete evaporation is never assumed: specify
+`quality_out=1.0` to request saturated vapor. The condenser's existing default
+of saturated liquid is unchanged.
+
+The adapter builds a separate resolved `BalanceSideSpec`, preserving the
+caller input, and uses its flow in the common zone/HTC/area calculation,
+`closed_balance.inside.m_dot`, `inside_phase_change.mass_flow_total`, mass
+flux and diagnostics. `include_simulation=True` runs the installed geometry
+with that same flow; its `Q_achievable` can differ from `Q_required`. Rating
+outlet temperatures are available on `closed_balance.inside/outside.T_out`;
+Simulation uses `T_out_inside/outside`. See the
+[v0.9.9 API audit](validation/v0.9.9_water_steam_rating_api_audit.md) for the
+capability matrix and regression evidence.
+
 Current limits:
 
 - pure-water evaporation is supported only inside tubes;
