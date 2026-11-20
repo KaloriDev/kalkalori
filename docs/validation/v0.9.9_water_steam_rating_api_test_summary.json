@@ -1,0 +1,102 @@
+{
+  "base_commit": "a36465dee12c2a3efe325fa702e651aec16ad6df",
+  "tested_implementation_commit": "7fed860804af66c178bb7df7c34618b76d410f18",
+  "generated_utc": "2026-11-20T20:05:36.825293+00:00",
+  "environment": {
+    "python": "3.11.9",
+    "platform": "Windows",
+    "packages": {
+      "pytest": "9.1.1",
+      "iapws": "1.5.5",
+      "CoolProp": "8.0.0",
+      "numpy": "2.4.2",
+      "scipy": "1.17.1"
+    }
+  },
+  "changed_python_files_sha256": {
+    "core/phase_change/steam_integration.py": "36b40386a312f0a2711149683664a0e4b3f025d61c68d3b194ce7941146a2f14",
+    "core/models/heat_balance.py": "06d8fb983304a843c1cce14bbe8ead8152a5414d1a686021f63d6ab4277a9205",
+    "core/models/bare_tube.py": "e9e4a02ec81eb08fe9c1cc75a99db32d3271ee4b543e38d0793859f59b7c8d99",
+    "core/tests/water_steam_rating_api_test.py": "da96ad1164357b594ee4f72ed938371ea8741aabe32971bf6831d61034cc97b2"
+  },
+  "pre_patch_targeted": {
+    "passed": 186,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "new_api_regressions": {
+    "passed": 40,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "full_public": {
+    "collected": 2916,
+    "executed": 2916,
+    "passed": 2916,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 2513.7029999999995,
+    "missing": [],
+    "unexpected": [],
+    "duplicate_ids": []
+  },
+  "collected_and_executed_node_ids_sha256": "1e1026060479b7207ace5d20678ffcf61fa3084278b69e3ded5f501025e846fe",
+  "execution": "Four independent pytest processes, followed by two original deadline tests in isolation; no test controls changed.",
+  "receipts": [
+    {
+      "worker": 1,
+      "exit_code": 0,
+      "tests": 597,
+      "junit_sha256": "f520945ed4121b102e7fe95cbb921e15c63820da4eb7074489cb487e6009802b"
+    },
+    {
+      "worker": 2,
+      "exit_code": 0,
+      "tests": 730,
+      "junit_sha256": "016aab956f4c030a85ac8e9df9d9267b922e539a1d084e0e9eb7f98b50346510"
+    },
+    {
+      "worker": 3,
+      "exit_code": 0,
+      "tests": 785,
+      "junit_sha256": "f6526c31d3aebbc39b2576f4d614e4d94d40b6da342f73005c9356f8bec7fc80"
+    },
+    {
+      "worker": 4,
+      "exit_code": 0,
+      "tests": 802,
+      "junit_sha256": "6120658abe90e8524868a003db05bbf0480fe1479b5d421f09cdd9daa457a6bc"
+    },
+    {
+      "worker": "deadline",
+      "exit_code": 0,
+      "tests": 2,
+      "junit_sha256": "abbe0bb56e39560378aa032ee6b0c5ea086a7e460c9cd52042d7f1b6529765f3"
+    }
+  ],
+  "private_notebook": {
+    "cases": [
+      {
+        "stage": "HI_TEMP_BOILER_CS",
+        "status": "PASS",
+        "energy_closed": true,
+        "flow_equivalence": true,
+        "saturated_vapor_target": true
+      },
+      {
+        "stage": "HI_TEMP_BOILER_SS",
+        "status": "PASS",
+        "energy_closed": true,
+        "flow_equivalence": true,
+        "saturated_vapor_target": true
+      }
+    ],
+    "original_notebook_unchanged": true,
+    "diagnostic_executor_and_reporting": "PASS",
+    "excel_exported": false
+  },
+  "interpretation": "API and numerical regression evidence within existing models; not experimental predictive validation."
+}
