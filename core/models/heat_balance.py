@@ -65,11 +65,13 @@ class BalanceSideSpec:
         m_dot: Mass flow through this side [kg/s], or None if unknown. For a
             tube-side pure water/steam Rating (only), ``m_dot=None`` is also
             permitted: ``core.phase_change.steam_integration`` then derives
-            the required steam mass flow from an independently known total
+            the required mass flow from an independently known total
             duty (explicit ``Q``, or a fully specified opposing-side
-            temperature program) and the steam outlet target -- explicit
-            ``quality_out``/``h_out``/``T_out``, or saturated liquid
-            (``quality_out=0.0``) by default when none is given. This is
+            temperature program) and an outlet target. Water heating /
+            evaporation requires explicit ``quality_out``/``h_out``/``T_out``
+            and uses ``m_dot = Q / (h_out - h_in)``. Steam condensation uses
+            ``m_dot = Q / (h_in - h_out)`` and retains saturated liquid
+            (``quality_out=0.0``) by default when no target is given. This is
             Rating-only heat-balance closure, not generic
             ``close_heat_balance`` behavior.
         T_in: Inlet bulk temperature [K]. Required by ``close_heat_balance``.

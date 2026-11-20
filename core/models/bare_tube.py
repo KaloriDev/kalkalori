@@ -1723,6 +1723,15 @@ class BareTubeHeatExchanger:
         (explicit, or saturated liquid ``quality_out=0.0`` by default), as
         ``m_dot = Q_required / (h_in - h_out_target)``. See
         ``core.phase_change.steam_integration.apply_water_steam_rating``.
+
+        Derived pure-water heating mass flow (v0.9.9)
+        ---------------------------------------------
+        Water heating/evaporation also accepts ``inside.m_dot=None`` with
+        independently known duty and an explicit ``T_out``, ``h_out`` or
+        ``quality_out`` target. It uses ``m_dot = Q_required / (h_out - h_in)``;
+        there is no default evaporation outlet. Outside mass flow must be
+        known. Caller inputs stay unchanged, and ``include_simulation=True``
+        uses the resolved inside mass flow.
         """
         from core.geometry.applicability import require_automatic_outside_bank
         require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)

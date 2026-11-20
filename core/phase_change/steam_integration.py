@@ -282,7 +282,7 @@ def is_inside_water_evaporation_rating_case(
     if not heating_duties:
         return bool(
             outside_is_hot
-            and state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID
+            and (inside.m_dot is None or state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID)
         )
     if state.phase is not WaterSteamPhase.SUBCOOLED_LIQUID:
         return True
@@ -818,15 +818,24 @@ def apply_water_evaporation_rating(
             "or opposing temperature program; an effectiveness-only target "
             "is not supported for a phase-changing stream."
         )
-    if inside.m_dot is None or outside.m_dot is None:
-        raise ValueError("Water-evaporation Rating requires mass flow on both sides.")
-    Q_required = _resolve_water_evaporation_rating_duty(
-        inside, outside, Q, tolerance=over_specified_tolerance
-    )
+    if outside.m_dot is None:
+        raise ValueError(
+            "Water-evaporation Rating requires a known outside mass flow; "
+            "solving both inside and outside mass flow simultaneously is not supported."
+        )
+    if inside.m_dot is None:
+        resolved_inside, Q_required = _resolve_unknown_water_mass_flow(
+            inside, outside, Q, tolerance=over_specified_tolerance
+        )
+    else:
+        resolved_inside = inside
+        Q_required = _resolve_water_evaporation_rating_duty(
+            inside, outside, Q, tolerance=over_specified_tolerance
+        )
     solution = rate_water_evaporator(
         hx,
-        inlet_state=inside.water_steam_state,
-        mass_flow_water=inside.m_dot,
+        inlet_state=resolved_inside.water_steam_state,
+        mass_flow_water=resolved_inside.m_dot,
         outside_provider=outside.provider,
         mass_flow_outside=outside.m_dot,
         T_in_outside=outside.T_in,
@@ -839,10 +848,10 @@ def apply_water_evaporation_rating(
     )
     water_result = _water_evaporation_result(
         solution,
-        mode=inside.phase_change_mode,
+        mode=resolved_inside.phase_change_mode,
         possible=solution.Q_evaporation > 0.0,
     )
-    if inside.phase_change_mode is PhaseChangeMode.DISABLED and water_result.active:
+    if resolved_inside.phase_change_mode is PhaseChangeMode.DISABLED and water_result.active:
         raise PhaseChangeDisabledButRequiredError(
             "The specified Rating duty crosses the water saturation dome while "
             "phase_change_mode=DISABLED."
@@ -860,13 +869,13 @@ def apply_water_evaporation_rating(
         )
 
     closed_balance = _closed_balance_for_water_evaporation_rating(
-        inside=inside, outside=outside, solution=solution
+        inside=resolved_inside, outside=outside, solution=solution
     )
     outside_evaluation = solution.outside_evaluation
     simulation = None
     Q_achievable = None
     if include_simulation:
-        simulation_inside = _simulation_side_from_rating(inside)
+        simulation_inside = _simulation_side_from_rating(resolved_inside)
         simulation_outside = HXSideInput(
             provider=outside.provider,
             m_dot=outside.m_dot,
@@ -892,7 +901,7 @@ def apply_water_evaporation_rating(
     )
     result = _rating_from_solution(
         hx,
-        inside,
+        resolved_inside,
         outside,
         solution,
         outside_evaluation=outside_evaluation,
@@ -1650,6 +1659,32 @@ def _closed_balance_for_water_evaporation_rating(*, inside, outside, solution):
     )
 
 
+def _resolve_unknown_water_mass_flow(inside, outside, Q, *, tolerance):
+    """Close m_dot = Q / delta_h from an explicit outlet and independent duty."""
+    target = inside.water_steam_outlet_state
+    if target is None:
+        raise ValueError(
+            "Unknown water mass-flow Rating requires an explicit water outlet "
+            "target (T_out, h_out, or quality_out); complete vaporization is not assumed."
+        )
+    delta_h = target.h - inside.water_steam_state.h
+    if not math.isfinite(delta_h) or delta_h <= 0.0:
+        raise ValueError(
+            "Unknown water mass-flow Rating requires an outlet target with "
+            "higher specific enthalpy than the water inlet."
+        )
+    Q_required = _resolve_water_evaporation_rating_duty(
+        inside, outside, Q, tolerance=tolerance
+    )
+    m_dot = Q_required / delta_h
+    if not math.isfinite(m_dot) or m_dot <= 0.0:
+        raise ValueError("Derived water mass flow must be positive and finite.")
+    resolved_inside = _resolved_inside_for_unknown_mass_flow(
+        inside, m_dot=m_dot, outlet_h=target.h
+    )
+    return resolved_inside, Q_required
+
+
 def _resolve_water_evaporation_rating_duty(inside, outside, Q, *, tolerance):
     candidates = []
     if Q is not None:
@@ -1657,7 +1692,7 @@ def _resolve_water_evaporation_rating_duty(inside, outside, Q, *, tolerance):
             raise ValueError("Water-evaporation Rating Q must be positive and finite.")
         candidates.append(("Q", Q))
     outlet_state = inside.water_steam_outlet_state
-    if outlet_state is not None:
+    if outlet_state is not None and inside.m_dot is not None:
         candidates.append((
             "inside outlet state",
             inside.m_dot * (outlet_state.h - inside.water_steam_state.h),
@@ -1672,6 +1707,11 @@ def _resolve_water_evaporation_rating_duty(inside, outside, Q, *, tolerance):
             outside.m_dot * transport.cp * (outside.T_in - outside.T_out),
         ))
     if not candidates:
+        if inside.m_dot is None:
+            raise ValueError(
+                "Water-evaporation Rating with unknown water mass flow requires "
+                "explicit Q or a fully specified opposing-side temperature program."
+            )
         raise ValueError(
             "Water-evaporation Rating requires explicit Q, a water/steam "
             "outlet state, or a fully specified opposing-side temperature program."
@@ -1760,7 +1800,7 @@ def _resolve_unknown_steam_mass_flow(inside, outside, Q, *, tolerance):
     if not math.isfinite(m_dot) or m_dot <= 0.0:
         raise ValueError("Derived steam mass flow must be positive and finite.")
 
-    resolved_inside = _resolved_inside_for_unknown_steam_mass_flow(
+    resolved_inside = _resolved_inside_for_unknown_mass_flow(
         inside, m_dot=m_dot, outlet_h=target_outlet_state.h
     )
     return resolved_inside, Q_required
@@ -1800,7 +1840,7 @@ def _resolve_unknown_mass_flow_rating_duty(outside, Q, *, tolerance):
     return reference
 
 
-def _resolved_inside_for_unknown_steam_mass_flow(inside, *, m_dot, outlet_h):
+def _resolved_inside_for_unknown_mass_flow(inside, *, m_dot, outlet_h):
     """Rebuild an internal, fully resolved ``BalanceSideSpec`` for Rating.
 
     ``inside`` (caller-owned) is left untouched; downstream Rating code needs

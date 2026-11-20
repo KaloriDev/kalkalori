@@ -5,6 +5,19 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.9] - Unreleased: water/steam Rating API consistency
+
+- Added unknown tube-side water mass-flow closure for heating/evaporation
+  Rating from an independent duty and an explicit outlet enthalpy, quality
+  or unambiguous temperature: `m_dot = Q / (h_out - h_in)`.
+- Propagated a separate resolved input through zones, mass flux, HTC, area,
+  energy balance, diagnostics and optional Simulation without mutating caller
+  inputs. Known-flow behavior and the condenser's saturated-liquid default
+  are preserved.
+- Added explicit underdetermination/direction diagnostics, public regression
+  coverage and the [capability audit](docs/validation/v0.9.9_water_steam_rating_api_audit.md).
+  Existing correlations, provider/orientation guards and physical limits remain.
+
 ## [0.9.7] — Wall and surface-temperature consistency
 
 - Corrected topology-paired 0D wall/exposed-surface envelopes, independent
