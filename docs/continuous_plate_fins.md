@@ -1,7 +1,7 @@
 # Continuous plate fins: geometry and experimental dry profile
 
 Status: **IMPLEMENTED_BUT_SOURCE_BLOCKED**. Introduced in the merged v0.9.6
-development line; package version 0.9.7 does not promote this experimental model
+development line; current package releases do not promote this experimental model
 to validated production design physics.
 Wang source closure and experimental validation remain incomplete. Do not use
 the experimental profile as validated design physics. No provider is added to

@@ -35,18 +35,27 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.7)
+## Current Capabilities (v0.9.9)
 
-v0.9.7 corrects 0D wall/surface/interface-temperature consistency and replaces
-the historical wet provider API with `BulkMeanAnalogyWetCoilProvider`.
-Elmahdy–Mitalas remains default. Local finalization is user-approved, with
-documented baseline test exceptions and incomplete experimental predictive
-validation. See [final acceptance](docs/validation/v0.9.7_final_acceptance.md).
+v0.9.9 completes water/steam Rating API consistency: unknown tube-side water
+flow can be derived from an independent duty and an explicit outlet state,
+with the resolved flow propagated through the existing calculation and optional
+Simulation. See the [API audit](docs/validation/v0.9.9_water_steam_rating_api_audit.md).
+
+v0.9.8 completed Bulk-Mean dry/wet closure, bounded enthalpy/phase-state
+handling and native inverse-Rating robustness within existing physical models.
+The original 300-second deadlines and accuracy gates are retained. See the
+[implementation and validation record](docs/validation/v0.9.8_wet_closure_numerical_patch.md).
+Elmahdy–Mitalas remains default; `BulkMeanAnalogyWetCoilProvider` is explicit.
+Independent experimental predictive validation remains incomplete. The
+[release metadata correction](docs/validation/release_metadata_reconciliation_v099.md)
+records these already implemented versions without adding a functional release
+or asserting a tag/publication date.
 
 Continuous plate-fin support adds [finite geometry and a research-only dry
 profile](docs/continuous_plate_fins.md). Wang source/experimental validation is
 incomplete; its experimental profile is not promoted to validated design physics
-by v0.9.7.
+by these numerical/API updates.
 
 v0.9.5 adds [serrated helical-fin geometry and explicit STAGGERED physics](docs/serrated_fins.md)
 for untwisted constant-thickness welded I-foot fins. Phase A geometric volume,
@@ -321,9 +330,9 @@ For the tube-side enhancement API, including public Yang2020 and Rossi2017
 twisted-tape models, the released Inaba1994 wire-coil model, and external
 providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version is v0.8.8, closing the planned 0.8.x line with
+The current package version is v0.9.9. The completed v0.8.8 work retains
 shared tube-enhancement deadlines, independent required wall states and
-explicit provider failures during endpoint probes. It retains
+explicit provider failures during endpoint probes, together with
 [thermal fouling resistance support](docs/thermal_fouling.md) and the
 [BareTube wet numerical performance improvements](docs/wet_numerical_performance.md).
 Smooth laminar flow with a supplied

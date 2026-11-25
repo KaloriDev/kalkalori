@@ -5,7 +5,11 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [0.9.9] - Unreleased: water/steam Rating API consistency
+## [0.9.9] — Water/Steam Rating API Consistency
+
+Implemented in `7fed860`, with validation in `e90c941`, and merged to main
+by `197c4f1`. Package metadata was subsequently reconciled to this completed
+development. No tag or publication date is assigned by this correction.
 
 - Added unknown tube-side water mass-flow closure for heating/evaporation
   Rating from an independent duty and an explicit outlet enthalpy, quality
@@ -17,6 +21,44 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added explicit underdetermination/direction diagnostics, public regression
   coverage and the [capability audit](docs/validation/v0.9.9_water_steam_rating_api_audit.md).
   Existing correlations, provider/orientation guards and physical limits remain.
+- Retained the explicit evaporation outlet requirement, known outside flow,
+  canonical water-state validation and rejection of effectiveness-only closure.
+  No two-phase hydraulics, outside water phase change or new physical regime
+  was introduced.
+- Recorded the historical full public receipt of 2916/2916 passing tests and
+  the two original private boiler checks in the linked audit. This is API and
+  numerical evidence within existing models, not experimental validation.
+
+## [0.9.8] — Wet-Coil Closure & Numerical Robustness
+
+Implemented after merged v0.9.7 base `2539094`; production changes were complete
+at `c77afe1`, with final tests at `c54edeb` and validation at `a36465d`.
+This entry recovers the completed work from Git history and its original
+validation records; no release/publication date is inferred.
+
+- Replaced the selected Bulk-Mean arithmetic transport closure with analytic
+  uniform-source area means for counterflow, cocurrent and outside-mixed
+  crossflow. Shared finite-enthalpy caloric increments and compatible wall
+  references recover the dry limit of its coupled wet calculation.
+- Bounded wet-gas enthalpy/humidity inversion and coolant phase states, relaxed
+  conserved variables before inversion, and added admissible-step backtracking
+  and a bounded residual fallback. Classified inversion/stagnation errors retain
+  diagnostics; inadmissible historical supersaturated results are rejected.
+- Reused exact thermodynamic/property states and safeguarded continuation in
+  native finned inverse Rating. Repeated original known-flow and joint
+  area/flow tests pass the unchanged 300-second operation budget and accuracy
+  gates; no approximate-fidelity model or correlation fit was introduced.
+- Added closure, onset, high-NTU, inversion and native-reuse regressions.
+  Reconciled 2876 unique public tests to passing evidence after the documented
+  corrections, preserving the initial seven failures and later receipts.
+- Preserved the default Elmahdy provider and existing physical applicability.
+  Uniform-source/0D assumptions, incomplete predictive experimental validation,
+  unsupported wet hydraulics, liquid retention/carryover and distributed
+  circuitry remain. Archived private validation caveats remain documented.
+
+See the [implementation and acceptance record](docs/validation/v0.9.8_wet_closure_numerical_patch.md),
+[test receipt](docs/validation/v0.9.8_test_summary.json) and
+[metadata reconciliation](docs/validation/release_metadata_reconciliation_v099.md).
 
 ## [0.9.7] — Wall and surface-temperature consistency
 
