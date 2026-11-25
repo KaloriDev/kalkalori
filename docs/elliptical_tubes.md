@@ -106,7 +106,7 @@ distributed = elliptical_distributed_pressure_drop(
 wall = tube_wall_resistance_diagnostics(
     tube, n_tubes=1, model=TubeWallModel.CONFOCAL_EXACT,
 )
-assert core.__version__ == "0.9.2"
+print("KalKalori", core.__version__)
 assert htc.model_metadata.thermal_boundary_condition == "H1"
 assert distributed.local_losses_included is False
 ```

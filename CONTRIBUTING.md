@@ -117,8 +117,44 @@ KalKalori follows **Semantic Versioning (SemVer)**.
   `CHANGELOG.md`
 - Breaking changes should be avoided before version `1.0.0`
 - Any unavoidable breaking change must be clearly explained
-- Version numbers are defined by Git tags and the changelog, not by per-file
-  metadata
+- The authoritative import/build version is `core.__version__` in
+  `core/__init__.py`; `pyproject.toml` derives the distribution version from it.
+  Do not add independent version declarations or permanently patch generated
+  package metadata. Git tags and the changelog record release history;
+  completed development does not itself establish a publication date.
+
+### Release metadata checklist
+
+1. Verify the latest merged default branch and create a dedicated development
+   branch. Preserve unrelated work; do not prepare release corrections directly
+   on the default branch or a detached HEAD.
+2. Reconcile the implemented scope with Git history and validation evidence.
+   Update the canonical version, separate CHANGELOG entries, README current
+   version references and roadmap. Preserve historical receipts and documented
+   model limitations; record dates only when supported.
+3. In the intended runtime environment, regenerate distribution metadata with
+   the existing setuptools editable-install workflow (build requirements must
+   already be available):
+
+   ```powershell
+   python -c "from setuptools import setup; setup(script_args=['egg_info'])"
+   python -m pip install --no-index --no-deps --no-build-isolation -e .
+   python tools/check_release_metadata.py
+   ```
+
+   The egg-info command regenerates source-tree metadata that KON can find on
+   its repository search path; the editable install refreshes the environment's
+   distribution metadata. The check compares repository/runtime/distribution versions, the dynamic
+   version source, CHANGELOG, current README/roadmap references, imported module
+   location and the development branch. Use `--expected-branch <name>` to also
+   require the intended branch. It fails on discrepancies rather than rewriting
+   them. Run it in a fresh process after committing as well.
+4. Verify relevant import/build and regression checks. For private KON work,
+   refresh `run_metadata` and read back the Excel worksheet in its normal
+   environment, including Git SHA/branch/dirty status. Preserve discrepancy
+   detection and distinguish ignored notebook edits from Git dirty state.
+5. Commit only the reviewed scope on the dedicated branch. Push, PR creation,
+   merge, tagging and publication require their own authorization.
 
 ---
 

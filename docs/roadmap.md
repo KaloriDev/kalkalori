@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.9.7` — user-approved local preparation; manual PR pending
+**Current version:** `v0.9.9` — completed development; package metadata reconciled
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
 **Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
@@ -53,18 +53,30 @@ and distributed thermal resolution remain future work.
 
 ## Roadmap Overview
 
-### v0.9.8 — Wet-process closure and numerical robustness (proposed)
+### v0.9.9 — Water/Steam Rating API Consistency (implemented)
 
-- Reconcile Bulk-Mean dry epsilon-NTU and active arithmetic-mean sensible
-  closures, including the historical onset duty discontinuity.
-- Investigate high-NTU gas-enthalpy/phase-domain failures with justified physical
-  bounds and conservation checks.
-- Address native joint inverse-Rating performance at the existing 300-second
-  deadline, preserving physical accuracy and production controls.
+- Derive unknown tube-side water flow from independent duty and an explicit
+  outlet target, preserving canonical inlet states and caller inputs.
+- Propagate resolved flow through existing zones, mass flux, heat transfer,
+  energy balance, reporting and optional Simulation.
+- Preserve known-flow behavior, condenser defaults, physical/provider guards
+  and the lack of complete two-phase hydraulics or outside-water phase change.
 
-These related numerical/closure problems are proposed for the next patch;
-they are **not delivered in v0.9.7**. Matched independent experimental input
-and duty/condensate acquisition remains a separate validation need.
+See the [capability audit and 2916-test historical receipt](validation/v0.9.9_water_steam_rating_api_audit.md).
+
+### v0.9.8 — Wet-Coil Closure & Numerical Robustness (implemented)
+
+- Closed the selected Bulk-Mean dry/wet transport and caloric limit with
+  analytic topology-aware uniform-source area means.
+- Bounded enthalpy/humidity and coolant phase states, with conservation checks,
+  backtracking, residual fallback and classified failures for inadmissible states.
+- Reused exact native inverse-Rating states and continuation while retaining
+  the original 300-second deadline and physical accuracy gates.
+
+All three workstreams were completed before v0.9.9. The original evidence
+reconciles 2876 unique public tests; historical failures and private caveats
+remain in the [implementation record](validation/v0.9.8_wet_closure_numerical_patch.md).
+Matched independent experimental validation remains a separate need.
 
 ### v0.9.7 — Wall/surface-temperature consistency (implemented and user-approved)
 
@@ -78,11 +90,13 @@ and duty/condensate acquisition remains a separate validation need.
 - Source/regression-supported bounded consistency acceptance; no general
   experimentally validated predictive-accuracy or provider-superiority claim.
   Spatial resolution, wet continuous-fin applicability and wet hydraulics are
-  unchanged. Historical closure/domain and inverse-performance limits remain.
+  unchanged. The closure/domain and inverse-performance issues recorded at
+  that cutoff were subsequently addressed within the v0.9.8 model scope.
 
-Local release materials are finalized for the user's manual PR workflow;
-no PR, push, merge, tag or GitHub release is performed by this task.
-See [final acceptance](validation/v0.9.7_final_acceptance.md).
+See the historical [v0.9.7 final acceptance](validation/v0.9.7_final_acceptance.md).
+Current release identity and reconstruction are recorded in the
+[metadata reconciliation](validation/release_metadata_reconciliation_v099.md);
+publication and tagging remain separate manual actions.
 
 ### v0.9.3 — Chakroun–Al-Fahed 1995 twisted tape (implemented)
 
@@ -426,7 +440,7 @@ tube families and must be supplied through empirical or provider-based data.
 ## v1.0.0 — Production-Ready 0D Engine
 
 Broad repository and private-workflow cleanup is deferred until just before
-v1.0.0; it is not part of the v0.9.7 finalization or the proposed v0.9.8 fixes.
+v1.0.0; it was not part of the completed v0.9.7–v0.9.9 corrections.
 
 This release marks the **maturity of the 0D modelling approach**.
 
