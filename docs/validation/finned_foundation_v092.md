@@ -8,7 +8,7 @@ the original foundation at its recorded HEAD, not the completed later baseline.
 Implementation base: merged public `main` / tag `v0.9.1`,
 `36031d2de6a8f2d747c6929b4d386bf68df8cfff` (PR #28).
 The six subsequent experimental provider commits are not ancestors of this
-implementation. The existing experimental branch and `.kon` were untouched.
+implementation. The existing experimental branch and the private workspace were untouched.
 
 Validation environment: Python 3.11.9, NumPy 2.4.2, SciPy 1.17.1, Windows.
 Tests use analytical geometry and an independently integrated straight-fin

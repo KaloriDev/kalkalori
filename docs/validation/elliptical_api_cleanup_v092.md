@@ -67,7 +67,7 @@ zero errors/skips. There were 2077 attempts including the two documented
 isolated retries. Test-execution phase wall time totals **2813.7710148 s
 (46m 53.77s)**. This is a coverage-verified full run with explicit retries;
 it is not a claim that the initial concurrent invocation had zero failures.
-Raw and retry JUnit/log receipts remain private under ignored `.kon`.
+Raw and retry JUnit/log receipts remain private in an ignored private workspace.
 
 An earlier sequential discovery run exposed the malformed-geometry boundary
 regression described above and was stopped after diagnosis. The corrected
@@ -84,5 +84,5 @@ Wet/phase-change rectangular fins, developing/transition internal physics,
 bare-ellipse outside-bank physics and validated ellipse tube-sheet/local losses
 remain outside this implementation's scope.
 
-Private customer inputs, execution details and case results remain under ignored
-`.kon`; they are not part of the public validation fixtures.
+Private customer inputs, execution details and case results remain in
+an ignored private workspace; they are not part of the public validation fixtures.

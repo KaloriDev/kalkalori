@@ -14,7 +14,7 @@ for complete equations, usage and applicability.
 - Research archive: `aab39f409602a0d0c06ae70388f844801c3beeb2`, one local
   commit above the base, inspected read-only for engineering evidence.
 - No merge, cherry-pick, push or tag. No research artifacts were copied.
-- Private `.kon` material was neither read nor modified. No public module
+- Private engineering material was neither read nor modified. No public module
   or test imports private/research modules, and no PDF, property tables from
   named oils, source illustrations or anonymous-reference outputs are added.
 - Existing Yang2020, Rossi2017, enhancement contracts, integration adapters
@@ -126,7 +126,7 @@ Those tests and their tolerances are unchanged in this patch.
 
 Final boundary checks: `git diff --check` and the staged whitespace check
 pass. The staged file allowlist contains exactly the 11 public files listed
-above, all Python or Markdown, with no `_validation_runs/`, `.kon/`, PDF or
+above, all Python or Markdown, with no private worklogs, PDF or
 private/source data. Base-to-feature diffs for Yang2020, Rossi2017, shared
 enhancement contracts/adapters and solver code are empty. The commit uses
 `Add Chakroun-Al-Fahed 1995 twisted-tape provider`; its resulting hash is

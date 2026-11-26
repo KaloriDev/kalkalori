@@ -211,8 +211,8 @@ rejects SHIFTED (including unresolved phases) and INLINE in both domain modes.
 Recovered Zhao2017 Fig. 2 and Zhao2016 Fig. 1 resolve the source identities:
 Pt is transverse, Pl follows flow, and there is no Pt/Pl swap. The audit gives
 the ROW/COLUMN coordinates and the legacy coordinate-helper indexing caveat.
-YC SHIFTED uses the user-confirmed Zhao COLUMN design basis; the named COLUMN
-preset retains SHIFTED identity and does not enable Zhao2017 coefficients.
+The named COLUMN preset retains SHIFTED identity and does not enable
+Zhao2017 coefficients.
 
 Zhao, Gu, Gao, Yang (2017), *Numerical study on airside thermal-hydraulic
 performance of rectangular finned elliptical tube heat exchanger with large

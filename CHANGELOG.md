@@ -99,15 +99,13 @@ See the [implementation and acceptance record](docs/validation/v0.9.8_wet_closur
   compatibility alias. Elmahdy–Mitalas remains the default.
 - Updated shared case-study tables and spreadsheet reporting to consume surface
   definitions and provenance while preserving achieved-duty and UA meanings.
-- Recorded model-consistency consequences: TERMOTECH Bulk-Mean duty
-  245.016315 → 250.508997 kW and condensate 0 → .002439754 kg/s;
-  IPROS118 approximately 155.592 → 169.625 kW. Existing Elmahdy fixture results
-  are unchanged. These are numerical comparisons, not experimentally proven
-  improvements or evidence of provider superiority.
+- Recorded model-consistency consequences while preserving existing Elmahdy
+  regression results. Numerical comparisons do not establish experimentally
+  proven improvements or evidence of provider superiority.
 - Retained 0D/spatial and geometry limits, unsupported wet continuous fins and
   wet hydraulics, historical Bulk-Mean dry/wet sensible-closure discontinuity
-  and high-NTU enthalpy-domain limits. TERMOTECH's roughly 24 kW AUTO/dry
-  difference is not simply latent heat. No correlation, tolerance, timeout
+  and high-NTU enthalpy-domain limits. A change in sensible closure must not
+  be interpreted as latent heat alone. No correlation, tolerance, timeout
   default or applicability was changed to close a failing test.
 - Accepted the reproduced baseline 300-second inverse-Rating failure explicitly;
   the prior full public receipt remains 2739 passed / 1 failed. Experimental
@@ -407,7 +405,7 @@ See [the provider guide](docs/twisted_tape_chakroun1995.md).
 - Added focused area-basis, zero-freeze, hydraulic, dry/wet Rating/Simulation,
   Legacy, finned and tube-side phase-change regressions. See
   [thermal fouling conventions](docs/thermal_fouling.md).
-- Local `.kon` case configuration now defines `fouling_resistance` [m² K/W]
+- Private case configuration now defines `fouling_resistance` [m² K/W]
   independently within each case's `inside` and `outside` dictionaries.
   The shared builders, notebook templates and reporting use the selected
   case values without modifying reusable stage geometry. Private notebooks

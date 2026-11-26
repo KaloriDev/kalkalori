@@ -102,7 +102,7 @@ production notebook configuration: **4/4 PASS**. Explicit ESCOA STAGGERED
 production thermal-only comparisons also passed **4/4**. Inputs and design
 fouling are unchanged, and no export was triggered. Square-pitch staggered
 hydraulics were not forced through Robinson–Briggs. Private geometries,
-properties, numerical outputs and input hashes remain under ignored `.kon`;
+properties, numerical outputs and input hashes remain in an ignored private workspace;
 none are included in this public record.
 
 These cases establish execution and reporting under the stated engineering
