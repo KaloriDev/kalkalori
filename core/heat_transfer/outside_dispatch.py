@@ -10,6 +10,10 @@ uses Briggs-Young for staggered and Frass/ESCOA for inline banks. Circular
 hydraulics use Robinson-Briggs for staggered and native Frass xi for INLINE. Rectangular-finned ellipses select the
 explicit reconstructed Zhao baseline. Keeping that decision in one place
 prevents a workflow refresh from silently falling back to a bare-tube model.
+
+Explicit independent external film/pressure objects take precedence for their
+own channels and own their applicability and reference definitions. Their
+physical film h still feeds the existing fin solver and resistance network.
 """
 
 from __future__ import annotations
@@ -59,6 +63,14 @@ from core.pressure_drop.finned_ellipse import Zhao2017BankHydraulicResult, Zhao2
 from core.heat_transfer.continuous_airside import ExperimentalWang2000Model, ContinuousAirsideResult, require_continuous_profile
 from core.heat_transfer.continuous_fin_efficiency import ContinuousFinEfficiencyResult
 from core.pressure_drop.continuous_fin import ContinuousFinBankHydraulicResult, ContinuousFinHydraulicPoint
+from core.heat_transfer.outside_provider import (
+    OutsideThermalProvider, OutsideThermalProviderResult, OutsideProviderPolicy,
+    OutsideProviderApplicabilityError, make_outside_request, evaluate_external_thermal,
+)
+from core.pressure_drop.outside_provider import (
+    OutsideHydraulicProvider, ExternalOutsideBankHydraulicResult,
+    ExternalOutsideHydraulicPoint, evaluate_external_hydraulics,
+)
 
 if TYPE_CHECKING:
     from core.phase_change.wet_finned_surface import WetFinnedSurfaceResult
@@ -79,6 +91,16 @@ def guard_outside_execution(hx, *, inside_provider=None, outside_provider=None):
 
 class IncompatibleOutsideCorrelationProviderError(TypeError):
     """A provider from one surface family was supplied to the other family."""
+
+
+def _require_external_surface(surface):
+    if surface in (TubeSurfaceType.CONTINUOUS_PLATE_FIN, TubeSurfaceType.SERRATED_HELICAL_FIN):
+        raise OutsideProviderApplicabilityError('External film injection requires a physical independent fin solver for this surface.')
+
+
+def _require_external_selectors(euler, finned, default):
+    if euler != DEFAULT_BARE_EULER_PROVIDER or finned != default:
+        raise IncompatibleOutsideCorrelationProviderError('External outside injection cannot be combined with another selector for the same channel.')
 
 
 @dataclass(frozen=True)
@@ -112,6 +134,7 @@ class OutsideThermalDispatchResult:
     airside_result: Zhao2017AirsideResult | None = None
     serrated_fin_efficiency_result: SerratedFinEfficiencyResult | None = None
     continuous_result: ContinuousAirsideResult | None = None
+    external_result: OutsideThermalProviderResult | None = None
 
     @property
     def alpha(self) -> float:
@@ -292,7 +315,7 @@ class FinnedTubeDiagnostics:
     hydraulic_airside_result: Zhao2017AirsideResult | None = None
     fin_efficiency_result: ThinPlateFinEfficiencyResult | SerratedFinEfficiencyResult | ContinuousFinEfficiencyResult | None = None
     heat_transfer_result: FinnedTubeHeatTransferResult | None = None
-    hydraulic_result: FinnedTubeBankHydraulicResult | ContinuousFinBankHydraulicResult | None = None
+    hydraulic_result: FinnedTubeBankHydraulicResult | ContinuousFinBankHydraulicResult | ExternalOutsideBankHydraulicResult | None = None
     continuous_result: ContinuousAirsideResult | None = None
 
     @property
@@ -392,8 +415,8 @@ class FinnedTubeDiagnostics:
         return self.outside_dp_total
 
 
-OutsideBankHydraulicResult = OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult | Zhao2017BankHydraulicResult | ContinuousFinBankHydraulicResult
-OutsideBankHydraulicPoint = OutsideHydraulicPoint | FinnedTubeHydraulicPoint | Zhao2017HydraulicPoint | ContinuousFinHydraulicPoint
+OutsideBankHydraulicResult = OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult | Zhao2017BankHydraulicResult | ContinuousFinBankHydraulicResult | ExternalOutsideBankHydraulicResult
+OutsideBankHydraulicPoint = OutsideHydraulicPoint | FinnedTubeHydraulicPoint | Zhao2017HydraulicPoint | ContinuousFinHydraulicPoint | ExternalOutsideHydraulicPoint
 
 
 def tube_surface_type(bundle: TubeBundle) -> TubeSurfaceType:
@@ -454,9 +477,25 @@ def evaluate_outside_thermal(
     mean_fin_temperature: float | None = None,
     fin_temperature_model: Callable[[float], float] | None = None,
     strict_source_domain: bool = False,
+    outside_thermal_provider: OutsideThermalProvider | None = None,
+    outside_provider_policy: OutsideProviderPolicy = OutsideProviderPolicy(),
+    pressure: float | None = None,
 ) -> OutsideThermalDispatchResult:
     """Evaluate the dry outside film coefficient for the declared surface."""
 
+    if outside_thermal_provider is not None:
+        surface = tube_surface_type(bundle)
+        _require_external_surface(surface)
+        _require_external_selectors(DEFAULT_BARE_EULER_PROVIDER, finned_heat_transfer_provider, DEFAULT_FINNED_HT_PROVIDER)
+        request = make_outside_request(bundle=bundle, m_dot=m_dot, props=props,
+                                       temperature=gas_temperature, pressure=pressure)
+        result = evaluate_external_thermal(outside_thermal_provider, request, outside_provider_policy)
+        ref = result.reference
+        unknown = lambda value: math.nan if value is None else value
+        return OutsideThermalDispatchResult(surface, request.face_velocity, unknown(ref.velocity),
+            unknown(ref.reynolds_number), request.Pr, unknown(ref.nusselt_number),
+            unknown(ref.nusselt_number), 1., result.alpha_outside, result.warnings,
+            external_result=result)
     from core.geometry.applicability import require_automatic_outside_bank
     require_automatic_outside_bank(bundle.tube, 'Automatic outside bank HTC', airside_model=airside_model)
     surface = tube_surface_type(bundle)
@@ -591,9 +630,20 @@ def evaluate_outside_hydraulics(
     ) = DEFAULT_FINNED_DP_PROVIDER,
     airside_model: Zhao2017AirsideModel | Holfeld2016SerratedStaggeredModel | None = None,
     strict_source_domain: bool = False,
+    outside_hydraulic_provider: OutsideHydraulicProvider | None = None,
+    outside_provider_policy: OutsideProviderPolicy = OutsideProviderPolicy(),
 ) -> OutsideBankHydraulicResult:
     """Evaluate the three-state outside hydraulics for the declared surface."""
 
+    if outside_hydraulic_provider is not None:
+        _require_external_surface(tube_surface_type(bundle))
+        _require_external_selectors(euler_provider, finned_pressure_drop_provider, DEFAULT_FINNED_DP_PROVIDER)
+        return evaluate_external_hydraulics(hydraulic_provider=outside_hydraulic_provider,
+            policy=outside_provider_policy, bundle=bundle, m_dot=m_dot,
+            property_provider=property_provider, temperature_in=temperature_in,
+            temperature_out=temperature_out, pressure=pressure, inlet_props=inlet_props,
+            midpoint_props=midpoint_props, outlet_props=outlet_props,
+            m_dot_inlet=m_dot_inlet, m_dot_midpoint=m_dot_midpoint, m_dot_outlet=m_dot_outlet)
     from core.geometry.applicability import require_automatic_outside_bank
     require_automatic_outside_bank(bundle.tube, 'Automatic outside bank pressure drop', airside_model=airside_model)
     surface = tube_surface_type(bundle)
@@ -1130,7 +1180,7 @@ def build_finned_tube_diagnostics(
     if network.surface_type is TubeSurfaceType.PLAIN:
         return None
     ht = thermal.finned_result
-    bank = hydraulic if isinstance(hydraulic, (FinnedTubeBankHydraulicResult,Zhao2017BankHydraulicResult,ContinuousFinBankHydraulicResult)) else None
+    bank = hydraulic if isinstance(hydraulic, (FinnedTubeBankHydraulicResult,Zhao2017BankHydraulicResult,ContinuousFinBankHydraulicResult,ExternalOutsideBankHydraulicResult)) else None
     midpoint = None if bank is None else bank.midpoint
     warnings = _deduplicate_warnings(
         (*geometry_warnings, *thermal.warnings, *((bank.warnings) if bank else ()))
@@ -1187,7 +1237,7 @@ def build_finned_tube_diagnostics(
         outside_dp_drag=math.nan if bank is None else bank.dp_drag,
         outside_dp_acceleration=math.nan if bank is None else bank.dp_acceleration,
         outside_dp_total=math.nan if bank is None else bank.dp_total,
-        heat_transfer_metadata=thermal.continuous_result.metadata if thermal.continuous_result is not None else thermal.airside_result if thermal.airside_result is not None else None if ht is None else ht.metadata,
+        heat_transfer_metadata=thermal.external_result.metadata if thermal.external_result is not None else thermal.continuous_result.metadata if thermal.continuous_result is not None else thermal.airside_result if thermal.airside_result is not None else None if ht is None else ht.metadata,
         pressure_drop_metadata=None if bank is None else bank.metadata,
         warnings=warnings,
         outside_dp_dry_reference=math.nan if bank is None else bank.dp_total,
@@ -1195,7 +1245,7 @@ def build_finned_tube_diagnostics(
         outside_dp_reference_only=False,
         airside_result=thermal.airside_result,
         heat_transfer_result=ht,
-        hydraulic_result=bank if isinstance(bank, (FinnedTubeBankHydraulicResult, ContinuousFinBankHydraulicResult)) else None,
+        hydraulic_result=bank if isinstance(bank, (FinnedTubeBankHydraulicResult, ContinuousFinBankHydraulicResult,ExternalOutsideBankHydraulicResult)) else None,
         hydraulic_airside_result=bank.metadata if isinstance(bank,Zhao2017BankHydraulicResult) else None,
         fin_efficiency_result=network.fin_efficiency_result if isinstance(network.fin_efficiency_result,(ThinPlateFinEfficiencyResult,SerratedFinEfficiencyResult,ContinuousFinEfficiencyResult)) else None,
         continuous_result=thermal.continuous_result,

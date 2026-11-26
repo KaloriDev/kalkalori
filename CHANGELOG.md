@@ -5,6 +5,25 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.10] — External Outside Thermal and Hydraulic Providers
+
+- Added independent typed dry outside providers to `BareTubeHeatExchanger`,
+  Rating, Simulation, wall iteration and dry outside helpers. Requests retain
+  the actual geometry, layout, physical dimensions and fluid properties;
+  providers own their applicability and reference quantities.
+- External thermal results supply physical film HTC before the existing fin
+  solver, contact, wall, fouling and overall U/UA resistance network.
+- Added explicit bank-only, loss-with-entrance/exit, complete-static and
+  unresolved-engineering pressure scopes. Acceleration is added once only to
+  declared irreversible losses. Non-bank scopes reject additional local paths.
+- Engineering and unresolved-scope estimates require explicit policies and
+  visible limitations. Invalid outputs fail without provider substitution.
+- Preserved built-in selection and Zhao2017 source restrictions. The generic
+  boundary adds no public SHIFTED correlation and validates no private model.
+- Added synthetic integration examples and regression coverage. See the
+  [provider guide](docs/external_airside_providers.md) and
+  [validation record](docs/validation/v0.9.10_external_outside_providers.md).
+
 ## [0.9.9] — Water/Steam Rating API Consistency
 
 Implemented in `7fed860`, with validation in `e90c941`, and merged to main

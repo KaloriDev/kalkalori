@@ -251,4 +251,10 @@ from .finned_tube_pressure_drop import HOLFELD_2016_EU_COEFFICIENT_BASIS
 __all__ += ["Holfeld2016SerratedStaggeredPressureDropProvider", "HOLFELD_2016_EU_COEFFICIENT_BASIS"]
 
 from .continuous_fin import ContinuousFinDPProvider, ExperimentalWang2000DP, ContinuousFinDPResult, ContinuousFinBankHydraulicResult
+from .outside_provider import (
+    OutsideHydraulicProvider, OutsideBankPressureDropRequest,
+    OutsideBankPressureDropResult, OutsidePressureScope, ExternalOutsideBankHydraulicResult,
+)
+__all__ += ['OutsideHydraulicProvider', 'OutsideBankPressureDropRequest',
+            'OutsideBankPressureDropResult', 'OutsidePressureScope', 'ExternalOutsideBankHydraulicResult']
 __all__ += ["ContinuousFinDPProvider", "ExperimentalWang2000DP", "ContinuousFinDPResult", "ContinuousFinBankHydraulicResult"]

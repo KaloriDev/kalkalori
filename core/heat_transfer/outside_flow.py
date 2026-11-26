@@ -31,8 +31,10 @@
 #   - delegated to outside_pressure_drop.py
 #
 # NOTE:
-#   External closed-data providers may be attached only through the
-#   euler_provider interface, without importing proprietary code here.
+#   This module contains the built-in bare-bank path. Independent external
+#   film/pressure objects connect through outside_dispatch and outside_provider,
+#   without importing their implementations here. The Euler interface remains
+#   available for the existing dimensionless bare-bank hydraulic path.
 #
 # -------------------------------------------------------------------------
 # UNITS (SI ONLY)

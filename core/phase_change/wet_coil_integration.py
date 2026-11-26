@@ -105,6 +105,9 @@ def forward_wet_process(
     finned_heat_transfer_provider=DEFAULT_FINNED_HT_PROVIDER,
 ):
     """Sole physical wet dispatch used by Simulation and every Rating trial."""
+    if hx.outside_thermal_provider is not None or hx.outside_hydraulic_provider is not None:
+        from core.heat_transfer.outside_provider import OutsideProviderApplicabilityError
+        raise OutsideProviderApplicabilityError('External outside providers do not support wet-surface execution.')
     from core.geometry.applicability import require_circular_tube
     require_circular_tube(hx.bundle.tube, 'Wet-coil condensation')
     budget = _solve_budget(wet_solver_options, _budget)
@@ -714,7 +717,8 @@ def _public_simulation(
 def route_outside_wet(hx, inside, outside, *, mode, settings, **options):
     """Global model selection shared by the public and deferred wet paths."""
     from core.geometry.tube import TubeSurfaceType
-    if hx.bundle.tube.surface_type is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
+    external = hx.outside_thermal_provider is not None or hx.outside_hydraulic_provider is not None
+    if external or hx.bundle.tube.surface_type is TubeSurfaceType.RECTANGULAR_INDIVIDUAL_FINNED:
         from core.phase_change.types import PhaseChangeMode
         from core.phase_change.capability import detect_phase_change_capability
         if outside.phase_change_mode is PhaseChangeMode.DISABLED:
@@ -723,6 +727,9 @@ def route_outside_wet(hx, inside, outside, *, mode, settings, **options):
                 and options.get('wet_coil_provider') is None
                 and not options.get('force_candidate',False)):
             return None
+        if external:
+            from core.heat_transfer.outside_provider import OutsideProviderApplicabilityError
+            raise OutsideProviderApplicabilityError('External outside providers require dry execution; disable outside phase change for a dry gas calculation.')
         # A dry-capable source model does not establish wet-coil physics.
         from core.geometry.applicability import require_circular_tube
         require_circular_tube(hx.bundle.tube,'Wet-coil condensation')

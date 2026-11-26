@@ -251,8 +251,18 @@ from .serrated_airside import Holfeld2016SerratedStaggeredModel
 from .continuous_airside import ExperimentalWang2000Model
 from .continuous_fin_efficiency import SchmidtEquivalentCell, ContinuousFinEfficiencyResult
 from .continuous_fin_source import ContinuousFinRequest, ContinuousFinHTCProvider, ExperimentalWang2000HTC, ContinuousFinSourceError, ContactPolicy
+from .outside_provider import (
+    OutsideThermalProvider, OutsideThermalProviderResult, OutsideProviderRequest,
+    OutsideProviderMetadata, OutsideReferenceQuantities, OutsideApplicability,
+    OutsideProviderPolicy, OutsideProviderError, OutsideProviderApplicabilityError,
+    OutsideProviderResultError,
+)
 
 __all__ += [
+    'OutsideThermalProvider', 'OutsideThermalProviderResult', 'OutsideProviderRequest',
+    'OutsideProviderMetadata', 'OutsideReferenceQuantities', 'OutsideApplicability',
+    'OutsideProviderPolicy', 'OutsideProviderError', 'OutsideProviderApplicabilityError',
+    'OutsideProviderResultError',
     "ExperimentalWang2000Model", "SchmidtEquivalentCell", "ContinuousFinEfficiencyResult",
     "ContinuousFinRequest", "ContinuousFinHTCProvider", "ExperimentalWang2000HTC", "ContinuousFinSourceError", "ContactPolicy",
     "HashizumeSerratedFinEfficiencyProvider", "SerratedFinEfficiencyResult",

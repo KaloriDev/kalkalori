@@ -222,6 +222,10 @@ class Zhao2017AirsideModel:
         if self.correction_provider is not None and not callable(getattr(self.correction_provider,'correct',None)):
             raise TypeError('correction_provider must implement correct(base_result, *, bundle, props).')
 
+    def validate_bundle(self, bundle):
+        """Own source-specific geometry checks before property evaluation."""
+        return validate_zhao2017_geometry(bundle)
+
     def evaluate(self, bundle, m_dot, props):
         flow = zhao2017_flow(bundle,m_dot,props)
         f = zhao2017_factors(n_rows=bundle.n_rows, reynolds=flow.reynolds_number,

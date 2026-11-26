@@ -1,5 +1,11 @@
 # Rectangular individual fins on elliptical tubes (v0.9.2)
 
+Since v0.9.10, [independent external outside providers](external_airside_providers.md)
+can supply physical film HTC and explicitly scoped pressure results on the
+unchanged geometry. The core retains its fin solver and resistance network.
+This generic API adds no public SHIFTED correlation or experimental validation;
+the built-in Zhao baseline described below retains its original restrictions.
+
 This release provides geometry, analytical surface areas, deterministic 2D
 fin conduction and a **Zhao-2017-based engineering air-side baseline** for
 individual rectangular fins on elliptical tubes. Normal dry Rating/Simulation
