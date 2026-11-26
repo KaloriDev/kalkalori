@@ -7,6 +7,9 @@ The project follows **Semantic Versioning (SemVer)**:
 
 ## [0.9.10] — External Outside Thermal and Hydraulic Providers
 
+- Standardized fin surface identifiers as `circular_fin`, `serrated_helical_fin`,
+  `rectangular_fin` and `continuous_plate_fin`, retaining enum member names and
+  legacy string input aliases. Numerical models and results are unchanged.
 - Added independent typed dry outside providers to `BareTubeHeatExchanger`,
   Rating, Simulation, wall iteration and dry outside helpers. Requests retain
   the actual geometry, layout, physical dimensions and fluid properties;

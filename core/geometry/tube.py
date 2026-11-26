@@ -51,13 +51,23 @@ class TubeGeometry(Protocol):
     def projected_blocking_area_per_length(self) -> float: ...
 
 class TubeSurfaceType(str, Enum):
-    """Outside-surface geometry family used for correlation dispatch."""
+    """Canonical outside-surface identifiers with legacy input aliases."""
 
     PLAIN = "plain"
-    CIRCULAR_FINNED = "circular_finned"
+    CIRCULAR_FINNED = "circular_fin"
     SERRATED_HELICAL_FIN = "serrated_helical_fin"
-    RECTANGULAR_INDIVIDUAL_FINNED = "rectangular_individual_finned"
+    RECTANGULAR_INDIVIDUAL_FINNED = "rectangular_fin"
     CONTINUOUS_PLATE_FIN = "continuous_plate_fin"
+
+    @classmethod
+    def _missing_(cls, value):
+        # Old serialized values remain readable; members always emit .value.
+        if isinstance(value, str):
+            return {
+                "circular_finned": cls.CIRCULAR_FINNED,
+                "rectangular_individual_finned": cls.RECTANGULAR_INDIVIDUAL_FINNED,
+            }.get(value)
+        return None
 
 
 class TubeOrientation(str, Enum):

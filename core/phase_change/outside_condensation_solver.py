@@ -45,6 +45,8 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from core.geometry.tube import TubeSurfaceType
+
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import PropertyProvider
 from core.properties.averaging import mean_temperature
@@ -253,8 +255,7 @@ def _solve_outside_condensation(
     A_o = bundle.total_outer_area / margin_factor
     R_w = hx.tube_wall_resistance() * margin_factor
     is_circular_finned = (
-        getattr(getattr(bundle.tube, "surface_type", None), "value", None)
-        == "circular_finned"
+        getattr(bundle.tube, "surface_type", None) is TubeSurfaceType.CIRCULAR_FINNED
     )
     # The wet radial response can be much stiffer than the established bare
     # interface when a large fin bank changes latent duty near a whole-HX
