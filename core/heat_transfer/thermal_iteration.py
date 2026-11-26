@@ -141,6 +141,7 @@ from core.properties.averaging import mean_temperature
 
 from core.heat_transfer.internal_dispatch import internal_heat_transfer_diagnostics
 from core.heat_transfer.outside_provider import OutsideThermalProviderResult
+from core.heat_transfer.reference_state import FlowReferenceState, outside_reference_state
 from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_diagnostics  # Historical integration hook.
 from core.heat_transfer.outside_flow import (
     prandtl_number as outside_prandtl_number,
@@ -215,6 +216,8 @@ class ThermalIterationDiagnostics:
     outside_wall_property_correction: float
     inside_model_metadata: object | None = None
     outside_provider_result: OutsideThermalProviderResult | None = None
+    inside_reference_state: FlowReferenceState | None = None
+    outside_reference_state: FlowReferenceState | None = None
 
 
 @dataclass(frozen=True)
@@ -493,6 +496,7 @@ def _evaluate_local_wall_state(
     )
     if enhancement is None:
         internal = internal_heat_transfer_diagnostics(
+            roughness_policy=getattr(hx,'elliptical_roughness_policy',None),
             strict_source_domain=hx.strict_source_domain,
             assumptions=hx.elliptical_flow_assumptions,
             m_dot=m_dot_inside,
@@ -1059,6 +1063,7 @@ def solve_iterative_thermal_state(
             "resistance_network": local.resistance_network,
             "finned_tube_diagnostics": local.finned_tube_diagnostics,
             "outside_provider_result": local.outside_dispatch.external_result,
+            "outside_dispatch": local.outside_dispatch,
             "warnings": list(local.warnings),
         }
 
@@ -1186,6 +1191,7 @@ def solve_iterative_thermal_state(
         )
 
     internal_diag = final["internal_diag"]
+    outside_dispatch = final['outside_dispatch']
     diagnostics = ThermalIterationDiagnostics(
         inside_Nu_base=internal_diag.Nu_base,
         inside_Nu_corrected=internal_diag.Nu_corrected,
@@ -1199,6 +1205,16 @@ def solve_iterative_thermal_state(
         outside_wall_property_correction=final["outside_wall_property_correction"],
         inside_model_metadata=getattr(internal_diag, 'model_metadata', None),
         outside_provider_result=final['outside_provider_result'],
+        inside_reference_state=(None if hx.tube_side_enhancement is not None
+            else FlowReferenceState(final['T_mean_inside'],p_inside,internal_diag.Re,
+                bundle.tube.hydraulic_diameter,internal_diag.v,
+                m_dot_inside/bundle.internal_flow_area_per_pass,bundle.internal_flow_area_per_pass,
+                'actual_inside_flow_area_per_pass','actual Dh; mean unblocked inside velocity')),
+        outside_reference_state=outside_reference_state(bundle=bundle,
+            temperature=final['T_mean_outside'],pressure=p_outside,
+            reynolds=outside_dispatch.reynolds_number,velocity=outside_dispatch.reference_velocity,
+            face_velocity=outside_dispatch.face_velocity,external=outside_dispatch.external_result,
+            airside=outside_dispatch.airside_result,finned=outside_dispatch.finned_result),
     )
 
     return IterativeThermalState(

@@ -23,6 +23,14 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added synthetic integration examples and regression coverage. See the
   [provider guide](docs/external_airside_providers.md) and
   [validation record](docs/validation/v0.9.10_external_outside_providers.md).
+- Added intrinsic rectangular-fin geometry snapshots, explicit unavailable
+  minimum-flow-area reasons, and separate thermal/hydraulic reference states.
+  Provider reference flow area/basis remains distinct from frontal/minimum area.
+- Added separately authorized elliptical rough-wall distributed friction:
+  smooth Jones/Prandtl law times a normalized Colebrook ratio. Exact smooth
+  results and regime guards remain. Smooth Yang HTC on a rough wall needs
+  its own approximation permission. No rough HTC or ellipse fitting law is
+  claimed; see the [assessment](docs/elliptical_roughness_and_reporting.md).
 
 ## [0.9.9] — Water/Steam Rating API Consistency
 

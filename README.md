@@ -43,6 +43,12 @@ fin efficiency and the resistance network. This API does not introduce or
 validate a public SHIFTED correlation; built-in model defaults and source guards
 are unchanged.
 
+The same release adds [elliptical roughness and reference reporting](docs/elliptical_roughness_and_reporting.md):
+intrinsic rectangular-fin metadata, separate thermal/hydraulic states, and
+independent opt-ins for engineering rough-wall friction and smooth-wall HTC
+approximation. Rough elliptical friction remains an unvalidated engineering
+extension; the zero-roughness model is preserved.
+
 v0.9.9 completes water/steam Rating API consistency: unknown tube-side water
 flow can be derived from an independent duty and an explicit outlet state,
 with the resolved flow propagated through the existing calculation and optional

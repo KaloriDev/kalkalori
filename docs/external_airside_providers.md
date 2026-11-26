@@ -1,5 +1,11 @@
 # Independent external outside providers (v0.9.10)
 
+Intrinsic geometry and channel-specific states are covered by the
+[reporting follow-up](elliptical_roughness_and_reporting.md). Optional
+`OutsideReferenceQuantities.flow_area`, `flow_area_basis` and `mass_flux`
+describe the provider's actual flow reference. A supplied area requires
+its basis; omitted values remain unknown and no minimum area is inferred.
+
 `BareTubeHeatExchanger` accepts `outside_thermal_provider`,
 `outside_hydraulic_provider` and `outside_provider_policy`. Each channel is
 optional and independent. An omitted channel retains its existing built-in

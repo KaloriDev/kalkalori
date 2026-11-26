@@ -215,7 +215,7 @@ __all__ = [
 
 # Explicit smooth ellipse internal/wall models. Outside eligibility is selected
 # separately; the dry rectangular-finned baseline has its own source limits.
-from .internal_model_contract import EllipticalFlowAssumptions, InternalModelMetadata
+from .internal_model_contract import EllipticalFlowAssumptions, EllipticalRoughnessPolicy, InternalModelMetadata
 from .internal_dispatch import internal_heat_transfer_diagnostics, internal_heat_transfer_coefficient, internal_friction
 from .elliptical_internal import (
     EllipticalFrictionResult, EllipticalDistributedPressureDrop,
@@ -235,7 +235,7 @@ from .elliptical_wall import (
 )
 
 __all__ += [
-    'EllipticalFlowAssumptions', 'InternalModelMetadata',
+    'EllipticalFlowAssumptions', 'EllipticalRoughnessPolicy', 'InternalModelMetadata',
     'internal_heat_transfer_diagnostics', 'internal_heat_transfer_coefficient', 'internal_friction',
     'EllipticalFrictionResult', 'EllipticalDistributedPressureDrop',
     'elliptical_laminar_friction', 'elliptical_h1_heat_transfer', 'elliptical_distributed_pressure_drop',

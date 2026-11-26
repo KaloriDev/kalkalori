@@ -55,6 +55,11 @@ and distributed thermal resolution remain future work.
 
 ### v0.9.10 — External Outside Providers (implemented)
 
+Completed follow-up: intrinsic rectangular-fin geometry metadata, separate
+thermal/hydraulic reference states, and independently authorized engineering
+elliptical rough-wall friction / smooth-wall HTC approximation. See the
+[method and limitations](elliptical_roughness_and_reporting.md).
+
 Independent typed providers supply physical film HTC and complete-bank pressure
 results, retaining native geometry and declaring applicability, provenance and
 pressure scope. Fin conduction and the resistance network remain in the core.

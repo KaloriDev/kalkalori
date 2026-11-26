@@ -108,7 +108,9 @@ the existing circular friction implementation.
 Re or axis ratios is an explicitly warned engineering extrapolation. The API
 requires Re_Dh >= 4,000 and ai/bi 1-5; these are explicit
 implementation limits, not a new validation claim or universal transition
-criterion. Positive roughness and explicitly incompatible/developing assumptions remain errors.
+criterion. Positive roughness requires the separately authorized
+[v0.9.10 engineering extension](elliptical_roughness_and_reporting.md).
+Explicitly incompatible/developing assumptions remain errors.
 The model ID is `elliptical_jones_prandtl_turbulent_engineering` and metadata
 always says `approximation=True`.
 

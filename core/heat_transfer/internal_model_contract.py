@@ -4,6 +4,23 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class EllipticalRoughnessPolicy:
+    """Separate opt-ins for unvalidated rough hydraulics and smooth-wall HTC.
+
+    Neither permission certifies a rough elliptical correlation. Laminar and
+    transition guards are unaffected. Absolute roughness is equivalent sand
+    roughness, not an arithmetic surface-finish measurement.
+    """
+    allow_hydraulic_roughness: bool = False
+    allow_smooth_htc_on_rough_wall: bool = False
+
+    def __post_init__(self):
+        if any(not isinstance(value, bool) for value in (
+                self.allow_hydraulic_roughness, self.allow_smooth_htc_on_rough_wall)):
+            raise TypeError('Elliptical roughness permissions must be boolean.')
+
+
+@dataclass(frozen=True)
 class EllipticalFlowAssumptions:
     """Advanced direct-model verification; normal dispatch supplies these.
 

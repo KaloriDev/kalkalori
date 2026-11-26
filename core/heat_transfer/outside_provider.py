@@ -92,6 +92,9 @@ class OutsideReferenceQuantities:
     nusselt_number: float | None = None
     coefficient: float | None = None
     coefficient_definition: str = ""
+    flow_area: float | None = None
+    flow_area_basis: str = ""
+    mass_flux: float | None = None
 
 
 @dataclass(frozen=True)
@@ -143,10 +146,14 @@ def validate_metadata(metadata, warnings, reference, policy):
         raise OutsideProviderResultError("Provider warnings must be a tuple of ModelWarning.")
     if not isinstance(reference, OutsideReferenceQuantities):
         raise OutsideProviderResultError("Expected OutsideReferenceQuantities.")
-    for name in ('velocity', 'characteristic_length', 'reynolds_number', 'nusselt_number'):
+    for name in ('velocity', 'characteristic_length', 'reynolds_number', 'nusselt_number', 'flow_area', 'mass_flux'):
         value = getattr(reference, name)
         if value is not None:
             finite_number(value, name, positive=True)
+    if not isinstance(reference.flow_area_basis, str):
+        raise OutsideProviderResultError('Reference flow-area basis must be a string.')
+    if reference.flow_area is not None and not reference.flow_area_basis.strip():
+        raise OutsideProviderResultError('A provider reference flow area requires its actual basis.')
     if reference.coefficient is not None:
         finite_number(reference.coefficient, 'coefficient', nonnegative=True)
         if not isinstance(reference.coefficient_definition, str) or not reference.coefficient_definition.strip():

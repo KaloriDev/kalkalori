@@ -675,6 +675,7 @@ class BareTubeHeatExchanger:
         outside_hydraulic_provider: OutsideHydraulicProvider | None = None,
         outside_provider_policy: OutsideProviderPolicy | None = None,
         elliptical_flow_assumptions=None,
+        elliptical_roughness_policy=None,
         tube_wall_model=None,
         strict_source_domain=False,
     ):
@@ -717,6 +718,10 @@ class BareTubeHeatExchanger:
             raise ValueError('elliptical_flow_assumptions requires elliptical tube geometry.')
         self.airside_model = airside_model
         self.elliptical_flow_assumptions = elliptical_flow_assumptions
+        from core.heat_transfer.internal_model_contract import EllipticalRoughnessPolicy
+        if elliptical_roughness_policy is not None and not isinstance(elliptical_roughness_policy, EllipticalRoughnessPolicy):
+            raise TypeError('elliptical_roughness_policy must be EllipticalRoughnessPolicy or None.')
+        self.elliptical_roughness_policy = elliptical_roughness_policy or EllipticalRoughnessPolicy()
         self.tube_wall_model = None if tube_wall_model is None else TubeWallModel(tube_wall_model)
         if not isinstance(strict_source_domain, bool):
             raise TypeError('strict_source_domain must be boolean.')
@@ -802,7 +807,8 @@ class BareTubeHeatExchanger:
     def _internal_hydraulics_kwargs(self):
         """Exact elliptical straight friction; never borrow circular end losses."""
         kwargs=dict(straight_friction_evaluator=straight_friction_evaluator(
-            self.bundle.tube,assumptions=self.elliptical_flow_assumptions))
+            self.bundle.tube,assumptions=self.elliptical_flow_assumptions,
+            roughness_policy=self.elliptical_roughness_policy))
         from core.geometry.tube import TubeCrossSectionFamily
         if self.bundle.tube.cross_section_family is TubeCrossSectionFamily.ELLIPTICAL:
             kwargs['include_tube_end_losses']=False
@@ -924,6 +930,7 @@ class BareTubeHeatExchanger:
         )
         if enhancement is None:
             v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = internal_heat_transfer_coefficient(
+                roughness_policy=self.elliptical_roughness_policy,
                 strict_source_domain=self.strict_source_domain,
                 assumptions=self.elliptical_flow_assumptions,
                 m_dot=m_dot_tube_side,
