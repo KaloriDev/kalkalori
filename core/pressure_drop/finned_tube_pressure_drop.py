@@ -936,11 +936,20 @@ def _selection_metadata(result, requested) -> dict[str, object]:
         marker in warning.code for warning in result.warnings
         for marker in ("extrapolation", "extension", "mapping", "below_range", "above_range")
     ))
-    return dict(requested_provider=name, resolved_provider=result.method,
+    # Frass's accepted bank-drag convention does not close its measured loss
+    # scope. Retain that integration policy without reporting source validation.
+    if diagnostics.get("loss_scope_source_closed") is False:
+        engineering = True
+    selection = dict(requested_provider=name, resolved_provider=result.method,
         auto_selection_reason=diagnostics.get("auto_selection_reason", "Explicit hydraulic provider selection"),
         engineering_estimate=engineering,
-        source_applicability=diagnostics.get("source_domain_status", "SEE_SOURCE_WARNINGS"),
+        source_applicability=diagnostics.get("source_domain_status",
+            diagnostics.get("source_range_status", "SEE_SOURCE_WARNINGS")),
         pressure_scope="BANK_ONLY")
+    if "loss_scope_source_closed" in diagnostics:
+        selection.update(pressure_scope_source_closed=diagnostics["loss_scope_source_closed"],
+            pressure_scope_policy=diagnostics.get("loss_scope"))
+    return selection
 
 
 class _PreferredStaggeredPressureProvider:

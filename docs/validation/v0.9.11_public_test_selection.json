@@ -57,5 +57,6 @@
   "core/tests/wall_surface_consistency_test.py",
   "core/tests/zhao2017_airside_test.py",
   "core/tests/zhao2017_integration_test.py",
-  "core/tests/extended_surface_auto_test.py"
+  "core/tests/extended_surface_auto_test.py",
+  "core/tests/inline_hydraulic_review_test.py"
 ]

@@ -2,7 +2,7 @@
   "version": "0.9.11",
   "python": "3.11.9",
   "CoolProp": "8.0.0",
-  "selected_public_tests": 1533,
+  "selected_public_tests": 1543,
   "failures": 0,
   "errors": 0,
   "skips": 0,
@@ -15,5 +15,9 @@
   "default_hydraulic_selection_changed": true,
   "thermal_equations_changed": false,
   "thermal_dispatch_identity_diagnostics_changed": true,
-  "full_suite_claimed_pass": false
+  "full_suite_claimed_pass": false,
+  "new_inline_review_tests": 10,
+  "inline_auto_changed": false,
+  "inline_pressure_values_changed": false,
+  "inline_source_scope_reporting_corrected": true
 }

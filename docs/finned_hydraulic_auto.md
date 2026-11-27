@@ -52,7 +52,13 @@ numerics. Explicit constant-fin Genić selectors preserve their previous
 arithmetic and warning/strict extrapolation policy. Actual taper additionally
 requires authorization even with an explicit tapered selector.
 
-INLINE circular solid-fin AUTO remains Frass Eq.191. Serrated, continuous plate,
+INLINE circular solid-fin AUTO remains Frass Eq.191 after the
+[INLINE review](inline_round_finned_hydraulics.md). Its selection diagnostics
+explicitly retain unresolved source applicability and pressure scope, with
+`engineering_estimate=True` and `pressure_scope_source_closed=False`.
+The declared `BANK_ONLY` integration policy does not certify the original
+measurement decomposition. Both explicit INLINE providers remain available.
+Serrated, continuous plate,
 elliptical and bare-tube dispatch is unchanged. Hydraulic AUTO requires constant
 gas mass flow; an unclosed changing-mass wet-flow mapping raises a diagnostic.
 

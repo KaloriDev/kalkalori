@@ -22,6 +22,11 @@ The project follows **Semantic Versioning (SemVer)**:
 - Added requested/resolved hydraulic provenance and corrected known non-air
   source warnings in Briggs–Young and Robinson–Briggs dispatch. Thermal
   equations, separate acceleration and external-loss accounting are unchanged.
+- Retained Frass Eq.191 as INLINE AUTO after a targeted source and sensitivity
+  review. Corrected its selection metadata to expose unresolved applicability
+  and pressure scope even for constant fins; coefficients and pressure results
+  are unchanged. Added independent synthetic pitch and geometry sensitivity
+  regressions; see the [INLINE guide](docs/inline_round_finned_hydraulics.md).
 - Retained Nir as a deferred public candidate after secondary-source recovery
   left normalization, measurement scope and joint applicability unresolved.
   Archived the ESCOA STAGGERED hydraulic candidate. Restricted formulations
