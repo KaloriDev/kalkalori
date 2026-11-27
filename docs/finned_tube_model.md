@@ -51,6 +51,20 @@ a fallback.
 
 ## Public geometry
 
+`TubeSurfaceType` keeps its enum member names and uses these serialized values:
+
+| Enum member | Canonical value |
+|---|---|
+| `CIRCULAR_FINNED` | `circular_fin` |
+| `SERRATED_HELICAL_FIN` | `serrated_helical_fin` |
+| `RECTANGULAR_INDIVIDUAL_FINNED` | `rectangular_fin` |
+| `CONTINUOUS_PLATE_FIN` | `continuous_plate_fin` |
+
+`TubeSurfaceType(value)` also accepts the historical `circular_finned` and
+`rectangular_individual_finned` input strings, including old enum pickles.
+Serialization uses the canonical `.value`; `PLAIN="plain"` is unchanged.
+Prefer enum comparisons in dispatch code rather than string literals.
+
 `CircularFinnedTube` is defined in `core.geometry.finned_tube` and remains
 available through the public `core.geometry` package. It composes an existing
 `BareTube` as `core_tube`. The

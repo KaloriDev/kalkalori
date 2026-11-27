@@ -606,6 +606,8 @@ class SourceDomainPressureEstimateResult:
     dp_local: float = 0.
     delta_dynamic_pressure_core: float = 0.
     delta_dynamic_pressure_local: float = 0.
+    scope_description: str = ''
+    provider_result: object | None = None
 
     @property
     def dp_total(self): return self.dp_core
@@ -619,6 +621,15 @@ class SourceDomainPressureEstimateResult:
     def delta_dynamic_pressure_total(self): return 0.
 
 
+@dataclass(frozen=True)
+class ScopedOutsidePressureResult(SourceDomainPressureEstimateResult):
+    """Undecomposed external pressure difference with its actual declared scope."""
+
+    @property
+    def pressure_scope(self):
+        return self.provider_result.scope
+
+
 def _tube_bank_core_stage(
     tube_bank: "OutsideTubeBankHydraulicResult | FinnedTubeBankHydraulicResult",
 ) -> PressureDropStageResult:
@@ -629,16 +640,18 @@ def _tube_bank_core_stage(
     if getattr(tube_bank,'validated_bank_irreversible',True) is False:
         raise ValueError('Source-domain pressure estimate cannot be aggregated as an irreversible bank stage.')
     is_finned = isinstance(tube_bank, FinnedTubeBankHydraulicResult)
+    from core.pressure_drop.outside_provider import ExternalOutsideBankHydraulicResult
+    is_external = isinstance(tube_bank, ExternalOutsideBankHydraulicResult)
     metadata = getattr(tube_bank, "metadata", None)
     finned_method = getattr(metadata, "method", "dedicated_provider")
     return PressureDropStageResult(
         stage_id="tube_bank",
-        stage_type="circular_finned_tube_bank" if is_finned else "bare_tube_bank",
+        stage_type="external_outside_bank" if is_external else "circular_finned_tube_bank" if is_finned else "bare_tube_bank",
         status=PressureDropStageStatus.CALCULATED,
         dp_irreversible=tube_bank.dp_drag,
         delta_dynamic_pressure=tube_bank.dp_acceleration,
         method=(
-            f"finned_tube_bank_hydraulics_{finned_method}"
+            f"external_outside_provider_{metadata.provider_name}" if is_external else f"finned_tube_bank_hydraulics_{finned_method}"
             if is_finned
             else "outside_tube_bank_hydraulics"
         ),
@@ -695,8 +708,12 @@ def build_outside_pressure_drop_result(
     if getattr(tube_bank,'validated_bank_irreversible',True) is False:
         if path is not None:
             raise ValueError('Local irreversible paths cannot be combined with an unresolved source-domain pressure estimate.')
-        return SourceDomainPressureEstimateResult(tube_bank.dp_total,tube_bank.warnings,
-            pressure_basis=getattr(tube_bank, "pressure_basis", "source_domain_inlet_to_outlet_estimate"))
+        from core.pressure_drop.outside_provider import ExternalOutsideBankHydraulicResult
+        result_type = ScopedOutsidePressureResult if isinstance(tube_bank, ExternalOutsideBankHydraulicResult) else SourceDomainPressureEstimateResult
+        return result_type(tube_bank.dp_total,tube_bank.warnings,
+            pressure_basis=getattr(tube_bank, "pressure_basis", "source_domain_inlet_to_outlet_estimate"),
+            scope_description=getattr(tube_bank, 'scope_description', ''),
+            provider_result=getattr(tube_bank, 'provider_result', None))
     core_stage = _tube_bank_core_stage(tube_bank)
     tube_bank_group = PressureDropStageGroupResult(group_id="tube_bank", stages=(core_stage,))
 

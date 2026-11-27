@@ -89,6 +89,15 @@ class RectangularFinnedEllipticalTube(BaseTube):
         return self.core_tube.wall_k
 
     @property
+    def roughness_inner(self):
+        """Actual core wall roughness, also used in hydraulic metadata."""
+        return self.core_tube.roughness_inner
+
+    @property
+    def roughness_outer(self):
+        return self.core_tube.roughness_outer
+
+    @property
     def flow_area(self):
         return self.core_tube.flow_area
 

@@ -51,6 +51,8 @@ from core.pressure_drop.internal_pressure_drop import (
 )
 
 from core.heat_transfer.outside_flow import FluidProps as OutsideFlowFluidProps
+from core.heat_transfer.outside_provider import OutsideThermalProvider, OutsideThermalProviderResult, OutsideProviderPolicy
+from core.pressure_drop.outside_provider import OutsideHydraulicProvider
 
 from core.heat_transfer.outside_dispatch import (
     DEFAULT_FINNED_DP_PROVIDER,
@@ -102,6 +104,7 @@ class HXOutSideThermalResults:
     Re: float
     Pr: float
     alfa: float
+    provider_result: OutsideThermalProviderResult | None = None
 
 
 @dataclass(frozen=True)
@@ -668,7 +671,11 @@ class BareTubeHeatExchanger:
         fouling_resistance_inside: float | None = None,
         fouling_resistance_outside: float | None = None,
         airside_model=None,
+        outside_thermal_provider: OutsideThermalProvider | None = None,
+        outside_hydraulic_provider: OutsideHydraulicProvider | None = None,
+        outside_provider_policy: OutsideProviderPolicy | None = None,
         elliptical_flow_assumptions=None,
+        elliptical_roughness_policy=None,
         tube_wall_model=None,
         strict_source_domain=False,
     ):
@@ -676,10 +683,24 @@ class BareTubeHeatExchanger:
 
         Missing or None resolves to zero. Fouling changes only the thermal
         circuit, including solved wet surfaces, never installed hydraulics.
+
+        Independent dry outside providers may supply physical film h and a
+        declared-scope pressure result. Unselected channels keep their built-in
+        models; engineering estimates require an explicit outside provider policy.
         """
         # One configuration is shared by all thermal and hydraulic paths.
         if tube_side_enhancement is not None and not isinstance(tube_side_enhancement, TubeSideEnhancement):
             raise TypeError("tube_side_enhancement must be a TubeSideEnhancement configuration.")
+        from core.heat_transfer.outside_provider import OutsideProviderPolicy
+        for name, provider in (('outside_thermal_provider', outside_thermal_provider),
+                               ('outside_hydraulic_provider', outside_hydraulic_provider)):
+            if provider is not None and not callable(getattr(provider, 'evaluate', None)):
+                raise TypeError(f'{name} must expose evaluate(request).')
+        if outside_provider_policy is not None and not isinstance(outside_provider_policy, OutsideProviderPolicy):
+            raise TypeError('outside_provider_policy must be OutsideProviderPolicy or None.')
+        self.outside_thermal_provider = outside_thermal_provider
+        self.outside_hydraulic_provider = outside_hydraulic_provider
+        self.outside_provider_policy = outside_provider_policy or OutsideProviderPolicy()
         self.bundle = bundle
         from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel
         from core.heat_transfer.serrated_airside import Holfeld2016SerratedStaggeredModel
@@ -697,6 +718,10 @@ class BareTubeHeatExchanger:
             raise ValueError('elliptical_flow_assumptions requires elliptical tube geometry.')
         self.airside_model = airside_model
         self.elliptical_flow_assumptions = elliptical_flow_assumptions
+        from core.heat_transfer.internal_model_contract import EllipticalRoughnessPolicy
+        if elliptical_roughness_policy is not None and not isinstance(elliptical_roughness_policy, EllipticalRoughnessPolicy):
+            raise TypeError('elliptical_roughness_policy must be EllipticalRoughnessPolicy or None.')
+        self.elliptical_roughness_policy = elliptical_roughness_policy or EllipticalRoughnessPolicy()
         self.tube_wall_model = None if tube_wall_model is None else TubeWallModel(tube_wall_model)
         if not isinstance(strict_source_domain, bool):
             raise TypeError('strict_source_domain must be boolean.')
@@ -782,7 +807,8 @@ class BareTubeHeatExchanger:
     def _internal_hydraulics_kwargs(self):
         """Exact elliptical straight friction; never borrow circular end losses."""
         kwargs=dict(straight_friction_evaluator=straight_friction_evaluator(
-            self.bundle.tube,assumptions=self.elliptical_flow_assumptions))
+            self.bundle.tube,assumptions=self.elliptical_flow_assumptions,
+            roughness_policy=self.elliptical_roughness_policy))
         from core.geometry.tube import TubeCrossSectionFamily
         if self.bundle.tube.cross_section_family is TubeCrossSectionFamily.ELLIPTICAL:
             kwargs['include_tube_end_losses']=False
@@ -832,8 +858,8 @@ class BareTubeHeatExchanger:
 
     ) -> HXResult:
         # Use the arrangement resolved from bundle circuiting if not provided.
-        from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.outside_provider import require_outside_models
+        require_outside_models(self)
         from core.heat_transfer.outside_dispatch import guard_outside_execution
         guard_outside_execution(self, inside_provider=tube_side_provider, outside_provider=outside_provider)
         uses_bundle_flow_arrangement = flow_arrangement is None
@@ -904,6 +930,7 @@ class BareTubeHeatExchanger:
         )
         if enhancement is None:
             v_i, Re_i, Pr_i, alfa_i, internal_ht_warnings = internal_heat_transfer_coefficient(
+                roughness_policy=self.elliptical_roughness_policy,
                 strict_source_domain=self.strict_source_domain,
                 assumptions=self.elliptical_flow_assumptions,
                 m_dot=m_dot_tube_side,
@@ -1016,6 +1043,9 @@ class BareTubeHeatExchanger:
                 and inside_temperature is not None and gas_temperature is not None else None
             )
             outside_thermal_dispatch = evaluate_outside_thermal(
+                outside_thermal_provider=self.outside_thermal_provider,
+                outside_provider_policy=self.outside_provider_policy,
+                pressure=outside_pressure,
                 airside_model=self.airside_model,
                 bundle=self.bundle,
                 m_dot=m_dot_outside,
@@ -1032,6 +1062,8 @@ class BareTubeHeatExchanger:
             alfa_o_calc = outside_thermal_dispatch.alpha_physical
             outside_warnings = list(outside_thermal_dispatch.warnings)
             outside_bank_hydraulic = evaluate_outside_hydraulics(
+                outside_hydraulic_provider=self.outside_hydraulic_provider,
+                outside_provider_policy=self.outside_provider_policy,
                 airside_model=self.airside_model,
                 bundle=self.bundle,
                 m_dot=m_dot_outside,
@@ -1116,6 +1148,7 @@ class BareTubeHeatExchanger:
             Re=Re_o,
             Pr=Pr_o,
             alfa=resistance_network.outside_alpha_effective_gross,
+            provider_result=None if outside_thermal_dispatch is None else outside_thermal_dispatch.external_result,
         )
         UA = resistance_network.UA
 
@@ -1207,6 +1240,7 @@ class BareTubeHeatExchanger:
         # Outside-side regime diagnostics when outside flow is computed.
         if (
             surface is TubeSurfaceType.PLAIN
+            and self.outside_thermal_provider is None
             and have_outside
             and not math.isnan(Re_o)
         ):
@@ -1430,8 +1464,8 @@ class BareTubeHeatExchanger:
         here control only the phase-change onset/iteration; they have no
         effect for a call where neither side is phase-change capable.
         """
-        from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.outside_provider import require_outside_models
+        require_outside_models(self)
         from core.heat_transfer.outside_dispatch import guard_outside_execution
         guard_outside_execution(self, inside_provider=inside.provider, outside_provider=outside.provider)
         from core.models.simulation import run_simulation
@@ -1733,8 +1767,8 @@ class BareTubeHeatExchanger:
         known. Caller inputs stay unchanged, and ``include_simulation=True``
         uses the resolved inside mass flow.
         """
-        from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.outside_provider import require_outside_models
+        require_outside_models(self)
         from core.heat_transfer.outside_dispatch import guard_outside_execution
         guard_outside_execution(self, inside_provider=inside.provider, outside_provider=outside.provider)
         from core.phase_change.rating_integration import apply_phase_change_to_rating
@@ -1884,8 +1918,8 @@ class BareTubeHeatExchanger:
         See ``core.heat_transfer.thermal_iteration.solve_iterative_thermal_state``
         for the full algorithm, convergence controls and result fields.
         """
-        from core.geometry.applicability import require_automatic_outside_bank
-        require_automatic_outside_bank(self.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=self.airside_model)
+        from core.heat_transfer.outside_provider import require_outside_models
+        require_outside_models(self)
         from core.heat_transfer.outside_dispatch import guard_outside_execution
         guard_outside_execution(self, inside_provider=inside_provider, outside_provider=outside_provider)
         from core.heat_transfer.thermal_iteration import solve_iterative_thermal_state

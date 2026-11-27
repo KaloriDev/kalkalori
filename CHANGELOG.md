@@ -5,6 +5,36 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.10] — External Outside Thermal and Hydraulic Providers
+
+- Standardized fin surface identifiers as `circular_fin`, `serrated_helical_fin`,
+  `rectangular_fin` and `continuous_plate_fin`, retaining enum member names and
+  legacy string input aliases. Numerical models and results are unchanged.
+- Added independent typed dry outside providers to `BareTubeHeatExchanger`,
+  Rating, Simulation, wall iteration and dry outside helpers. Requests retain
+  the actual geometry, layout, physical dimensions and fluid properties;
+  providers own their applicability and reference quantities.
+- External thermal results supply physical film HTC before the existing fin
+  solver, contact, wall, fouling and overall U/UA resistance network.
+- Added explicit bank-only, loss-with-entrance/exit, complete-static and
+  unresolved-engineering pressure scopes. Acceleration is added once only to
+  declared irreversible losses. Non-bank scopes reject additional local paths.
+- Engineering and unresolved-scope estimates require explicit policies and
+  visible limitations. Invalid outputs fail without provider substitution.
+- Preserved built-in selection and Zhao2017 source restrictions. The generic
+  boundary adds no public SHIFTED correlation and validates no private model.
+- Added synthetic integration examples and regression coverage. See the
+  [provider guide](docs/external_airside_providers.md) and
+  [validation record](docs/validation/v0.9.10_external_outside_providers.md).
+- Added intrinsic rectangular-fin geometry snapshots, explicit unavailable
+  minimum-flow-area reasons, and separate thermal/hydraulic reference states.
+  Provider reference flow area/basis remains distinct from frontal/minimum area.
+- Added separately authorized elliptical rough-wall distributed friction:
+  smooth Jones/Prandtl law times a normalized Colebrook ratio. Exact smooth
+  results and regime guards remain. Smooth Yang HTC on a rough wall needs
+  its own approximation permission. No rough HTC or ellipse fitting law is
+  claimed; see the [assessment](docs/elliptical_roughness_and_reporting.md).
+
 ## [0.9.9] — Water/Steam Rating API Consistency
 
 Implemented in `7fed860`, with validation in `e90c941`, and merged to main
@@ -72,15 +102,13 @@ See the [implementation and acceptance record](docs/validation/v0.9.8_wet_closur
   compatibility alias. Elmahdy–Mitalas remains the default.
 - Updated shared case-study tables and spreadsheet reporting to consume surface
   definitions and provenance while preserving achieved-duty and UA meanings.
-- Recorded model-consistency consequences: TERMOTECH Bulk-Mean duty
-  245.016315 → 250.508997 kW and condensate 0 → .002439754 kg/s;
-  IPROS118 approximately 155.592 → 169.625 kW. Existing Elmahdy fixture results
-  are unchanged. These are numerical comparisons, not experimentally proven
-  improvements or evidence of provider superiority.
+- Recorded model-consistency consequences while preserving existing Elmahdy
+  regression results. Numerical comparisons do not establish experimentally
+  proven improvements or evidence of provider superiority.
 - Retained 0D/spatial and geometry limits, unsupported wet continuous fins and
   wet hydraulics, historical Bulk-Mean dry/wet sensible-closure discontinuity
-  and high-NTU enthalpy-domain limits. TERMOTECH's roughly 24 kW AUTO/dry
-  difference is not simply latent heat. No correlation, tolerance, timeout
+  and high-NTU enthalpy-domain limits. A change in sensible closure must not
+  be interpreted as latent heat alone. No correlation, tolerance, timeout
   default or applicability was changed to close a failing test.
 - Accepted the reproduced baseline 300-second inverse-Rating failure explicitly;
   the prior full public receipt remains 2739 passed / 1 failed. Experimental
@@ -380,7 +408,7 @@ See [the provider guide](docs/twisted_tape_chakroun1995.md).
 - Added focused area-basis, zero-freeze, hydraulic, dry/wet Rating/Simulation,
   Legacy, finned and tube-side phase-change regressions. See
   [thermal fouling conventions](docs/thermal_fouling.md).
-- Local `.kon` case configuration now defines `fouling_resistance` [m² K/W]
+- Private case configuration now defines `fouling_resistance` [m² K/W]
   independently within each case's `inside` and `outside` dictionaries.
   The shared builders, notebook templates and reporting use the selected
   case values without modifying reusable stage geometry. Private notebooks

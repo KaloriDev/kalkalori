@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.9.9` — completed development; package metadata reconciled
+**Current version:** `v0.9.10` — external outside thermal and hydraulic provider API
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
 **Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
@@ -52,6 +52,20 @@ and distributed thermal resolution remain future work.
 ---
 
 ## Roadmap Overview
+
+### v0.9.10 — External Outside Providers (implemented)
+
+Completed follow-up: intrinsic rectangular-fin geometry metadata, separate
+thermal/hydraulic reference states, and independently authorized engineering
+elliptical rough-wall friction / smooth-wall HTC approximation. See the
+[method and limitations](elliptical_roughness_and_reporting.md).
+
+Independent typed providers supply physical film HTC and complete-bank pressure
+results, retaining native geometry and declaring applicability, provenance and
+pressure scope. Fin conduction and the resistance network remain in the core.
+Engineering estimates require explicit authorization. This extension provides
+no public SHIFTED correlation or experimental validation.
+See the [integration guide](external_airside_providers.md).
 
 ### v0.9.9 — Water/Steam Rating API Consistency (implemented)
 

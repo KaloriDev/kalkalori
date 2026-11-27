@@ -84,6 +84,9 @@ def evaluate_outside_side(
     T_mean = 0.5 * (T_in + T_out)
     props = properties_mean or _transport(provider.at(T=T_mean, p=p))
     thermal = evaluate_outside_thermal(
+        outside_thermal_provider=hx.outside_thermal_provider,
+        outside_provider_policy=hx.outside_provider_policy,
+        gas_temperature=T_mean, pressure=p,
         bundle=hx.bundle,
         m_dot=mass_flow,
         props=_outside_fluid_props(props),
@@ -93,6 +96,8 @@ def evaluate_outside_side(
         strict_source_domain=hx.strict_source_domain,
     )
     hydraulics = evaluate_outside_hydraulics(
+        outside_hydraulic_provider=hx.outside_hydraulic_provider,
+        outside_provider_policy=hx.outside_provider_policy,
         bundle=hx.bundle,
         m_dot=mass_flow,
         property_provider=provider,

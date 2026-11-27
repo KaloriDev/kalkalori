@@ -35,7 +35,7 @@ Local checkpoints:
 
 The final documentation/regression commit is identified by the branch HEAD
 and the delivery response, avoiding a self-referential commit hash here.
-`.kon` remains ignored and untracked; no private files are staged or packaged.
+The private workspace remains ignored and untracked; no private files are staged or packaged.
 
 ## B. Implemented API and modules
 

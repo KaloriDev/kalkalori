@@ -8,7 +8,7 @@ row multiplier or entry/exit loss is added to the source-normalized estimate.
 from dataclasses import dataclass
 
 from core.common.warnings import deduplicate_warnings
-from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel, Zhao2017AirsideResult, validate_zhao2017_geometry
+from core.heat_transfer.finned_ellipse_airside import Zhao2017AirsideModel, Zhao2017AirsideResult
 from core.pressure_drop.finned_tube_pressure_drop import _transport_and_enthalpy, _evaluate_property_state
 
 
@@ -65,10 +65,10 @@ def calculate_finned_ellipse_hydraulics(*, bundle, m_dot, model=None,
         property_provider=None, temperature_in=None, temperature_out=None, pressure=None,
         inlet_props=None, midpoint_props=None, outlet_props=None,
         m_dot_inlet=None, m_dot_midpoint=None, m_dot_outlet=None):
-    validate_zhao2017_geometry(bundle)
     model = model if model is not None else Zhao2017AirsideModel()
     if not isinstance(model,Zhao2017AirsideModel):
         raise TypeError('Rectangular-finned ellipse requires Zhao2017AirsideModel.')
+    model.validate_bundle(bundle)
     if any(value is not None and value != m_dot for value in (m_dot_inlet,m_dot_midpoint,m_dot_outlet)):
         raise ValueError('Zhao2017 dry pressure estimate requires constant air mass flow; wet/mass-transfer models are unsupported.')
     from core.heat_transfer.finned_ellipse_airside import _positive

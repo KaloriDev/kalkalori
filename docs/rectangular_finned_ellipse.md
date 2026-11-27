@@ -1,5 +1,11 @@
 # Rectangular individual fins on elliptical tubes (v0.9.2)
 
+Since v0.9.10, [independent external outside providers](external_airside_providers.md)
+can supply physical film HTC and explicitly scoped pressure results on the
+unchanged geometry. The core retains its fin solver and resistance network.
+This generic API adds no public SHIFTED correlation or experimental validation;
+the built-in Zhao baseline described below retains its original restrictions.
+
 This release provides geometry, analytical surface areas, deterministic 2D
 fin conduction and a **Zhao-2017-based engineering air-side baseline** for
 individual rectangular fins on elliptical tubes. Normal dry Rating/Simulation
@@ -205,8 +211,8 @@ rejects SHIFTED (including unresolved phases) and INLINE in both domain modes.
 Recovered Zhao2017 Fig. 2 and Zhao2016 Fig. 1 resolve the source identities:
 Pt is transverse, Pl follows flow, and there is no Pt/Pl swap. The audit gives
 the ROW/COLUMN coordinates and the legacy coordinate-helper indexing caveat.
-YC SHIFTED uses the user-confirmed Zhao COLUMN design basis; the named COLUMN
-preset retains SHIFTED identity and does not enable Zhao2017 coefficients.
+The named COLUMN preset retains SHIFTED identity and does not enable
+Zhao2017 coefficients.
 
 Zhao, Gu, Gao, Yang (2017), *Numerical study on airside thermal-hydraulic
 performance of rectangular finned elliptical tube heat exchanger with large

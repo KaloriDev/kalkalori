@@ -1,0 +1,28 @@
+{
+  "version": "0.9.10",
+  "python": "3.12.8",
+  "CoolProp": "6.6.0",
+  "receipts": {
+    "provider_and_guards": {
+      "tests": 84,
+      "failures": 0,
+      "errors": 0,
+      "time_s": 4.536
+    },
+    "selected_regressions": {
+      "tests": 1297,
+      "failures": 0,
+      "errors": 0,
+      "time_s": 70.889
+    }
+  },
+  "distinct_passed": 1326,
+  "overlap": 55,
+  "new_synthetic_tests": 29,
+  "full_suite_pass_claimed": false,
+  "scope": "dry independent outside provider API and selected existing regressions",
+  "limitations": [
+    "Historical wet mixture h,p flash failures reproduce on unchanged main with CoolProp 6.6.0",
+    "Historical wet tests with disabled timeouts are outside the final selected dry regression receipt"
+  ]
+}

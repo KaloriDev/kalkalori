@@ -215,7 +215,7 @@ __all__ = [
 
 # Explicit smooth ellipse internal/wall models. Outside eligibility is selected
 # separately; the dry rectangular-finned baseline has its own source limits.
-from .internal_model_contract import EllipticalFlowAssumptions, InternalModelMetadata
+from .internal_model_contract import EllipticalFlowAssumptions, EllipticalRoughnessPolicy, InternalModelMetadata
 from .internal_dispatch import internal_heat_transfer_diagnostics, internal_heat_transfer_coefficient, internal_friction
 from .elliptical_internal import (
     EllipticalFrictionResult, EllipticalDistributedPressureDrop,
@@ -235,7 +235,7 @@ from .elliptical_wall import (
 )
 
 __all__ += [
-    'EllipticalFlowAssumptions', 'InternalModelMetadata',
+    'EllipticalFlowAssumptions', 'EllipticalRoughnessPolicy', 'InternalModelMetadata',
     'internal_heat_transfer_diagnostics', 'internal_heat_transfer_coefficient', 'internal_friction',
     'EllipticalFrictionResult', 'EllipticalDistributedPressureDrop',
     'elliptical_laminar_friction', 'elliptical_h1_heat_transfer', 'elliptical_distributed_pressure_drop',
@@ -251,8 +251,18 @@ from .serrated_airside import Holfeld2016SerratedStaggeredModel
 from .continuous_airside import ExperimentalWang2000Model
 from .continuous_fin_efficiency import SchmidtEquivalentCell, ContinuousFinEfficiencyResult
 from .continuous_fin_source import ContinuousFinRequest, ContinuousFinHTCProvider, ExperimentalWang2000HTC, ContinuousFinSourceError, ContactPolicy
+from .outside_provider import (
+    OutsideThermalProvider, OutsideThermalProviderResult, OutsideProviderRequest,
+    OutsideProviderMetadata, OutsideReferenceQuantities, OutsideApplicability,
+    OutsideProviderPolicy, OutsideProviderError, OutsideProviderApplicabilityError,
+    OutsideProviderResultError,
+)
 
 __all__ += [
+    'OutsideThermalProvider', 'OutsideThermalProviderResult', 'OutsideProviderRequest',
+    'OutsideProviderMetadata', 'OutsideReferenceQuantities', 'OutsideApplicability',
+    'OutsideProviderPolicy', 'OutsideProviderError', 'OutsideProviderApplicabilityError',
+    'OutsideProviderResultError',
     "ExperimentalWang2000Model", "SchmidtEquivalentCell", "ContinuousFinEfficiencyResult",
     "ContinuousFinRequest", "ContinuousFinHTCProvider", "ExperimentalWang2000HTC", "ContinuousFinSourceError", "ContactPolicy",
     "HashizumeSerratedFinEfficiencyProvider", "SerratedFinEfficiencyResult",

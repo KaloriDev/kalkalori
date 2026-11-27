@@ -10,6 +10,20 @@ from core.heat_transfer.internal_flow import heat_transfer_coefficient_internal_
 from core.pressure_drop.straight_sections import darcy_friction_factor, darcy_friction_factor_method
 
 
+class _StraightFrictionEvaluation(tuple):
+    """Keep the historical two-tuple API while retaining source diagnostics."""
+    def __new__(cls, diagnostics):
+        value = super().__new__(cls, (diagnostics.f_darcy, diagnostics.metadata.model_id))
+        value.diagnostics = diagnostics
+        return value
+
+    @property
+    def f_darcy(self): return self[0]
+
+    @property
+    def metadata(self): return self.diagnostics.metadata
+
+
 def _require_ellipse(tube):
     from core.geometry.elliptical_tube import EllipticalTube
     from core.geometry.applicability import TubeGeometryApplicabilityError
@@ -42,7 +56,7 @@ def _ellipse_assumptions(reynolds, assumptions):
 
 def internal_heat_transfer_diagnostics(*, tube, m_dot, flow_area, props,
                                      T_bulk=None, T_wall=None, L_heated=None,
-                                     assumptions=None, strict_source_domain=False):
+                                     assumptions=None, strict_source_domain=False, roughness_policy=None):
     from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
     if isinstance(tube,RectangularFinnedEllipticalTube):
         tube=tube.core_tube
@@ -53,7 +67,7 @@ def internal_heat_transfer_diagnostics(*, tube, m_dot, flow_area, props,
             from core.heat_transfer.elliptical_turbulent import elliptical_turbulent_heat_transfer
             return elliptical_turbulent_heat_transfer(
                 tube,m_dot,props,assumptions=assumptions,flow_area=flow_area,L_heated=L_heated,
-                strict_source_domain=strict_source_domain)
+                strict_source_domain=strict_source_domain, roughness_policy=roughness_policy)
         from core.heat_transfer.elliptical_internal import elliptical_h1_heat_transfer
         return elliptical_h1_heat_transfer(tube,m_dot,props,assumptions=assumptions,flow_area=flow_area)
     require_circular_tube(tube, "Internal circular HTC")
@@ -69,34 +83,47 @@ def internal_heat_transfer_coefficient(**kwargs):
     return result.v, result.Re, result.Pr, result.alfa_corrected, result.warnings
 
 
-def internal_friction(*, tube, reynolds, relative_roughness=None, assumptions=None):
+def _elliptical_friction(tube, reynolds, relative_roughness, assumptions, roughness_policy):
+    from core.geometry.applicability import TubeGeometryApplicabilityError
+    from core.heat_transfer.elliptical_turbulent import _roughness_policy
+    import math
+    assumptions = _ellipse_assumptions(reynolds, assumptions)
+    policy = _roughness_policy(roughness_policy)
+    if relative_roughness is not None:
+        if (isinstance(relative_roughness, bool) or not math.isfinite(relative_roughness)
+                or relative_roughness < 0):
+            raise ValueError('relative_roughness must be finite and nonnegative.')
+        if relative_roughness > 0 and not policy.allow_hydraulic_roughness:
+            raise TubeGeometryApplicabilityError('Elliptical friction is smooth-only without hydraulic roughness authorization.')
+        physical = (tube.roughness_inner or 0.) / tube.hydraulic_diameter
+        if not math.isclose(relative_roughness, physical, rel_tol=1e-12, abs_tol=1e-15):
+            raise ValueError('relative_roughness must match actual tube roughness_inner / Dh.')
+    if assumptions.regime == 'turbulent':
+        from core.heat_transfer.elliptical_turbulent import elliptical_turbulent_friction
+        return elliptical_turbulent_friction(tube,reynolds,assumptions=assumptions,roughness_policy=policy)
+    from core.heat_transfer.elliptical_internal import elliptical_laminar_friction
+    return elliptical_laminar_friction(tube,reynolds,assumptions=assumptions)
+
+
+def internal_friction(*, tube, reynolds, relative_roughness=None, assumptions=None, roughness_policy=None):
     from core.geometry.rectangular_finned_tube import RectangularFinnedEllipticalTube
     if isinstance(tube,RectangularFinnedEllipticalTube):
         tube=tube.core_tube
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
         _require_ellipse(tube)
-        assumptions = _ellipse_assumptions(reynolds, assumptions)
-        from core.geometry.applicability import TubeGeometryApplicabilityError
-        if relative_roughness not in (None,0.):
-            raise TubeGeometryApplicabilityError('Elliptical friction is smooth-only.')
-        if getattr(assumptions, 'regime', None) == 'turbulent':
-            from core.heat_transfer.elliptical_turbulent import elliptical_turbulent_friction
-            result=elliptical_turbulent_friction(tube,reynolds,assumptions=assumptions)
-            return result.f_darcy,result.metadata.model_id
-        from core.heat_transfer.elliptical_internal import elliptical_laminar_friction
-        result=elliptical_laminar_friction(tube,reynolds,assumptions=assumptions)
+        result = _elliptical_friction(tube,reynolds,relative_roughness,assumptions,roughness_policy)
         return result.f_darcy,result.metadata.model_id
     require_circular_tube(tube, "Internal circular friction")
     return (darcy_friction_factor(reynolds, relative_roughness),
             darcy_friction_factor_method(reynolds, relative_roughness))
 
 
-def straight_friction_evaluator(tube, *, assumptions=None):
+def straight_friction_evaluator(tube, *, assumptions=None, roughness_policy=None):
     """Bind geometry once; hydraulic points evaluate the selected law first."""
     if tube_cross_section_family(tube) is TubeCrossSectionFamily.ELLIPTICAL:
         _require_ellipse(getattr(tube, 'core_tube', tube))
-        return lambda reynolds, roughness: internal_friction(
-            tube=tube,reynolds=reynolds,relative_roughness=roughness,assumptions=assumptions)
+        return lambda reynolds, roughness: _StraightFrictionEvaluation(_elliptical_friction(
+            getattr(tube, 'core_tube', tube),reynolds,roughness,assumptions,roughness_policy))
     require_circular_tube(tube, "Automatic tube-bundle friction and entrance/exit losses")
     return lambda reynolds, roughness: internal_friction(
         tube=tube, reynolds=reynolds, relative_roughness=roughness)

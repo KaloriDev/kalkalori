@@ -1,0 +1,25 @@
+{
+  "version": "0.9.10",
+  "base_commit": "ce36bd7af70e9173472b620074794ab2dc2fee3f",
+  "python": "3.12.8",
+  "CoolProp": "6.6.0",
+  "selected": {
+    "tests": 1326,
+    "passed": 1326,
+    "failed": 0,
+    "errors": 0,
+    "failures": []
+  },
+  "external_providers": {
+    "tests": 29,
+    "passed": 29,
+    "failed": 0,
+    "errors": 0,
+    "failures": []
+  },
+  "distinct_passing": 1355,
+  "new_followup_tests": 29,
+  "selection_manifest": "v0.9.10_geometry_roughness_test_selection.json",
+  "full_suite_claimed": false,
+  "private_data_in_public_tests": false
+}

@@ -116,6 +116,7 @@ class TubeSideHydraulicPoint:
     dynamic_pressure: float
     prandtl: float
     enhancement: EnhancementResult | None = None
+    friction_diagnostics: object | None = None
 
     @property
     def Pr(self) -> float:
@@ -578,6 +579,7 @@ def calculate_tube_bundle_hydraulics(
             raise ValueError("Hydraulic points returned inconsistent enhancement models.")
 
     for point in points:
+        warnings.extend(getattr(point.friction_diagnostics, 'warnings', ()))
         if enhancement_evaluator is None and point.reynolds <= 4000.0:
             warnings.append(
                 make_warning(
@@ -814,11 +816,17 @@ def _make_hydraulic_point(
     reynolds = mass_flux * hydraulic_diameter / props.mu
     if not math.isfinite(reynolds) or reynolds <= 0.0:
         raise ValueError("tube_bundle_hydraulics_nonfinite_state: Reynolds number must be finite and positive.")
+    friction_diagnostics = None
     if straight_friction_evaluator is None:
         friction_factor = darcy_friction_factor(reynolds, relative_roughness)
         friction_factor_method = darcy_friction_factor_method(reynolds, relative_roughness)
     else:
-        friction_factor, friction_factor_method = straight_friction_evaluator(reynolds, relative_roughness)
+        evaluation = straight_friction_evaluator(reynolds, relative_roughness)
+        if hasattr(evaluation, 'f_darcy') and hasattr(evaluation, 'metadata'):
+            friction_diagnostics = getattr(evaluation, 'diagnostics', evaluation)
+            friction_factor, friction_factor_method = evaluation.f_darcy, evaluation.metadata.model_id
+        else:
+            friction_factor, friction_factor_method = evaluation
     if not math.isfinite(friction_factor) or friction_factor <= 0.0:
         raise ValueError("tube_bundle_hydraulics_invalid_friction_factor: friction factor must be finite and positive.")
     dynamic_pressure_value = mass_flux**2 / (2.0 * props.rho)
@@ -831,6 +839,7 @@ def _make_hydraulic_point(
         velocity=velocity, reynolds=reynolds, friction_factor=friction_factor,
         friction_factor_method=friction_factor_method,
         dynamic_pressure=dynamic_pressure_value, prandtl=prandtl,
+        friction_diagnostics=friction_diagnostics,
     )
 
 

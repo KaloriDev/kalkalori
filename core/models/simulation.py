@@ -820,8 +820,8 @@ def run_simulation(
     ``surface_margin`` (default ``0.0``) derates the full-geometry ``UA``
     before computing duty/outlet temperatures; see the module docstring.
     """
-    from core.geometry.applicability import require_automatic_outside_bank
-    require_automatic_outside_bank(hx.bundle.tube, 'Automatic full exchanger outside-bank physics', airside_model=hx.airside_model)
+    from core.heat_transfer.outside_provider import require_outside_models
+    require_outside_models(hx)
     from core.heat_transfer.outside_dispatch import guard_outside_execution
     guard_outside_execution(hx, inside_provider=inside.provider, outside_provider=outside.provider)
     uses_bundle_flow_arrangement = flow_arrangement is None
@@ -981,6 +981,8 @@ def run_simulation(
             tube_bundle=bundle_hydraulic,
         )
         outside_bank_hydraulic = evaluate_outside_hydraulics(
+            outside_hydraulic_provider=hx.outside_hydraulic_provider,
+            outside_provider_policy=hx.outside_provider_policy,
             airside_model=hx.airside_model,
             bundle=hx.bundle,
             m_dot=outside.m_dot,

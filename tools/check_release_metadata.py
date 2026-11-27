@@ -84,7 +84,7 @@ def check(expected_branch: str | None = None) -> dict:
     if local_metadata.is_file():
         local_version = Parser().parsestr(local_metadata.read_text(encoding='utf-8')).get('Version')
         identity['source_tree_distribution_version'] = local_version
-        require(local_version == version, 'Source-tree egg-info is stale and can shadow installed metadata in KON.')
+        require(local_version == version, 'Source-tree egg-info is stale and can shadow installed metadata in notebooks.')
 
     changelog = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
     entries = re.findall(r'(?m)^## \[([^\]]+)\]', changelog)

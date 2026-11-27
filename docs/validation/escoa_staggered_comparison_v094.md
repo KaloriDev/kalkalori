@@ -1,6 +1,6 @@
 # STAGGERED round solid-fin thermal model comparison — v0.9.4
 
-2026-10-26. Synthetic public inputs only. The private ECO matrix is stored separately under ignored `.kon`; no private input or result is reproduced here. This comparison adds no coefficients, provider tuning, hydraulic modification or AUTO change.
+2026-10-26. Synthetic public inputs only. The private validation matrix is stored separately in an ignored private workspace; no private input or result is reproduced here. This comparison adds no coefficients, provider tuning, hydraulic modification or AUTO change.
 
 ## Inventory and provenance
 

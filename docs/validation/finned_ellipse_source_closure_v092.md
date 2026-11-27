@@ -23,7 +23,7 @@ created. The complete difference from merged v0.9.1
 - `cafa8ab`: effective-area network and applicability guards;
 - `124ca51`: public documentation, tests and version.
 
-The abandoned calibrated-provider series is not in this ancestry. `.kon` is
+The abandoned calibrated-provider series is not in this ancestry. The private workspace is
 outside this task and was not edited.
 
 The supplied `Free_Source_Airside_Models_KalKalori_Audit_2026-10-19.md` was a

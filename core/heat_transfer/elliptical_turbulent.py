@@ -8,17 +8,21 @@ Friction: Nikitin & Yakhot (2005), Eqs.3.2,3.5,
 doi:10.1017/S0022112005003964. Their DNS checks b/a=.67,.5 at Re=6000;
 other operating points are engineering extrapolations, not DNS validation.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from scipy.optimize import brentq
 
 from core.common.warnings import ModelWarning, make_warning
 from core.geometry.applicability import TubeGeometryApplicabilityError
 from core.geometry.elliptical_tube import EllipticalTube
-from core.heat_transfer.internal_model_contract import EllipticalFlowAssumptions, InternalModelMetadata
+from core.heat_transfer.internal_model_contract import (
+    EllipticalFlowAssumptions, EllipticalRoughnessPolicy, InternalModelMetadata)
 
 HTC_MODEL_ID = 'elliptical_yang2018_turbulent_T'
 FRICTION_MODEL_ID = 'elliptical_jones_prandtl_turbulent_engineering'
+ROUGH_FRICTION_MODEL_ID = 'elliptical_jones_normalized_colebrook_engineering'
+COLEBROOK_REFERENCE = 'https://doi.org/10.1680/ijoti.1939.13150'
+JONES_REFERENCE = 'https://doi.org/10.1115/1.3448250'
 YANG_REFERENCE = 'https://www.techscience.com/fhmt/v11n1/53399'
 FRICTION_REFERENCE = 'https://doi.org/10.1017/S0022112005003964'
 
@@ -44,15 +48,34 @@ def _in_range(value, lower, upper):
             or math.isclose(value,upper,rel_tol=1e-12))
 
 
-def _validate(tube, assumptions, *, htc=False):
+def _roughness_policy(policy):
+    if policy is None:
+        return EllipticalRoughnessPolicy()
+    if not isinstance(policy, EllipticalRoughnessPolicy):
+        raise TypeError('roughness_policy must be EllipticalRoughnessPolicy or None.')
+    return policy
+
+
+def _validate(tube, assumptions, *, htc=False, roughness_policy=None):
     if not isinstance(tube, EllipticalTube) or not isinstance(assumptions, EllipticalFlowAssumptions):
         raise TubeGeometryApplicabilityError('Turbulent ellipse models require EllipticalTube and explicit EllipticalFlowAssumptions.')
     if assumptions.regime != 'turbulent' or assumptions.development != 'fully_developed':
         raise TubeGeometryApplicabilityError('Declare turbulent, fully_developed ellipse flow explicitly.')
     if not all(v is True for v in (assumptions.constant_properties, assumptions.newtonian, assumptions.no_slip)):
         raise TubeGeometryApplicabilityError('Turbulent ellipse models require constant-property Newtonian no-slip flow.')
+    policy = _roughness_policy(roughness_policy)
     if tube.roughness_inner not in (None, 0.):
-        raise TubeGeometryApplicabilityError('Turbulent ellipse models are smooth-only.')
+        permitted = (policy.allow_smooth_htc_on_rough_wall if htc
+                     else policy.allow_hydraulic_roughness)
+        if not permitted:
+            raise TubeGeometryApplicabilityError(
+                'Turbulent ellipse source models are smooth-only; explicitly authorize '
+                + ('the smooth HTC approximation on a rough wall.' if htc else
+                   'the engineering hydraulic roughness extension.'))
+        if tube.roughness_inner / tube.hydraulic_diameter > .01:
+            raise TubeGeometryApplicabilityError(
+                'Elliptical roughness engineering scope requires epsilon/Dh <= 0.01; '
+                'this is a conservative implementation bound, not a validated source limit.')
     if htc and (assumptions.thermal_boundary_condition != 'T' or
                 assumptions.axial_conduction is not False or assumptions.viscous_dissipation is not False):
         raise TubeGeometryApplicabilityError('Yang 2018 requires T (constant wall temperature), negligible axial conduction and viscous dissipation.')
@@ -98,15 +121,17 @@ class EllipticalTurbulentFrictionResult:
     hydraulic_diameter: float
     metadata: InternalModelMetadata
     warnings: tuple
+    relative_roughness: float = 0.
+    roughness_multiplier: float = 1.
 
     @property
     def f_fanning(self):
         return self.f_darcy / 4.
 
 
-def elliptical_turbulent_friction(tube, reynolds, *, assumptions):
+def elliptical_turbulent_friction(tube, reynolds, *, assumptions, roughness_policy=None):
     """Darcy factor; shape-adjusted Re in Prandtl, actual Dh in dp/dz."""
-    _validate(tube, assumptions)
+    _validate(tube, assumptions, roughness_policy=roughness_policy)
     _positive(reynolds=reynolds)
     ratio=1./tube.inside_aspect_ratio
     if reynolds < 4000 or ratio > 5.+1e-12:
@@ -120,17 +145,41 @@ def elliptical_turbulent_friction(tube, reynolds, *, assumptions):
     warnings=(make_warning(
         code='elliptical_turbulent_friction_engineering', source=FRICTION_MODEL_ID, severity='warning',
         message='Jones-modified-Re Prandtl friction is an engineering approximation. Source DNS covers only Re_Dh=6000, b/a=0.67 and 0.5; other conditions extrapolate. Distributed straight friction only; no ellipse entrance/exit/bend validation.'),)
-    return EllipticalTurbulentFrictionResult(f,reynolds,modified,tube.hydraulic_diameter,_metadata(False),warnings)
+    relative = (tube.roughness_inner or 0.) / tube.hydraulic_diameter
+    metadata = _metadata(False)
+    multiplier = 1.
+    if relative > 0:
+        # Explicit engineering transfer of the circular rough/smooth ratio.
+        # Normalize at identical modified Re to retain the exact existing
+        # ellipse law at epsilon=0 (Prandtl's rounded constant differs from CW).
+        from core.pressure_drop.straight_sections import _colebrook_white
+        multiplier = _colebrook_white(modified, relative) / _colebrook_white(modified, 0.)
+        f *= multiplier
+        metadata = replace(metadata, model_id=ROUGH_FRICTION_MODEL_ID,
+            provenance_id='jones_prandtl_times_normalized_colebrook_engineering',
+            source_references=(FRICTION_REFERENCE, JONES_REFERENCE, COLEBROOK_REFERENCE),
+            source_access_basis='public smooth-duct primary equations; existing Colebrook implementation; original engineering combination',
+            applicability_assumptions=('straight constant-property Newtonian no-slip duct with uniform roughness',) + metadata.applicability_assumptions[1:] + (
+                'engineering extension: f_ellipse_smooth * CW(Re_modified,epsilon/Dh)/CW(Re_modified,0)',
+                'uniform equivalent sand roughness; 0 < epsilon/Dh <= 0.01 implementation scope',
+                'rough elliptical ducts are not validated by the cited smooth DNS or circular pipe sources',))
+        warnings += (make_warning(code='elliptical_rough_friction_engineering', source=ROUGH_FRICTION_MODEL_ID,
+            message='Authorized engineering rough-wall extension: normalized Colebrook ratio at Jones modified Re; '
+                    'epsilon is equivalent sand roughness and Dh is the actual inner hydraulic diameter. '
+                    'Retains ellipse shape dependence and exact smooth limit; no rough-ellipse validation. '
+                    'Distributed friction only; no roughness correction to HTC or fitting K.'),)
+    return EllipticalTurbulentFrictionResult(f,reynolds,modified,tube.hydraulic_diameter,
+                                           metadata,warnings,relative,multiplier)
 
 
 def elliptical_turbulent_heat_transfer(tube, m_dot, props, *, assumptions=None, flow_area=None,
-                                      L_heated=None, strict_source_domain=False):
+                                      L_heated=None, strict_source_domain=False, roughness_policy=None):
     """Yang Eq.18; no circular length/wall-property corrections or fallback."""
     if not isinstance(strict_source_domain, bool):
         raise TypeError('strict_source_domain must be boolean.')
     if assumptions is None:
         assumptions = EllipticalFlowAssumptions('turbulent', 'fully_developed', 'T')
-    _validate(tube, assumptions, htc=True)
+    _validate(tube, assumptions, htc=True, roughness_policy=roughness_policy)
     from core.heat_transfer.internal_flow import InternalHeatTransferDiagnostics
     area=tube.flow_area if flow_area is None else flow_area
     length=tube.length_effective if L_heated is None else L_heated
@@ -159,8 +208,18 @@ def elliptical_turbulent_heat_transfer(tube, m_dot, props, *, assumptions=None, 
         warnings.append(make_warning(code='elliptical_yang2018_short_duct',source=HTC_MODEL_ID,severity='warning',
             message='Heated length is below 60 Dh, the source development guidance; the fully developed model assumption may be weak/extrapolated.'))
     # Carry hydraulic approximation scope into normal combined result warnings.
-    warnings.extend(elliptical_turbulent_friction(tube,re,assumptions=assumptions).warnings)
+    warnings.extend(elliptical_turbulent_friction(
+        replace(tube, roughness_inner=0.) if tube.roughness_inner else tube,
+        re,assumptions=assumptions).warnings)
+    metadata = _metadata(True)
+    if tube.roughness_inner:
+        limitation = ('Authorized smooth-wall Yang2018 HTC approximation on a rough wall; '
+                      'roughness effects on heat transfer are unquantified. Hydraulic roughness '
+                      'authorization is separate; no friction multiplier is applied to HTC.')
+        warnings.append(make_warning(code='elliptical_rough_wall_smooth_htc_approximation',
+                                     source=HTC_MODEL_ID,message=limitation))
+        metadata = replace(metadata, applicability_assumptions=metadata.applicability_assumptions + (limitation,))
     return InternalHeatTransferDiagnostics(
         v=v,Re=re,Pr=pr,Nu_base=nu,Nu_corrected=nu,
         length_correction=1.,wall_temperature_correction=1.,combined_correction=1.,
-        alfa_base=alpha,alfa_corrected=alpha,warnings=warnings,model_metadata=_metadata(True))
+        alfa_base=alpha,alfa_corrected=alpha,warnings=warnings,model_metadata=metadata)

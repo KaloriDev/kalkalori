@@ -142,14 +142,14 @@ KalKalori follows **Semantic Versioning (SemVer)**.
    python tools/check_release_metadata.py
    ```
 
-   The egg-info command regenerates source-tree metadata that KON can find on
+   The egg-info command regenerates source-tree metadata that notebooks can find on
    its repository search path; the editable install refreshes the environment's
    distribution metadata. The check compares repository/runtime/distribution versions, the dynamic
    version source, CHANGELOG, current README/roadmap references, imported module
    location and the development branch. Use `--expected-branch <name>` to also
    require the intended branch. It fails on discrepancies rather than rewriting
    them. Run it in a fresh process after committing as well.
-4. Verify relevant import/build and regression checks. For private KON work,
+4. Verify relevant import/build and regression checks. For private notebook work,
    refresh `run_metadata` and read back the Excel worksheet in its normal
    environment, including Git SHA/branch/dirty status. Preserve discrepancy
    detection and distinguish ignored notebook edits from Git dirty state.

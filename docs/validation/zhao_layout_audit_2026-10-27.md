@@ -1,15 +1,7 @@
-# Zhao lattice and YC classification audit — 2026-10-27
+# Zhao source-lattice audit — 2026-10-27
 
-Branch: `fix/ellipse-yc-shifted-layout`. Base: merged default branch `main`,
-`ff4f9137554257af6fd1d7ea57a35f9169c30288`, refreshed from origin before
-branch creation. The unrelated serrated-fin commits are excluded. No history
-was rewritten. Numerical YC inventories and comparisons remain in ignored
-`.kon/_worklogs/ellipse_yc_shifted_20261027/`; no raw YC data are published here.
-
-Closure update: the recovered Zhao 2017 Fig. 2 and Zhao & Yang 2016 Fig. 1
-resolve the source lattice identities and Pt/Pl axes. The user confirms YC
-SHIFTED follows the Zhao STAGGERED_COLUMN design basis. Geometry identity is
-closed; a generic SHIFTED physical correlation remains outside this branch.
+Public source-lattice audit. Scientific coordinates, applicability guards and
+regression evidence are retained; product classification evidence is private.
 
 ## Physical identities and API
 
@@ -47,62 +39,11 @@ Frass/ESCOA and Genić); SHIFTED cannot select a conventional pressure AUTO
 provider. Bare-bank automatic reference velocity also rejects SHIFTED.
 **Generic SHIFTED HTC=NO; DP=NO; AUTO=NO.**
 
-## YC classification facts and traced error
-
-The user's 2026-10-27 classification supersedes historical labels:
-
-| Family | Correct grouping | Pitch | Feature count |
-|---|---|---|---|
-| CO30R | Two conventional STAGGERED repeats combined; one separate SHIFTED series | 3.0 mm | 10 |
-| CO35P | Separate SHIFTED material case | 3.5 mm | 4 |
-| CM35P | Separate SHIFTED material case | 3.5 mm | 4 |
-
-The user's follow-up confirms nominal Pt/Pl of 26.67/60.00 mm for YC STAGGERED
-and 53.34/30.00 mm for YC SHIFTED, with 26.67 mm nominal SHIFTED displacement.
-The closure instruction supersedes the earlier request to leave identity
-unresolved: YC SHIFTED was intentionally built on Zhao STAGGERED_COLUMN.
-Record `USER_CONFIRMED_DESIGN_BASIS_ZHAO_STAGGERED_COLUMN`, not
-`SOURCE_PROVEN_FROM_YC_DRAWING`. No separate YC drawing was recovered or is
-required for this design-basis identity. Pt is transverse, Pl follows flow;
-the source preset supplies a canonical origin/phase. It does not reconstruct
-unreported finite-edge cuts from the nominal periods or replace measured face
-area. No TEMA conversion or substitution into Zhao2017 physics is made.
-
-The locally available CO30R reference already combined only its two standard
-series at source-defined nominal stations. The separate third series was
-mislabelled as a wide conventional staggered case. There is **no evidence in
-the traced averaging path of a three-series CO30R mean**. Relabelling changes
-zero standard working points and has zero dataset-mixing effect on that path.
-Individual source points are retained. Nominal-station averaging is historical
-source policy; it is not asserted that all actual flows/Re match exactly.
-
-The latest material research used an assumed conventional bank, not verified
-SHIFTED geometry. A consistency gate prevented its proposed common material
-curve from closing. No combined measured correction had been deployed. The
-corrected workflow prohibits material pooling even if curves numerically agree.
-Physical fin conductivity/thickness, area and efficiency remain separate.
-Historical research results are retained as surrogate comparisons; no derived
-SHIFTED multiplier is installed. Existing trial engineering multipliers are
-retained with neutral `YC_CASE_CORRECTION` provenance and target identity/status.
-
-Repository `fin_turbulator_count` means features per individual rectangular fin.
-The corresponding YC location/count basis cannot be independently established
-from the available drawings: `TURBULATOR_SEMANTICS=UNRESOLVED`, metadata only.
-Pressure-tap/fan/system-loss scope is also unresolved; no thermal factor is
-reused as a pressure factor. Proprietary source/material details, per-point
-residuals and historical versus corrected tables are in the private report.
-
-**Previous underestimation explained by layout error: UNRESOLVED.** Actual
-CO30R grouping effect is 0%; a physical baseline-layout contribution cannot be
-quantified without source-closed SHIFTED physics. Material, circuit, pitch and
-feature effects are confounded. No numerical causal layout attribution is made.
-
 ## Recovered source evidence
 
 Production equations rely on Zhao, Gu, Gao, Yang (2017), IJHMT 114,
 1314–1330, [DOI 10.1016/j.ijheatmasstransfer.2017.06.049](https://doi.org/10.1016/j.ijheatmasstransfer.2017.06.049).
-The full 17-page article is recovered from the user-supplied local archive
-`kalkalori0.9.2refs.zip` (entry `372035990-GRE-Prep-1.pdf`). Nomenclature on
+The source article was inspected directly. Nomenclature on
 p.1315 defines Pt as transverse pitch and Pl as longitudinal pitch. Fig. 2
 on p.1317 supplies the flow arrow and staggered bank; the text on p.1316
 calls it a six-staggered-row arrangement. **ZHAO2017_SOURCE_LATTICE=RESOLVED:
@@ -113,8 +54,7 @@ their hashes remain in the ignored private worklog, not in the public package.
 Zhao and Yang (2016), *Effect of Tube Arrangement on Performance of Rectangular
 Finned Elliptical Tube Bundles*, Tongji 44(2), 298–302,
 [official record](https://tjxb.ijournals.cn/jtuns/article/abstract/15023),
-DOI 10.11908/j.issn.0253-374x.2016.02.020, is recovered from the same archive,
-entry `管束排列方式对矩形翅片椭圆管束性能的影响.pdf`. Direct inspection of Fig. 1(a,b)
+DOI 10.11908/j.issn.0253-374x.2016.02.020, was inspected directly. Fig. 1(a,b)
 on p.299, rather than its conflicting abstract analogies, resolves ROW and
 COLUMN as the two coordinate constructions documented below.
 
@@ -144,11 +84,9 @@ origin/site indexing in the periodic construction.
 | Zhao 2016 STAGGERED_ROW | x=(j+(i mod 2)/2) Pl; y=i Pt | SOURCE_EXACT, Fig. 1(a), p.299: alternate transverse lines displaced along flow |
 | Zhao 2016 STAGGERED_COLUMN | x=j Pl; y=(i+(j mod 2)/2) Pt | SOURCE_EXACT, Fig. 1(b), p.299: alternate longitudinal columns displaced transversely |
 | Zhao 2017 conventional staggered source | ROW construction above | SOURCE_EXACT, Fig. 2(b), p.1317 |
-| YC SHIFTED design basis | COLUMN construction above; nominal Pt/Pl=53.34/30 mm | USER_CONFIRMED_DESIGN_BASIS_ZHAO_STAGGERED_COLUMN |
 
 **ZHAO_STAGGERED_ROW_COORDINATES=RESOLVED;
-ZHAO_STAGGERED_COLUMN_COORDINATES=RESOLVED;
-ZHAO_COLUMN_EQUALS_YC_SHIFTED=YES by user-confirmed design basis.**
+ZHAO_STAGGERED_COLUMN_COORDINATES=RESOLVED.**
 
 Source arrangement names must not be substituted for API row indexing. The
 legacy conventional coordinate helper uses the COLUMN-form expression in this
@@ -160,7 +98,7 @@ COLUMN preset deliberately retains SHIFTED identity even where its numeric
 center array equals that legacy helper: identical helper coordinates alone do
 not transfer coefficients between source arrangement/pitch conventions.
 
-ROW and COLUMN must not be collapsed at the same source Pt/Pl. Finite YC face
+ROW and COLUMN must not be collapsed at the same source Pt/Pl. Finite face
 area, tube counts and material remain separate construction inputs. No source
 full texts/images or private measurement fixtures are committed.
 
@@ -205,7 +143,6 @@ Xp=.10–.52; Xf=.01–.03. Dt=.014 and Dl=.036 imply pitch families
 Pt=27.02–35.00 mm and Pl=56.16–64.08 mm under the implementation convention.
 The recovered nomenclature/figure, rather than those numerical magnitudes,
 prove the axes. `Pt/Pl SWAP BUG=NO`; no equation/axis/coefficient change made.
-YC nominal 53.34/30.00 mm remains a separate COLUMN design-basis case.
 
 Existing synthetic 8×6 baseline remains h=86.47833865264215 W/(m² K),
 dp=372.055553752331 Pa. Equation fixture at N=8, Re=13000 retains
@@ -222,9 +159,6 @@ Branch-closure verification on 2026-10-28:
   source-defined COLUMN coordinates, unchanged Zhao h/dp fixture, INLINE
   rejection, named COLUMN rejection in both domain modes, round providers and
   legacy section parity/count behavior.
-- Applicable private YC suite rerun: **92 passed**, zero failures, errors,
-  skips or xfails (`closure-private.xml`). Source/design-basis metadata and
-  finite-column article coordinates are checked without modifying raw data.
 - Six direct AUTO probes with the resolved COLUMN preset all reject
   unsupported physics (`closure-dispatch-guards.json`). No provider guard,
   equation, coefficient or deployed correction multiplier was broadened.
@@ -254,5 +188,4 @@ precedes lattice validation; the final targeted run covers that correction.
 No solver deadline or physical correlation coefficient was changed. Original
 parallel failures, isolated receipts and the explicitly annotated combined
 verification receipt are retained in the ignored audit worklog. Raw-source
-hashes and historical snapshots are retained privately. No public YC
-measurement fixture was added.
+hashes and historical snapshots are retained privately. No private measurement fixture was added.

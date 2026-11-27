@@ -35,7 +35,19 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.9)
+## Current Capabilities (v0.9.10)
+
+v0.9.10 adds [independent external outside providers](docs/external_airside_providers.md)
+for physical film HTC and pressure results with declared scope. The core retains
+fin efficiency and the resistance network. This API does not introduce or
+validate a public SHIFTED correlation; built-in model defaults and source guards
+are unchanged.
+
+The same release adds [elliptical roughness and reference reporting](docs/elliptical_roughness_and_reporting.md):
+intrinsic rectangular-fin metadata, separate thermal/hydraulic states, and
+independent opt-ins for engineering rough-wall friction and smooth-wall HTC
+approximation. Rough elliptical friction remains an unvalidated engineering
+extension; the zero-roughness model is preserved.
 
 v0.9.9 completes water/steam Rating API consistency: unknown tube-side water
 flow can be derived from an independent duty and an explicit outlet state,
@@ -330,7 +342,7 @@ For the tube-side enhancement API, including public Yang2020 and Rossi2017
 twisted-tape models, the released Inaba1994 wire-coil model, and external
 providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version is v0.9.9. The completed v0.8.8 work retains
+The current package version is v0.9.10. The completed v0.8.8 work retains
 shared tube-enhancement deadlines, independent required wall states and
 explicit provider failures during endpoint probes, together with
 [thermal fouling resistance support](docs/thermal_fouling.md) and the
