@@ -24,7 +24,7 @@ from core.heat_transfer.outside_dispatch import (
     calculate_resistance_network, evaluate_outside_thermal,
     evaluate_outside_hydraulics, make_mean_fin_temperature_model,
 )
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider
 
@@ -203,7 +203,7 @@ def test_explicit_dispatch_and_auto_keep_existing_guards():
 
 def test_physical_mean_fin_temperature_coupling_and_diagnostics():
     bank = bundle()
-    hx = BareTubeHeatExchanger(bank)
+    hx = RobinsonBriggsReferenceExchanger(bank)
     model = make_mean_fin_temperature_model(bundle=bank,inside_bulk_temperature=400.,
         outside_bulk_temperature=600.,alpha_inside=900.,
         resistance_core_wall=hx.tube_wall_resistance())
@@ -253,7 +253,7 @@ def test_explicit_provider_reaches_complete_workflows(workflow):
     from core.models import BalanceSideSpec
     from core.models.simulation import HXSideInput
     from core.phase_change.types import PhaseChangeMode
-    hx = BareTubeHeatExchanger(bundle())
+    hx = RobinsonBriggsReferenceExchanger(bundle())
     inside = ConstantPropertyProvider(FluidTransportProperties(rho=900.,mu=.0005,k=.6,cp=4000.))
     outside = ConstantPropertyProvider(PROPS)
     kw = dict(finned_heat_transfer_provider=SELECTOR)

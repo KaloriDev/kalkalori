@@ -84,6 +84,7 @@ def evaluate_outside_side(
     T_mean = 0.5 * (T_in + T_out)
     props = properties_mean or _transport(provider.at(T=T_mean, p=p))
     thermal = evaluate_outside_thermal(
+        property_provider=provider,
         outside_thermal_provider=hx.outside_thermal_provider,
         outside_provider_policy=hx.outside_provider_policy,
         gas_temperature=T_mean, pressure=p,

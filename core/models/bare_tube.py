@@ -1043,6 +1043,7 @@ class BareTubeHeatExchanger:
                 and inside_temperature is not None and gas_temperature is not None else None
             )
             outside_thermal_dispatch = evaluate_outside_thermal(
+                property_provider=outside_provider,
                 outside_thermal_provider=self.outside_thermal_provider,
                 outside_provider_policy=self.outside_provider_policy,
                 pressure=outside_pressure,

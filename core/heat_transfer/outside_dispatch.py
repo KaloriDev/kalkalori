@@ -24,6 +24,7 @@ from core.heat_transfer.fouling import normalize_fouling_resistance
 from typing import TYPE_CHECKING, Any, Callable
 
 from core.common.warnings import ModelWarning
+from core.properties.common import infer_outside_fluid_family
 from core.geometry.bundle import TubeBundle
 from core.geometry.applicability import TubeGeometryApplicabilityError
 from core.geometry.finned_tube import CircularFinnedTube
@@ -480,6 +481,8 @@ def evaluate_outside_thermal(
     outside_thermal_provider: OutsideThermalProvider | None = None,
     outside_provider_policy: OutsideProviderPolicy = OutsideProviderPolicy(),
     pressure: float | None = None,
+    property_provider: Any | None = None,
+    fluid_family: str | None = None,
 ) -> OutsideThermalDispatchResult:
     """Evaluate the dry outside film coefficient for the declared surface."""
 
@@ -594,6 +597,8 @@ def evaluate_outside_thermal(
         mean_fin_temperature=mean_fin_temperature,
         fin_temperature_model=fin_temperature_model,
         strict_source_domain=strict_source_domain,
+        fluid_family=(fluid_family if fluid_family is not None else
+            infer_outside_fluid_family(property_provider, props)),
     )
     return OutsideThermalDispatchResult(
         surface_type=surface,
@@ -725,6 +730,8 @@ def evaluate_outside_hydraulics(
         m_dot_outlet=m_dot_outlet,
         pressure_drop_provider=finned_pressure_drop_provider,
         strict_source_domain=strict_source_domain,
+        allow_engineering_estimates=outside_provider_policy.allow_engineering_estimates,
+        fluid_family=infer_outside_fluid_family(property_provider, inlet_props),
     )
 
 

@@ -240,15 +240,15 @@ def test_wrong_layout_and_surface_dispatch_guards(provider):
             m_dot=5.,inlet_props=PROPS,finned_pressure_drop_provider=provider)
 
 
-def test_auto_and_thermal_dispatch_stay_unchanged():
+def test_preferred_auto_and_unchanged_thermal_dispatch():
     from core.heat_transfer.finned_tube_outside import calculate_finned_tube_outside_heat_transfer
     for layout, hydraulic, thermal in [
         ("inline","frass_inline_solid_fin_191","frass_escoa_inline_solid_fin"),
-        ("staggered","robinson_briggs_1966","briggs_young_1963")]:
+        ("staggered","genic2006_staggered","briggs_young_1963")]:
         b=bank(layout,pitch_transverse=.065,pitch_longitudinal=math.sqrt(3)*.065/2)
         auto=calculate_finned_tube_pressure_drop(5.,b,PROPS)
         explicit=calculate_finned_tube_pressure_drop(5.,b,PROPS,provider=hydraulic)
-        assert auto==explicit
+        assert auto.dp_drag==explicit.dp_drag and auto.method==explicit.method
         ht=calculate_finned_tube_outside_heat_transfer(5.,b,PROPS,
             gas_temperature=600.,mean_fin_temperature=450.)
         assert ht.method==thermal

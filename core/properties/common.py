@@ -46,3 +46,16 @@ class FluidTransportProperties:
                 raise ValueError(f"{name} must be finite.")
             if value <= 0.0:
                 raise ValueError(f"{name} must be positive.")
+
+
+def infer_outside_fluid_family(provider=None, properties=None) -> str:
+    """Carry known fluid identity into source warnings; no property evaluation.
+
+    Explicit transport-only inputs retain the historical air convention. A
+    known non-air fluid or mixture must not lose its identity at dispatch.
+    """
+    fluid = getattr(provider, "fluid", None) or getattr(properties, "fluid", None)
+    if isinstance(fluid, str) and fluid.strip():
+        name = fluid.rsplit("::", 1)[-1].strip()
+        return "air" if name.lower() in ("air", "dryair", "dry_air") else name
+    return "air"

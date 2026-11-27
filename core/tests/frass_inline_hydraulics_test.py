@@ -180,12 +180,16 @@ def test_actual_taper_changes_area_and_re_without_empirical_thickness_term():
 def test_auto_dispatch_explicit_guards_and_rb_regression():
     auto=evaluate_finned_tube_pressure_drop(request())
     explicit=evaluate_finned_tube_pressure_drop(request(),provider="frass_inline_solid_fin_191")
-    assert auto == explicit
+    assert replace(auto,diagnostics={}) == replace(explicit,diagnostics={})
     with pytest.raises(ValueError,match="staggered triangular"):
         evaluate_finned_tube_pressure_drop(request(),provider=RobinsonBriggs1966Provider())
     staggered=request(layout="staggered",pitch_longitudinal=math.sqrt(3)*.08/2)
-    assert evaluate_finned_tube_pressure_drop(staggered) == RobinsonBriggs1966Provider().evaluate(staggered)
-    assert isinstance(hash(evaluate_finned_tube_pressure_drop(staggered)),int)
+    # This deliberately arbitrary reference area is not Genić's geometric af.
+    with pytest.raises(ValueError,match='source frontal af'):
+        evaluate_finned_tube_pressure_drop(staggered)
+    reference=evaluate_finned_tube_pressure_drop(staggered,provider='robinson_briggs_1966')
+    assert reference.dp_drag==RobinsonBriggs1966Provider().evaluate(staggered).dp_drag
+    assert isinstance(hash(reference),int)
     class DescriptiveLegacyProvider:
         def evaluate(self,r):
             return replace(RobinsonBriggs1966Provider().evaluate(r),

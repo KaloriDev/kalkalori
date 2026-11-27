@@ -16,7 +16,7 @@ from core.geometry.tube import BareTube, CircularFinnedTube, TubeOrientation
 from core.heat_transfer.fin_efficiency import annular_fin_efficiency
 from core.heat_transfer.outside_dispatch import calculate_resistance_network
 from core.heat_transfer.thermal_iteration import fin_surface_temperatures
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.models.simulation import HXSideInput
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider
@@ -53,8 +53,8 @@ def _bundle(tube) -> TubeBundle:
     )
 
 
-def _hx(tube) -> BareTubeHeatExchanger:
-    return BareTubeHeatExchanger(_bundle(tube))
+def _hx(tube) -> RobinsonBriggsReferenceExchanger:
+    return RobinsonBriggsReferenceExchanger(_bundle(tube))
 
 
 def _sides(*, T_inside=360.0, T_outside=300.0):
@@ -299,7 +299,7 @@ def test_steam_heater_rating_exposes_fin_surface_diagnostics_on_finned_tube():
         pitch_transverse=0.060, pitch_longitudinal=0.060 * math.sqrt(3.0) / 2.0,
         layout="staggered", n_passes_tube=1, flow_arrangement="crossflow",
     )
-    hx = BareTubeHeatExchanger(bundle)
+    hx = RobinsonBriggsReferenceExchanger(bundle)
     inside = BalanceSideSpec(
         provider=IAPWS97WaterSteamProvider(), p=6.0e5, m_dot=0.05,
         quality_in=1.0, quality_out=0.0,

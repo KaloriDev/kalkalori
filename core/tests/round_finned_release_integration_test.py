@@ -9,7 +9,7 @@ import core.heat_transfer as heat_transfer
 from core.geometry import BareTube, CircularFinnedTube, TubeBundle
 from core.heat_transfer.finned_tube_outside import calculate_finned_tube_outside_heat_transfer
 from core.models import BalanceSideSpec
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.models.simulation import HXSideInput
 from core.phase_change.types import PhaseChangeMode
 from core.pressure_drop.finned_tube_pressure_drop import calculate_finned_tube_pressure_drop
@@ -40,7 +40,7 @@ def test_explicit_thermal_selectors_reach_every_public_workflow(layout, selector
             provider=selector,gas_temperature=600.,mean_fin_temperature=450.)
         assert result.method == selector
         return
-    hx = BareTubeHeatExchanger(bank)
+    hx = RobinsonBriggsReferenceExchanger(bank)
     inside = ConstantPropertyProvider(FluidTransportProperties(rho=900.,mu=.0005,k=.6,cp=4000.))
     outside = ConstantPropertyProvider(PROPS)
     if api == "thermal_state":

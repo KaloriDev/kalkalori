@@ -9,7 +9,7 @@ import pytest
 from core import BulkMeanAnalogyWetCoilProvider, WetCoilSolverOptions
 from core.geometry.bundle import RowParityMode, TubeBundle
 from core.geometry.tube import BareTube, TubeOrientation
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.models.simulation import HXSideInput
 from core.phase_change.capability import detect_phase_change_capability
 from core.phase_change.types import PhaseChangeMode
@@ -28,7 +28,7 @@ def test_conditional_high_ntu_closes_independent_energy_and_outlet_phase(point_i
     point = next(p for p in data["points"] if p["point_id"] == point_id)
     s = point["gas_scenarios"][humidity]
     tube = BareTube(.0081,.0105,.2,.2,15.,tube_orientation=TubeOrientation.HORIZONTAL)
-    hx = BareTubeHeatExchanger(TubeBundle(tube,40,9.5,.0205,.0205,"staggered",40,
+    hx = RobinsonBriggsReferenceExchanger(TubeBundle(tube,40,9.5,.0205,.0205,"staggered",40,
         flow_arrangement="counterflow",n_passes_transverse=1,
         row_parity_mode=RowParityMode.CONTINUOUS))
     water = HXSideInput(CoolPropFluidProvider("Water"),float(point["water_kg_h"])/3600,
@@ -64,6 +64,7 @@ def test_near_saturated_finned_mean_model_does_not_return_invalid_success():
     # this does not prove the physical exchanger globally infeasible.
     hx,a,b = context(finned=True)
     with pytest.raises(WetGasEnthalpyError) as caught:
-        hx.simulate(a,b,wet_coil_provider=BulkMeanAnalogyWetCoilProvider())
+        hx.simulate(a,b,wet_coil_provider=BulkMeanAnalogyWetCoilProvider(),
+            finned_pressure_drop_provider="robinson_briggs_1966")
     assert caught.value.reason == "numerical_stagnation"
     assert caught.value.diagnostics["residuals"]["gas_residual"] < -1.

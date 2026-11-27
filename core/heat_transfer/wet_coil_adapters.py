@@ -278,6 +278,7 @@ class BareTubeAdapter:
         provider = wet_gas_provider_at_water_ratio(self.thermodynamics.capability, W)
         props = provider.at(T, self.thermodynamics.pressure)
         outside = evaluate_outside_thermal(
+            property_provider=provider,
             bundle=self.bundle,
             m_dot=md * (1 + W),
             props=to_outside_fluid_props(props),
@@ -657,6 +658,7 @@ class CircularFinnedTubeAdapter:
         provider = wet_gas_provider_at_water_ratio(self.thermodynamics.capability, W)
         props = provider.at(T, self.thermodynamics.pressure)
         outside = evaluate_outside_thermal(
+            property_provider=provider,
             bundle=self.bundle,
             m_dot=md * (1 + W),
             props=to_outside_fluid_props(props),
