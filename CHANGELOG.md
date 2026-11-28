@@ -5,6 +5,38 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
+## [0.9.11] — 2026-11-28 — Extended-Surface Airside Hydraulics
+
+- Verified the existing Genić 2006 equations, reference definitions, row
+  normalization and explicit limits against the primary publication. Raw
+  calibration data and complete joint calibration coverage remain unavailable.
+- Added explicit `genic2006_staggered_tapered` and `genic2006_inline_tapered`
+  engineering options. Exact linear-taper passage, surface and metal volume
+  feed the unchanged empirical equations; strict source mode rejects taper.
+  Existing constant-fin selectors and arithmetic remain unchanged.
+- Changed circular individual solid-fin STAGGERED hydraulic AUTO to Genić
+  within its supported scalar domain. Engineering extensions require explicit
+  authorization. If no preferred model is applicable, AUTO raises an error
+  without falling back to a reference model. Existing calculations using
+  STAGGERED AUTO can therefore produce different pressure losses or require
+  explicit authorization. Robinson–Briggs remains explicitly selectable
+  with unchanged equations and numerical behavior. INLINE AUTO is unchanged.
+- Added requested/resolved hydraulic provenance and corrected known non-air
+  source warnings in Briggs–Young and Robinson–Briggs dispatch. Thermal
+  equations, separate acceleration and external-loss accounting are unchanged.
+- Retained Frass Eq.191 as INLINE AUTO after a targeted source and sensitivity
+  review. Corrected its selection metadata to expose unresolved applicability
+  and pressure scope even for constant fins; coefficients and pressure results
+  are unchanged. Added independent synthetic pitch and geometry sensitivity
+  regressions; see the [INLINE guide](docs/inline_round_finned_hydraulics.md).
+- Retained Nir as a deferred public candidate after secondary-source recovery
+  left normalization, measurement scope and joint applicability unresolved.
+  Archived the ESCOA STAGGERED hydraulic candidate. Restricted formulations
+  and experimental implementations remain excluded from the public package.
+- Added independent synthetic geometry, pressure and Rating/Simulation
+  regression checks. See the [method guide](docs/genic2006_finned_hydraulics.md)
+  and [comparison and validation record](docs/validation/v0.9.11_extended_surface_hydraulics.md).
+
 ## [0.9.10] — External Outside Thermal and Hydraulic Providers
 
 - Standardized fin surface identifiers as `circular_fin`, `serrated_helical_fin`,

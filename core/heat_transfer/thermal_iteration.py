@@ -525,6 +525,7 @@ def _evaluate_local_wall_state(
     ) if isinstance(tube, CircularFinnedTube) else None
 
     outside_dispatch = evaluate_outside_thermal(
+        property_provider=outside_provider,
         outside_thermal_provider=hx.outside_thermal_provider,
         outside_provider_policy=hx.outside_provider_policy,
         pressure=p_outside,

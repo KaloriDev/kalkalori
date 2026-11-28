@@ -25,10 +25,13 @@ Frass Eq.191 under an explicit conditional engineering policy; normalization
 and loss-scope provenance remain partial. v0.9.4 provides qualified non-strict
 support with strict rejection of unresolved required source conditions.
 The [explicit ESCOA STAGGERED guide](staggered_round_finned_thermal.md) covers
-Eqs.(60)–(62) from the same legal secondary source. STAGGERED AUTO remains
-Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
-Robinson–Briggs. The [release validation](validation/v094_release_validation.md)
-records integration checks without expanding the source domain.
+Eqs.(60)–(62) from the same legal secondary source. STAGGERED thermal AUTO
+remains Briggs–Young and INLINE thermal AUTO remains ESCOA. From v0.9.11,
+STAGGERED hydraulic AUTO selects source-bounded Genić; INLINE retains Frass
+Eq.191. Robinson–Briggs remains explicitly selectable. The historical
+[v0.9.4 release validation](validation/v094_release_validation.md) records
+integration checks without expanding the source domain; the current
+[hydraulic AUTO guide](finned_hydraulic_auto.md) documents the selection change.
 
 ## v0.9.2 thin-plate fin foundation: free primary sources
 
@@ -271,11 +274,16 @@ The Genić DOI above corrects the commonly repeated but incorrect
 `10.1016/j.applthermaleng.2005.06.020`. It is now implemented as an
 [explicit optional hydraulic model](genic2006_finned_hydraulics.md); equation
 definitions are closed, calibration provenance is partial, and original raw
-calibration data were not recovered. ESDU 86022 may be used externally for
+calibration data were not recovered. v0.9.11 verifies the equations and explicit
+limits against the primary publication and adds an independently derived,
+unvalidated linear-taper geometry extension. The [release comparison](validation/v0.9.11_extended_surface_hydraulics.md)
+records remaining source gates for Nir and the archived ESCOA STAGGERED hydraulic candidate.
+ESDU 86022 may be used externally for
 validation; no closed ESDU tables, data or code are included in the GPL core.
 Schmidt, VDI and Nir remain extended-surface or comparative references.
-Genić is explicit only; no blending or change to Briggs--Young,
-Robinson--Briggs or Frass AUTO selection is introduced.
+From v0.9.11, Genić becomes STAGGERED hydraulic AUTO within its supported
+domain. Robinson–Briggs remains an explicit reference. Briggs–Young thermal
+and Frass INLINE AUTO selection are unchanged; no blending is introduced.
 
 The Briggs--Young source experiments used six-row banks, while later
 references recommend applying the correlation to banks with at least four
@@ -629,3 +637,17 @@ place it under `docs/private_sources/` (already excluded via `.gitignore`)
 or anywhere outside the repository -- never in a tracked path. Obtain such
 source material through your own legitimate personal, company, or library
 access.
+
+
+## Deferred Nir hydraulic source recovery
+
+Nir, A. (1991), *Heat Transfer and Friction Factor Correlations for Crossflow
+over Staggered Finned Tube Banks*, Heat Transfer Engineering 12(1), 43–58,
+[DOI 10.1080/01457639108939746](https://doi.org/10.1080/01457639108939746).
+Eikill, Astrid Øygarden (2013), *Application of mechanistic models for flow
+distribution and heat transfer in finned tube bundles*, NTNU master's thesis,
+[institutional deposit](https://hdl.handle.net/11250/2353751), printed pp.28–31,
+Eqs.29–50. The secondary source recovers mathematical forms but does not close
+pressure normalization, measurement scope and complete hydraulic applicability.
+No public Nir implementation is promoted. The thesis remains copyrighted;
+its prose, tables, figures and appended code are not redistributed.

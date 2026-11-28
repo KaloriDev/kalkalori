@@ -1,0 +1,23 @@
+{
+  "version": "0.9.11",
+  "python": "3.11.9",
+  "CoolProp": "8.0.0",
+  "selected_public_tests": 1543,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "new_taper_tests": 15,
+  "new_auto_policy_tests": 19,
+  "constant_fin_baseline_comparisons": 300,
+  "tapered_fin_preselection_comparisons": 300,
+  "explicit_robinson_briggs_provider_unchanged": true,
+  "synthetic_example_predictions": 366,
+  "default_hydraulic_selection_changed": true,
+  "thermal_equations_changed": false,
+  "thermal_dispatch_identity_diagnostics_changed": true,
+  "full_suite_claimed_pass": false,
+  "new_inline_review_tests": 10,
+  "inline_auto_changed": false,
+  "inline_pressure_values_changed": false,
+  "inline_source_scope_reporting_corrected": true
+}

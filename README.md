@@ -35,7 +35,15 @@ and serialization**, enabling both open collaboration and commercial adoption.
 
 ---
 
-## Current Capabilities (v0.9.10)
+## Current Capabilities (v0.9.11)
+
+v0.9.11 extends [Genić solid-fin hydraulics](docs/genic2006_finned_hydraulics.md)
+with explicit, unvalidated linear-taper geometry options and primary-source
+equation verification. The [synthetic comparison and validation record](docs/validation/v0.9.11_extended_surface_hydraulics.md)
+documents their pressure predictions and fin-pitch sensitivity. Thermal
+correlations remain unchanged. [STAGGERED hydraulic AUTO](docs/finned_hydraulic_auto.md)
+now selects Genić within its supported domain; engineering extensions require
+explicit authorization. Robinson–Briggs remains an explicit reference.
 
 v0.9.10 adds [independent external outside providers](docs/external_airside_providers.md)
 for physical film HTC and pressure results with declared scope. The core retains
@@ -93,15 +101,18 @@ Staggered round solid-fin banks can explicitly select
 [`FrassEscoaStaggeredSolidFinProvider`](docs/staggered_round_finned_thermal.md)
 using `finned_heat_transfer_provider="frass_escoa_staggered_solid_fin"`.
 It reproduces Frass's ESCOA Eqs.(60)–(62), with mean-fin-temperature coupling
-and explicit source/property qualifications. Staggered AUTO remains
-Briggs–Young; hydraulic selection and applicability guards remain unchanged.
+and explicit source/property qualifications. Staggered thermal AUTO remains
+Briggs–Young; hydraulic AUTO follows the v0.9.11 rules below.
 See the [v0.9.4 release validation](docs/validation/v094_release_validation.md)
 for the final provider matrix, public regression coverage and release qualifications.
 
 Optional [Genić 2006 solid-fin hydraulic providers](docs/genic2006_finned_hydraulics.md)
 are explicitly selectable with `genic2006_staggered` and `genic2006_inline`.
 They retain their native equivalent-diameter and pressure-drop basis, with
-source-domain and calibration-coverage diagnostics. AUTO remains unchanged.
+source-domain and calibration-coverage diagnostics. From v0.9.11, staggered
+hydraulic AUTO uses Genić under the [documented selection rules](docs/finned_hydraulic_auto.md).
+The separate `_tapered` selectors use exact linear-taper geometry with explicit
+engineering authorization; strict source mode rejects this extension.
 
 The explicitly selected public [Chakroun–Al-Fahed 1995 twisted-tape provider](docs/twisted_tape_chakroun1995.md)
 supports paired laminar liquid heat transfer and distributed friction using
@@ -175,8 +186,9 @@ extrapolation; arbitrary-clearance validity is not established.
   welded or continuous-root construction, ideal contact by default, and
   either a practical dimensionless `fin_contact_efficiency` or the advanced
   physical `fin_contact_resistance` for non-ideal fin/root contact,
-  Briggs--Young dry outside heat transfer and verified-scope Robinson--Briggs
-  pressure loss for staggered banks, the qualified INLINE models linked above,
+  Briggs--Young dry outside heat transfer, source-bounded Genić hydraulic AUTO
+  and explicitly selectable Robinson--Briggs for staggered banks, the qualified
+  INLINE models linked above,
   Simulation, Rating, and the established inside-side phase
   change paths when the finned outside surface remains dry. The unchanged dry
   Briggs--Young heat-transfer provider accepts every positive bank row count;
@@ -342,7 +354,7 @@ For the tube-side enhancement API, including public Yang2020 and Rossi2017
 twisted-tape models, the released Inaba1994 wire-coil model, and external
 providers, see
 [`docs/tube_side_enhancements.md`](docs/tube_side_enhancements.md).
-The current package version is v0.9.10. The completed v0.8.8 work retains
+The current package version is v0.9.11. The completed v0.8.8 work retains
 shared tube-enhancement deadlines, independent required wall states and
 explicit provider failures during endpoint probes, together with
 [thermal fouling resistance support](docs/thermal_fouling.md) and the

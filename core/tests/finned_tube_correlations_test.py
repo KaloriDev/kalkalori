@@ -185,7 +185,7 @@ def _pressure_request(
 def test_independent_1960s_benchmark_uses_physical_a_min_re_and_pa() -> None:
     bundle, props, m_dot = _benchmark_state()
     htc = calculate_finned_tube_outside_heat_transfer(m_dot, bundle, props)
-    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props)
+    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props,provider="robinson_briggs_1966")
 
     expected_a_min = 11.7045 * INCH**2
     expected_g = m_dot / expected_a_min
@@ -380,9 +380,15 @@ def test_robinson_briggs_row_counts_use_actual_rows_with_explicit_diagnostics(
 
 @pytest.mark.parametrize("provider", ["robinson_briggs_1966", "auto"])
 def test_robinson_briggs_two_row_staggered_public_apis(provider: str) -> None:
-    """Representative COOLER2 geometry without loading private notebooks."""
+    """Explicit short-bank reference survives; preferred AUTO rejects it."""
     bundle = _published_range_bundle(n_rows=2)
     props = _published_range_properties()
+    if provider=='auto':
+        with pytest.raises(ValueError,match='n_rows>=5'):
+            calculate_finned_tube_pressure_drop(3.0,bundle,props,provider=provider)
+        with pytest.raises(ValueError,match='n_rows>=5'):
+            calculate_finned_tube_bank_hydraulics(3.0,bundle,inlet_props=props,pressure_drop_provider=provider)
+        return
     single = calculate_finned_tube_pressure_drop(3.0, bundle, props, provider=provider)
     bank = calculate_finned_tube_bank_hydraulics(
         3.0, bundle, inlet_props=props, pressure_drop_provider=provider
@@ -574,7 +580,7 @@ def test_finned_correlation_requests_reject_invalid_row_counts(
 def test_metadata_states_diameter_velocity_area_and_row_bases() -> None:
     bundle, props, m_dot = _benchmark_state()
     htc = calculate_finned_tube_outside_heat_transfer(m_dot, bundle, props)
-    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props)
+    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props,provider="robinson_briggs_1966")
 
     assert htc.method == "briggs_young_1963"
     assert "minimum free-flow" in htc.velocity_basis
@@ -679,7 +685,7 @@ def test_real_taper_geometry_is_kept_and_mean_is_only_correlation_mapping() -> N
     m_dot = props.rho * face_velocity * bundle.frontal_flow_area
 
     htc = calculate_finned_tube_outside_heat_transfer(m_dot, bundle, props)
-    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props)
+    pressure = calculate_finned_tube_pressure_drop(m_dot, bundle, props,provider="robinson_briggs_1966")
     expected_mean = 0.5 * (0.019 + 0.011) * INCH
     expected_spacing = tube.fin_pitch - expected_mean
     expected_blockage = tube.D_root + (
@@ -707,7 +713,7 @@ def test_published_range_extrapolation_is_reported_not_silently_clamped() -> Non
         0.05 * m_dot, bundle, props
     )
     pressure = calculate_finned_tube_pressure_drop(
-        0.05 * m_dot, bundle, props
+        0.05 * m_dot, bundle, props, provider="robinson_briggs_1966"
     )
 
     assert htc.reynolds_number < 1100.0
@@ -720,7 +726,7 @@ def test_published_range_extrapolation_is_reported_not_silently_clamped() -> Non
 
 def test_three_state_constant_properties_reproduce_single_state_drag() -> None:
     bundle, props, m_dot = _benchmark_state()
-    single = calculate_finned_tube_pressure_drop(m_dot, bundle, props)
+    single = calculate_finned_tube_pressure_drop(m_dot, bundle, props,provider="robinson_briggs_1966")
     result = calculate_finned_tube_bank_hydraulics(
         m_dot,
         bundle,
@@ -728,6 +734,7 @@ def test_three_state_constant_properties_reproduce_single_state_drag() -> None:
         temperature_in=300.0,
         temperature_out=350.0,
         pressure=101325.0,
+        pressure_drop_provider="robinson_briggs_1966",
     )
 
     assert [
@@ -751,6 +758,7 @@ def test_three_state_acceleration_uses_face_mass_flux_and_is_signed() -> None:
         inlet_props=props,
         midpoint_props=props,
         outlet_props=outlet,
+        pressure_drop_provider="robinson_briggs_1966",
     )
     expected = (m_dot / bundle.frontal_flow_area) ** 2 * (
         1.0 / outlet.rho - 1.0 / props.rho

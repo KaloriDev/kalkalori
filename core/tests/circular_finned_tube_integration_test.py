@@ -30,7 +30,7 @@ from core.heat_transfer.outside_flow import (
 )
 from core.heat_transfer.streams import SensibleHeatStream
 from core.models import FinnedTubeDiagnostics
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.models.heat_balance import BalanceSideSpec
 from core.models.simulation import HXSideInput, run_simulation
 from core.phase_change.finned_tube_guard import (
@@ -139,7 +139,7 @@ def _side_inputs(
     )
 
 
-def _solve(hx: BareTubeHeatExchanger, **kwargs):
+def _solve(hx: RobinsonBriggsReferenceExchanger, **kwargs):
     inside_provider, outside_provider = _providers()
     return hx.solve(
         hot_stream=SensibleHeatStream(
@@ -257,7 +257,7 @@ def _welded_bundle(*, contact: float | None) -> TubeBundle:
 
 def test_dry_solve_simulate_and_rate_expose_consistent_finned_results() -> None:
     assert PublicWetSurfaceError is CircularFinnedTubeWetSurfaceNotSupportedError
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     solve_result = _solve(hx)
 
     assert solve_result.tube_surface_type is TubeSurfaceType.CIRCULAR_FINNED
@@ -390,7 +390,7 @@ class _CustomMethodPressureDropProvider:
 
 
 def test_public_workflows_thread_dedicated_finned_providers() -> None:
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     inside, outside = _side_inputs(mode=PhaseChangeMode.DISABLED)
     heat_transfer_provider = _CountingHeatTransferProvider()
     pressure_drop_provider = _CountingPressureDropProvider()
@@ -432,7 +432,7 @@ def test_public_workflows_thread_dedicated_finned_providers() -> None:
 
 
 def test_finned_rejects_bare_provider_alpha_override_and_inline_solver() -> None:
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     with pytest.raises(IncompatibleOutsideCorrelationProviderError):
         _solve(hx, euler_provider="gaddis_gnielinski")
     with pytest.raises(ValueError, match="does not accept the bare alfa_o override"):
@@ -442,14 +442,14 @@ def test_finned_rejects_bare_provider_alpha_override_and_inline_solver() -> None
     with pytest.raises(IncompatibleOutsideCorrelationProviderError):
         _solve(hx, finned_pressure_drop_provider=BriggsYoung1963Provider())
 
-    inline_hx = BareTubeHeatExchanger(_bundle(finned=True, layout="inline"))
+    inline_hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True, layout="inline"))
     with pytest.raises(ValueError, match="staggered"):
         _solve(inline_hx, finned_heat_transfer_provider=BriggsYoung1963Provider())
 
 
 def test_flow_path_identifies_finned_result_by_type_with_custom_method() -> None:
     result = _solve(
-        BareTubeHeatExchanger(_bundle(finned=True)),
+        RobinsonBriggsReferenceExchanger(_bundle(finned=True)),
         finned_pressure_drop_provider=_CustomMethodPressureDropProvider(),
     )
     bank_group = result.outside_side_pressure_drop.flow_path.group("tube_bank")
@@ -533,7 +533,7 @@ def test_plain_dispatch_is_exact_legacy_regression() -> None:
         pressure=P,
     )
     assert dispatched_hydraulics == legacy_hydraulics
-    plain_solve = _solve(BareTubeHeatExchanger(bundle))
+    plain_solve = _solve(RobinsonBriggsReferenceExchanger(bundle))
     assert plain_solve.finned_tube_diagnostics is None
     assert plain_solve.outside_side_thermal.alfa == dispatched.alpha_physical
     with pytest.raises(IncompatibleOutsideCorrelationProviderError):
@@ -573,7 +573,7 @@ def _capability(provider, outside_provider):
 
 
 def test_wet_finned_guard_allows_only_explicit_supported_h2o_condensation() -> None:
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     supported = PhaseChangeCapability(
         capable=True,
         component="H2O",
@@ -623,7 +623,7 @@ def _inactive_outside_onset(*, side: str, **_kwargs):
 
 
 def _steam_rating_desuperheat_only_case() -> tuple[
-    "BareTubeHeatExchanger", BalanceSideSpec, BalanceSideSpec, ConstantPropertyProvider
+    "RobinsonBriggsReferenceExchanger", BalanceSideSpec, BalanceSideSpec, ConstantPropertyProvider
 ]:
     """A dedicated pure-steam Rating case dispatched via ``apply_water_steam_rating``.
 
@@ -633,7 +633,7 @@ def _steam_rating_desuperheat_only_case() -> tuple[
     was previously unguarded for an outside condensation onset.
     """
     outside_provider = ConstantPropertyProvider(OUTSIDE_TRANSPORT)
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     inside = BalanceSideSpec(
         provider=IAPWS97WaterSteamProvider(),
         p=1.0e6,
@@ -712,7 +712,7 @@ def test_pure_steam_rating_does_not_overguard_when_outside_onset_is_inactive(
 def test_finned_subcooled_water_preheat_uses_surface_dispatch_not_bare_probe(
     monkeypatch,
 ) -> None:
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(),
         # Keep this branch subcooled with thermal-entry laminar HTC enabled.
@@ -753,7 +753,7 @@ def test_finned_subcooled_water_preheat_uses_surface_dispatch_not_bare_probe(
 
 
 def test_surface_margin_is_used_by_finned_water_phase_boundary_probe() -> None:
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     inside = HXSideInput(
         provider=IAPWS97WaterSteamProvider(),
         m_dot=0.07,
@@ -774,7 +774,7 @@ def test_surface_margin_is_used_by_finned_water_phase_boundary_probe() -> None:
 
 
 def test_public_workflow_warnings_are_deduplicated() -> None:
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     inside, outside = _side_inputs()
     simulation = hx.simulate(inside, outside)
     warning_keys = [
@@ -806,7 +806,7 @@ def test_public_workflow_warnings_are_deduplicated() -> None:
 
 def test_welded_contact_resistance_affects_only_the_parallel_fin_branch() -> None:
     bundle = _welded_bundle(contact=1.0e6)
-    hx = BareTubeHeatExchanger(bundle)
+    hx = RobinsonBriggsReferenceExchanger(bundle)
     network = calculate_resistance_network(
         bundle=bundle,
         alpha_inside=1000.0,
@@ -896,7 +896,7 @@ def test_welded_effective_gross_alpha_uses_actual_contact_topology() -> None:
 
 def test_continuous_root_wall_node_uses_full_outside_resistance() -> None:
     """The wall node is at the core exterior, before common root/contact."""
-    hx = BareTubeHeatExchanger(_bundle(finned=True))
+    hx = RobinsonBriggsReferenceExchanger(_bundle(finned=True))
     inside_provider, outside_provider = _providers()
     local = _evaluate_local_wall_state(
         hx,
@@ -1079,7 +1079,7 @@ def test_finned_wall_ordering_across_contact_topology_and_hot_side(
         if welded
         else "series_before_primary_and_fin_parallel_branches"
     )
-    hx = BareTubeHeatExchanger(bundle)
+    hx = RobinsonBriggsReferenceExchanger(bundle)
     inside_provider, outside_provider = _providers()
     T_in_inside, T_in_outside = (650.0, 300.0) if inside_hotter else (300.0, 650.0)
     simulation = hx.simulate(

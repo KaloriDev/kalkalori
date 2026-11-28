@@ -330,6 +330,7 @@ def test_finned_tube_bank_result_is_accepted_and_tagged_distinctly() -> None:
     finned_tube_bank = calculate_finned_tube_bank_hydraulics(
         m_dot=1.0,
         bundle=finned_bundle,
+        pressure_drop_provider="robinson_briggs_1966",
         inlet_props=_props(1.2, mu=1.8e-5, k=0.026, cp=1006.0),
         temperature_in=300.0,
     )

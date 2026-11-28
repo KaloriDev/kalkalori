@@ -433,8 +433,8 @@ py -3.11 -m pytest -q core/tests/finned_tube_correlations_test.py core/tests/cir
 The full command `py -3.11 -m pytest -q core/tests tests` collected 2113 tests
 and was **interrupted**, not completed/passed. Workspace `.venv` is Python 3.8.3,
 below the project's minimum 3.10, and cannot collect these tests. No new INLINE
-provider tests or empirical fixtures are claimed. The private `eco_nominal`/
-`eco_max`, `ECO_LT_B1`/`ECO_LT_B2` cases were not run: public implementation is
+provider tests or empirical fixtures are claimed. The private Rating/Simulation
+cases were not run at this historical checkpoint: public implementation is
 required first. No private engineering data entered the report. Version is 0.9.3.
 
 Remaining checks have specific objectives:

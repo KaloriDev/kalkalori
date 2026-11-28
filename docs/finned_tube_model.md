@@ -32,15 +32,18 @@ INLINE rejection. The later [native-xi Frass hydraulic provider](inline_round_fi
 supports conditional non-strict INLINE Rating/Simulation with explicit
 normalization/loss-scope qualifications and separate acceleration/local losses.
 v0.9.4 also adds an [explicit ESCOA STAGGERED thermal
-alternative](staggered_round_finned_thermal.md). STAGGERED AUTO remains
-Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
-Robinson–Briggs. See [release integration validation](validation/v094_release_validation.md)
-for the final provider matrix and public regression coverage.
+alternative](staggered_round_finned_thermal.md). STAGGERED thermal AUTO remains
+Briggs–Young and INLINE thermal AUTO remains ESCOA. From v0.9.11, STAGGERED
+hydraulic AUTO selects source-bounded Genić; INLINE retains Frass Eq.191.
+Robinson–Briggs remains explicitly selectable. See the current
+[hydraulic selection rules](finned_hydraulic_auto.md) and the historical
+[v0.9.4 integration validation](validation/v094_release_validation.md).
 
-[Explicit Genić 2006 hydraulic alternatives](genic2006_finned_hydraulics.md)
-support constant-thickness round solid fins with at least five rows. They
-use their own equivalent diameter and native Eq.(15) loss basis. The existing
-thermal and hydraulic AUTO policy remains unchanged.
+[Genić 2006 hydraulic providers](genic2006_finned_hydraulics.md) support
+constant-thickness round solid fins with at least five rows and separately
+qualified linear-taper engineering options requiring explicit authorization.
+They use their own equivalent diameter and native Eq.(15) loss basis.
+Thermal AUTO policy remains unchanged.
 
 Segmented, serrated, wavy and plate fins; elliptical or flattened tubes;
 frost/ice; acid or multiple-species condensation; condensate retention,

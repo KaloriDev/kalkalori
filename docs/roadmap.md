@@ -35,7 +35,7 @@ Interpretation in KalKalori:
 
 ## Current Status
 
-**Current version:** `v0.9.10` — external outside thermal and hydraulic provider API
+**Current version:** `v0.9.11` — extended-surface airside hydraulics
 **Completed development line:** `0.8.x` (final planned release: `v0.8.8`)
 **Active public line:** `0.9.x` — elliptical/finned geometry foundation and dry thermal topology
 **Model level:** MVP_0D  
@@ -52,6 +52,18 @@ and distributed thermal resolution remain future work.
 ---
 
 ## Roadmap Overview
+
+### v0.9.11 — Extended-Surface Airside Hydraulics (implemented)
+
+Primary-source verification closes the existing Genić hydraulic equations and
+definitions. Explicit engineering selectors extend their geometric groups to
+actual linearly tapered solid fins, without changing fitted coefficients.
+Strict source mode rejects this unvalidated extension. Genić becomes staggered
+hydraulic AUTO within its supported domain; Robinson–Briggs remains an explicit
+reference. Thermal correlations are unchanged. Nir awaits sufficient source
+closure; ESCOA STAGGERED hydraulics is archived.
+Restricted formulations and experimental implementations remain outside public
+core. See the [comparison and validation record](validation/v0.9.11_extended_surface_hydraulics.md).
 
 ### v0.9.10 — External Outside Providers (implemented)
 

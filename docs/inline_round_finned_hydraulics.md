@@ -1,13 +1,54 @@
-# INLINE round solid-fin hydraulics (v0.9.4)
+# INLINE round solid-fin hydraulics
 
 Implementation/validation record: 2026-10-26, on
 `feature/v0.9.4-inline-round-finned`. The completed thermal implementation is
-checkpointed separately at `e374329`. Package version is **0.9.4**, updated only
-after implementation, all four ECO cases and the public regression checks passed.
+checkpointed separately at `e374329`. The original implementation was released
+in v0.9.4 after private engineering workflows and public regression checks passed.
 
 `core.pressure_drop.FrassInlineSolidFinPressureDropProvider` implements Frass
 Eq. (191) with native per-row xi and returns whole-bank drag. Its explicit
 name is `"frass_inline_solid_fin_191"`.
+
+## v0.9.11 review
+
+INLINE AUTO retains Frass Eq. (191). Both Frass and the independent Genić
+constant-fin and authorized tapered-fin providers remain explicitly selectable.
+The review does not establish either model's experimental superiority: no
+independent pressure dataset with fully matched geometry, reference state,
+measurement scope and supported row count was recovered for both providers.
+
+Eq. (191) explicitly includes fin center pitch (equivalently inverse fin
+density), fin height and both bank pitches. Fin thickness affects minimum
+free-flow area and therefore velocity and Reynolds number; there is no
+separate thickness, clear-fin-spacing or extended-surface-area factor.
+Equal projected blockage gives the same Frass prediction for constant and
+linear-taper fins. This is a limitation of the empirical model, not evidence
+that their measured losses are equal.
+
+Genić's separate INLINE fit used six bundles and 91 regimes, with seven rows,
+32 mm root diameter, 50 mm fin diameter, 6 mm fin pitch and 1.3 mm thickness.
+Its reported 4.9% relative RMS deviation is an in-sample fit statistic.
+The scalar limits `6000 < Re_de < 200000`, `0.5 <= Ri <= 2` and at least five
+rows do not validate arbitrary fin geometry or a fin-pitch sweep. The primary
+publication recommends at least five rows; its INLINE calibration used seven.
+See the [Genić guide](genic2006_finned_hydraulics.md) and
+[primary publication](https://doi.org/10.1016/j.applthermaleng.2005.07.017).
+
+Independent synthetic fixtures check controlled 2–8 mm fin-pitch changes,
+constant/tapered projected area and analytical local sensitivities. At fixed
+mass flow, gas properties and other geometry, define
+`beta = 2*h*t_mean/(Fp*(Pt-d_A)-2*h*t_mean)`. Frass then has
+`d ln(dp_bank)/d ln(Fp) = -0.7 - 1.66*beta`; the velocity exponent is 1.66.
+At fixed minimum-passage velocity instead, the pitch exponent is -0.7.
+These are numerical/model checks, not experimental accuracy claims.
+
+Frass selection metadata now reports `SOURCE_RANGE_UNRESOLVED`,
+`engineering_estimate=True` and `pressure_scope_source_closed=False`, including
+constant-fin results within the approximate Reynolds evidence range.
+`pressure_scope="BANK_ONLY"` records the existing integration policy;
+`pressure_scope_policy` preserves its qualification. This policy must not be
+read as source verification of the pressure-tap or heated-flow decomposition.
+Thermal equations, hydraulic coefficients and numerical predictions are unchanged.
 
 ## Source and conditional release policy
 
@@ -133,8 +174,10 @@ native = bank.native_result
 # bank.dp_drag, bank.dp_acceleration, bank.dp_total
 ```
 
-Automatic round solid-fin hydraulic selection is now layout-specific:
-INLINE selects Frass; staggered selects Robinson-Briggs. Explicit provider
+Automatic round solid-fin hydraulic selection is layout-specific:
+INLINE selects Frass; in v0.9.11, conventional staggered geometry selects
+source-bounded Genić as described in the [AUTO guide](finned_hydraulic_auto.md).
+Robinson–Briggs remains an explicit STAGGERED reference. Explicit provider
 guards remain active. Plain-tube and Zhao ellipse physics are unchanged;
 their previously inactive default string literals remain accepted.
 
@@ -208,17 +251,16 @@ contract/adapter checks. No tolerances, solver budgets or physics were changed
 to obtain those results. The version update followed these checks; source
 attribute and setuptools dynamic metadata were checked separately afterward.
 
-All four private ECO targets completed using the original notebook configuration:
-`eco_nominal` Rating and `eco_max` Simulation for both `ECO_LT_B1` and `ECO_LT_B2`.
-All used ESCOA thermal HTC and native Frass hydraulics. The original
+Four private Rating/Simulation targets completed using their original notebook
+configuration. All used the existing thermal HTC and native Frass hydraulics. The original
 `execute_cases` executor also completed all four cases and constructed its
 in-memory reports successfully. No notebook inputs,
 coefficients or topology were changed and no exports were triggered. Numerical
 case diagnostics are retained only in the ignored private worklog. Public
 documentation records completion and qualifications without copying case data.
 
-The ECO diagnostics include low-Re evidence extrapolation and the above-eight
-row convention; B1 additionally carries root-layer/taper engineering warnings.
+The private diagnostics include low-Re evidence extrapolation, the above-eight
+row convention and root-layer/taper engineering warnings where applicable.
 These cases verify execution and reporting, not experimental correlation
 accuracy or calibration. The normalization and loss-scope questions remain
 future source-verification tasks under the accepted conditional policy.

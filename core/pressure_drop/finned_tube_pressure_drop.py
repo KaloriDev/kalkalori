@@ -17,7 +17,7 @@ one mean gas state. It is never converted to f_RB; acceleration stays separate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -25,7 +25,7 @@ from core.common.warnings import ApplicabilityRange, ModelWarning, make_warning
 from core.geometry.bundle import TubeBundle
 from core.geometry.finned_tube import CircularFinnedTube
 from core.geometry.serrated_finned_tube import reject_serrated_physics
-from core.properties.common import FluidTransportProperties
+from core.properties.common import FluidTransportProperties, infer_outside_fluid_family
 
 
 FinnedTubeLayout = Literal["inline", "staggered"]
@@ -152,6 +152,7 @@ class FinnedTubePressureDropRequest:
     temperature_in: float | None = None
     temperature_out: float | None = None
     strict_source_domain: bool = False
+    allow_engineering_estimates: bool = False
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -199,6 +200,8 @@ class FinnedTubePressureDropRequest:
                 _require_positive_finite(value, name)
         if not isinstance(self.strict_source_domain, bool):
             raise TypeError("strict_source_domain must be boolean.")
+        if not isinstance(self.allow_engineering_estimates, bool):
+            raise TypeError("allow_engineering_estimates must be boolean.")
 
 
 @dataclass(frozen=True)
@@ -418,7 +421,9 @@ def evaluate_finned_tube_pressure_drop(
 ) -> FinnedTubePressureDropResult:
     """Evaluate a request with a built-in name or custom provider."""
 
-    return _resolve_pressure_drop_provider(provider, layout=request.layout).evaluate(request)
+    result = _resolve_pressure_drop_provider(provider, layout=request.layout).evaluate(request)
+    selection = _selection_metadata(result, provider)
+    return replace(result, diagnostics={**result.diagnostics, **selection})
 
 
 def calculate_finned_tube_pressure_drop(
@@ -427,14 +432,17 @@ def calculate_finned_tube_pressure_drop(
     props: FluidTransportProperties,
     *,
     provider: str | FinnedTubePressureDropProvider = "auto",
-    fluid_family: str = "air",
+    fluid_family: str | None = None,
     temperature_in: float | None = None,
     temperature_out: float | None = None,
     strict_source_domain: bool = False,
+    allow_engineering_estimates: bool = False,
 ) -> FinnedTubePressureDropResult:
     """Calculate single-state drag directly from ``(m_dot, bundle, props)``."""
 
     tube = _require_circular_finned_bundle(bundle)
+    if fluid_family is None:
+        fluid_family = infer_outside_fluid_family(properties=props)
     transport, _ = _transport_and_enthalpy(props)
     request = _request_from_bundle(
         m_dot=m_dot,
@@ -445,6 +453,7 @@ def calculate_finned_tube_pressure_drop(
         temperature_in=temperature_in,
         temperature_out=temperature_out,
         strict_source_domain=strict_source_domain,
+        allow_engineering_estimates=allow_engineering_estimates,
     )
     return evaluate_finned_tube_pressure_drop(request, provider=provider)
 
@@ -557,6 +566,7 @@ class FinnedTubeBankHydraulicResult:
     metadata: FinnedTubePressureDropMetadata
     warnings: tuple[ModelWarning, ...]
     native_result: FinnedTubePressureDropResult | None = None
+    selection_metadata: dict[str, object] = field(default_factory=dict, hash=False)
 
     @property
     def dp_outside_drag(self) -> float:
@@ -589,24 +599,28 @@ def calculate_finned_tube_bank_hydraulics(
     pressure_drop_provider: (
         str | FinnedTubePressureDropProvider
     ) = "auto",
-    fluid_family: str = "air",
+    fluid_family: str | None = None,
     m_dot_inlet: float | None = None,
     m_dot_midpoint: float | None = None,
     m_dot_outlet: float | None = None,
     strict_source_domain: bool = False,
+    allow_engineering_estimates: bool = False,
 ) -> FinnedTubeBankHydraulicResult:
     """Calculate finned-bank drag plus separate endpoint acceleration.
 
-    Robinson-Briggs retains Simpson's rule on ``f_RB/rho``. Native Frass
+    Robinson-Briggs retains Simpson's rule on ``f_RB/rho``. Native Genić/Frass
     evaluates whole-bank drag once at the mean gas temperature. The signed
     acceleration term uses the face sections, not ``A_min``.  Either a
     thermophysical ``property_provider`` or explicit point properties must
     be supplied.  This function never constructs or dispatches an
-    ``EulerRequest``.
+    ``EulerRequest``. STAGGERED AUTO uses source-bounded Genić; extensions
+    require ``allow_engineering_estimates``. No reference fallback is made.
     """
 
     tube = _require_circular_finned_bundle(bundle)
     _require_positive_finite(m_dot, "m_dot")
+    if fluid_family is None:
+        fluid_family = infer_outside_fluid_family(property_provider,inlet_props)
     corr_provider = _resolve_pressure_drop_provider(pressure_drop_provider, layout=bundle.layout.lower())
     mean_state_only = getattr(corr_provider, "hydraulic_state_basis", None) == "mean_outside_gas"
     warnings: list[ModelWarning] = []
@@ -685,16 +699,21 @@ def calculate_finned_tube_bank_hydraulics(
     }
     for name, value in point_mass_flows.items():
         _require_positive_finite(value, f"m_dot_{name}")
+    if (isinstance(pressure_drop_provider,str) and pressure_drop_provider.strip().lower()=="auto"
+            and bundle.layout.lower()=="staggered" and any(value != m_dot for value in point_mass_flows.values())):
+        raise ValueError("Circular solid-fin STAGGERED AUTO requires constant dry gas mass flow; variable-mass hydraulic scope is not source-closed.")
 
     if mean_state_only:
-        return _mean_state_bank_hydraulics(
+        result = _mean_state_bank_hydraulics(
             provider=corr_provider, bundle=bundle, tube=tube, m_dot=m_dot,
             temperatures=(T_in, T_mid, T_out), pressure=p,
             properties=(props_in, props_mid, props_out), enthalpies=(h_in, h_mid, h_out),
             point_mass_flows=point_mass_flows, midpoint_method=midpoint_method,
             fluid_family=fluid_family, strict_source_domain=strict_source_domain,
+            allow_engineering_estimates=allow_engineering_estimates,
             warnings=warnings,
         )
+        return replace(result, selection_metadata=_selection_metadata(result.native_result, pressure_drop_provider))
 
     points: list[FinnedTubeHydraulicPoint] = []
     metadata: FinnedTubePressureDropMetadata | None = None
@@ -713,6 +732,7 @@ def calculate_finned_tube_bank_hydraulics(
                 temperature_in=T_in,
                 temperature_out=T_out,
                 strict_source_domain=strict_source_domain,
+                allow_engineering_estimates=allow_engineering_estimates,
             )
         )
         if state.coefficient_basis != ROBINSON_BRIGGS_COEFFICIENT_BASIS:
@@ -801,6 +821,7 @@ def calculate_finned_tube_bank_hydraulics(
         dp_total=dp_total,
         metadata=metadata,
         warnings=_deduplicate_warnings(warnings),
+        selection_metadata=_selection_metadata(state, pressure_drop_provider),
     )
 
 
@@ -810,7 +831,7 @@ def _mean_state_bank_hydraulics(
     pressure: float, properties: tuple[FluidTransportProperties, ...],
     enthalpies: tuple[float | None, ...], point_mass_flows: dict[str, float],
     midpoint_method: str, fluid_family: str, strict_source_domain: bool,
-    warnings: list[ModelWarning],
+    warnings: list[ModelWarning], allow_engineering_estimates: bool = False,
 ) -> FinnedTubeBankHydraulicResult:
     """Native mean-state bank drag; endpoint states serve acceleration only.
 
@@ -822,6 +843,7 @@ def _mean_state_bank_hydraulics(
         m_dot=m_dot, bundle=bundle, tube=tube, props=properties[1],
         fluid_family=fluid_family, temperature_in=temperatures[0],
         temperature_out=temperatures[2], strict_source_domain=strict_source_domain,
+        allow_engineering_estimates=allow_engineering_estimates,
     ))
     if state.coefficient_basis not in (
         FRASS_INLINE_XI_COEFFICIENT_BASIS, GENIC_2006_XI_COEFFICIENT_BASIS
@@ -880,6 +902,7 @@ def _request_from_bundle(
     temperature_in: float | None = None,
     temperature_out: float | None = None,
     strict_source_domain: bool = False,
+    allow_engineering_estimates: bool = False,
 ) -> FinnedTubePressureDropRequest:
     return FinnedTubePressureDropRequest(
         m_dot=m_dot,
@@ -901,7 +924,69 @@ def _request_from_bundle(
         temperature_in=temperature_in,
         temperature_out=temperature_out,
         strict_source_domain=strict_source_domain,
+        allow_engineering_estimates=allow_engineering_estimates,
     )
+
+
+def _selection_metadata(result, requested) -> dict[str, object]:
+    name = requested if isinstance(requested, str) else type(requested).__name__
+    diagnostics = result.diagnostics
+    extensions = diagnostics.get("geometry_state_extensions")
+    engineering = (bool(extensions) if extensions is not None else any(
+        marker in warning.code for warning in result.warnings
+        for marker in ("extrapolation", "extension", "mapping", "below_range", "above_range")
+    ))
+    # Frass's accepted bank-drag convention does not close its measured loss
+    # scope. Retain that integration policy without reporting source validation.
+    if diagnostics.get("loss_scope_source_closed") is False:
+        engineering = True
+    selection = dict(requested_provider=name, resolved_provider=result.method,
+        auto_selection_reason=diagnostics.get("auto_selection_reason", "Explicit hydraulic provider selection"),
+        engineering_estimate=engineering,
+        source_applicability=diagnostics.get("source_domain_status",
+            diagnostics.get("source_range_status", "SEE_SOURCE_WARNINGS")),
+        pressure_scope="BANK_ONLY")
+    if "loss_scope_source_closed" in diagnostics:
+        selection.update(pressure_scope_source_closed=diagnostics["loss_scope_source_closed"],
+            pressure_scope_policy=diagnostics.get("loss_scope"))
+    return selection
+
+
+class _PreferredStaggeredPressureProvider:
+    """Genić AUTO candidate while Nir remains deferred from public core."""
+
+    hydraulic_state_basis = "mean_outside_gas"
+
+    def evaluate(self, request: FinnedTubePressureDropRequest) -> FinnedTubePressureDropResult:
+        from .genic2006 import Genic2006StaggeredPressureDropProvider
+        taper = request.fin_thickness_root != request.fin_thickness_tip
+        try:
+            result = Genic2006StaggeredPressureDropProvider(allow_linear_taper=taper).evaluate(request)
+        except ValueError as error:
+            raise ValueError("Circular solid-fin STAGGERED AUTO has no applicable preferred hydraulic model: "
+                             + str(error)) from error
+        if not isinstance(result, FinnedTubePressureDropResult):
+            raise TypeError("Preferred hydraulic provider returned an invalid result type.")
+        for name,value in (("bank loss",result.dp_drag),("coefficient",result.coefficient),
+                           ("reference diameter",result.reference_diameter_value),
+                           ("Reynolds number",result.reynolds_number),
+                           ("reference velocity",result.reference_velocity),
+                           ("reference mass flux",result.reference_mass_flux),
+                           ("minimum passage area",result.minimum_free_flow_area)):
+            _require_positive_finite(value,name)
+        failures = result.diagnostics["source_domain_failures"]
+        if failures:
+            raise ValueError("Circular solid-fin STAGGERED AUTO has no applicable preferred hydraulic model: "
+                             + ", ".join(failures)+". No Robinson–Briggs fallback is performed.")
+        extensions = result.diagnostics["geometry_state_extensions"]
+        if extensions and not request.allow_engineering_estimates:
+            raise ValueError("Circular solid-fin STAGGERED AUTO requires allow_engineering_estimates=True for "
+                             + ", ".join(extensions)+". No provider substitution is performed.")
+        reason = ("Nir public provider deferred; Genić passes the implemented scalar source limits; "
+                  + ("authorized linear-taper engineering extension" if taper else "constant-fin geometry")
+                  + (" with authorized state/root/gas extensions" if any(x != "linear_taper_geometry_extension" for x in extensions) else ""))
+        return replace(result, diagnostics={**result.diagnostics,
+            "requested_provider": "auto", "auto_selection_reason": reason})
 
 
 def _resolve_pressure_drop_provider(
@@ -913,17 +998,21 @@ def _resolve_pressure_drop_provider(
     if isinstance(provider, str):
         name = provider.strip().lower().replace("-", "_")
         if name == "auto":
-            name = "frass_inline_solid_fin_191" if layout == "inline" else "robinson_briggs_1966"
+            if layout == "staggered":
+                return _PreferredStaggeredPressureProvider()
+            name = "frass_inline_solid_fin_191"
         if name == "frass_inline_solid_fin_191":
             from core.pressure_drop.frass_inline import FrassInlineSolidFinPressureDropProvider
             return FrassInlineSolidFinPressureDropProvider()
-        if name in ("genic2006_staggered", "genic2006_inline"):
+        if name in ("genic2006_staggered", "genic2006_inline",
+                    "genic2006_staggered_tapered", "genic2006_inline_tapered"):
             from core.pressure_drop.genic2006 import (
                 Genic2006StaggeredPressureDropProvider,
                 Genic2006InlinePressureDropProvider,
             )
-            return (Genic2006StaggeredPressureDropProvider() if name.endswith("staggered")
-                    else Genic2006InlinePressureDropProvider())
+            cls = (Genic2006StaggeredPressureDropProvider if "staggered" in name
+                   else Genic2006InlinePressureDropProvider)
+            return cls(allow_linear_taper=name.endswith("_tapered"))
         if name in (
             "robinson_briggs",
             "robinson_briggs_1966",
@@ -933,7 +1022,8 @@ def _resolve_pressure_drop_provider(
         raise ValueError(
             f"Unknown finned-tube pressure-drop provider '{provider}'. "
             "Supported built-ins: 'auto', 'robinson_briggs_1966', 'frass_inline_solid_fin_191', "
-            "'genic2006_staggered', 'genic2006_inline'."
+            "'genic2006_staggered', 'genic2006_inline', "
+            "'genic2006_staggered_tapered', 'genic2006_inline_tapered'."
         )
     if not isinstance(provider, FinnedTubePressureDropProvider):
         raise TypeError(

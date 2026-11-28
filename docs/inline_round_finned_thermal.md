@@ -233,12 +233,10 @@ All four requested private ECO cases were rerun from the original notebook
 configuration, without editing/exporting that notebook or copying its inputs
 into public files:
 
-| Case | Stage | Reached result |
-| --- | --- | --- |
-| eco_nominal | ECO_LT_B1 | Gas-facing root-diameter and arithmetic-mean thickness engineering mappings; ESCOA physical HTC computed; stops at Robinson-Briggs INLINE hydraulic rejection |
-| eco_max | ECO_LT_B1 | Same |
-| eco_nominal | ECO_LT_B2 | ESCOA physical HTC computed; stops at Robinson-Briggs INLINE hydraulic rejection |
-| eco_max | ECO_LT_B2 | Same |
+| Private workflow | Reached result at this historical checkpoint |
+| --- | --- |
+| Rating and Simulation, root-layer/tapered geometry | Gas-facing root-diameter and arithmetic-mean thickness engineering mappings; ESCOA physical HTC computed; stops at Robinson-Briggs INLINE hydraulic rejection |
+| Rating and Simulation, constant-fin geometry | ESCOA physical HTC computed; stops at Robinson-Briggs INLINE hydraulic rejection |
 
 The private local validation record retains the numerical thermal diagnostics;
 public documentation records only progress/blocker status. There is no completed

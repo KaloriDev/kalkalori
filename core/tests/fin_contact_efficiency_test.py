@@ -24,7 +24,7 @@ from core.heat_transfer.outside_dispatch import (
 )
 from core.heat_transfer.outside_flow import FluidProps as OutsideFluidProps
 from core.heat_transfer.thermal_iteration import _evaluate_local_wall_state
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.properties.common import FluidTransportProperties
 from core.properties.fluids import ConstantPropertyProvider
 
@@ -376,6 +376,7 @@ def test_t12_efficiency_leaves_physical_htc_areas_and_fin_efficiency_unchanged()
         # Pressure drop is a pure bundle/hydraulic-provider computation with
         # no dependence on the contact input at all.
         ideal_hydraulics = evaluate_outside_hydraulics(
+            finned_pressure_drop_provider="robinson_briggs_1966",
             bundle=_bundle(ideal_tube),
             m_dot=2.0,
             property_provider=ConstantPropertyProvider(OUTSIDE_TRANSPORT),
@@ -384,6 +385,7 @@ def test_t12_efficiency_leaves_physical_htc_areas_and_fin_efficiency_unchanged()
             pressure=101_325.0,
         )
         degraded_hydraulics = evaluate_outside_hydraulics(
+            finned_pressure_drop_provider="robinson_briggs_1966",
             bundle=_bundle(degraded_tube),
             m_dot=2.0,
             property_provider=ConstantPropertyProvider(OUTSIDE_TRANSPORT),
@@ -400,7 +402,7 @@ def test_t12_efficiency_changes_fin_base_and_fin_tip_temperatures() -> None:
         for efficiency in (1.0, 0.6):
             tube = factory(efficiency=efficiency)
             bundle = _bundle(tube)
-            hx = BareTubeHeatExchanger(bundle)
+            hx = RobinsonBriggsReferenceExchanger(bundle)
             inside_provider = ConstantPropertyProvider(INSIDE_TRANSPORT)
             outside_provider = ConstantPropertyProvider(OUTSIDE_TRANSPORT)
             local = _evaluate_local_wall_state(

@@ -16,7 +16,7 @@ import math
 import pytest
 
 from core.geometry import BareTube, CircularFinnedTube, TubeBundle
-from core.models.bare_tube import BareTubeHeatExchanger
+from core.tests.fixtures.staggered_reference import RobinsonBriggsReferenceExchanger
 from core.models import BalanceSideSpec
 from core.models.simulation import HXSideInput
 from core.phase_change.types import PhaseChangeMode
@@ -89,7 +89,7 @@ EXPECTED_BY_OUTSIDE_FLOW = {
 }
 
 
-def _release_case_exchanger() -> BareTubeHeatExchanger:
+def _release_case_exchanger() -> RobinsonBriggsReferenceExchanger:
     """Welded constant fin; all nondimensional inputs are in range."""
     core = BareTube(
         D_i=0.021,
@@ -109,7 +109,7 @@ def _release_case_exchanger() -> BareTubeHeatExchanger:
         fin_contact_resistance=0.0,
     )
     pitch_transverse = 0.060
-    return BareTubeHeatExchanger(
+    return RobinsonBriggsReferenceExchanger(
         TubeBundle(
             tube=tube,
             n_rows=6,
