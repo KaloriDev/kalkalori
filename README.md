@@ -186,8 +186,9 @@ extrapolation; arbitrary-clearance validity is not established.
   welded or continuous-root construction, ideal contact by default, and
   either a practical dimensionless `fin_contact_efficiency` or the advanced
   physical `fin_contact_resistance` for non-ideal fin/root contact,
-  Briggs--Young dry outside heat transfer and verified-scope Robinson--Briggs
-  pressure loss for staggered banks, the qualified INLINE models linked above,
+  Briggs--Young dry outside heat transfer, source-bounded Genić hydraulic AUTO
+  and explicitly selectable Robinson--Briggs for staggered banks, the qualified
+  INLINE models linked above,
   Simulation, Rating, and the established inside-side phase
   change paths when the finned outside surface remains dry. The unchanged dry
   Briggs--Young heat-transfer provider accepts every positive bank row count;

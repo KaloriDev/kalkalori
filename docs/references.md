@@ -25,10 +25,13 @@ Frass Eq.191 under an explicit conditional engineering policy; normalization
 and loss-scope provenance remain partial. v0.9.4 provides qualified non-strict
 support with strict rejection of unresolved required source conditions.
 The [explicit ESCOA STAGGERED guide](staggered_round_finned_thermal.md) covers
-Eqs.(60)–(62) from the same legal secondary source. STAGGERED AUTO remains
-Briggs–Young, INLINE AUTO remains ESCOA, and staggered hydraulics remain
-Robinson–Briggs. The [release validation](validation/v094_release_validation.md)
-records integration checks without expanding the source domain.
+Eqs.(60)–(62) from the same legal secondary source. STAGGERED thermal AUTO
+remains Briggs–Young and INLINE thermal AUTO remains ESCOA. From v0.9.11,
+STAGGERED hydraulic AUTO selects source-bounded Genić; INLINE retains Frass
+Eq.191. Robinson–Briggs remains explicitly selectable. The historical
+[v0.9.4 release validation](validation/v094_release_validation.md) records
+integration checks without expanding the source domain; the current
+[hydraulic AUTO guide](finned_hydraulic_auto.md) documents the selection change.
 
 ## v0.9.2 thin-plate fin foundation: free primary sources
 

@@ -7,7 +7,8 @@ definitions, checked against the primary publication in v0.9.11.
 DOI: 10.1016/j.applthermaleng.2005.07.017. Calibration provenance remains
 partial and raw data were not recovered. The opt-in linear taper geometry
 extension is independently derived and has no experimental validation.
-AUTO selection does not use these providers. Dense packing and <5 rows are
+STAGGERED AUTO uses the source-bounded staggered provider; INLINE remains
+explicitly selectable alongside Frass AUTO. Dense packing and <5 rows are
 excluded because their separate equations are outside this implementation.
 """
 from __future__ import annotations
@@ -58,7 +59,7 @@ def _metadata(layout: str) -> FinnedTubePressureDropMetadata:
 
 @dataclass(frozen=True)
 class Genic2006StaggeredPressureDropProvider:
-    """Normal staggered Eq.(10), native Eq.(15) bank drag; explicit only.
+    """Normal staggered Eq.(10), native Eq.(15) bank drag; STAGGERED AUTO candidate.
 
     ``allow_linear_taper=True`` permits the unvalidated geometry extension.
     Strict source-domain evaluation still rejects actual tapered fins.

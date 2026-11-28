@@ -183,12 +183,7 @@ identical. The final complete public regression after the optional-provider
 change passed **2,328 tests**, with no failures or skips; see the
 [release integration record](validation/v094_release_validation.md).
 
-Four original private ECO workflows complete with unchanged input hashes.
-Their Genić INLINE Reynolds numbers fall below the stated source interval,
-so their numerical layout comparisons are diagnostic extrapolations. Tapered
-geometry in v0.9.11 instead has the explicit, independently derived geometry
-extension above. Complete engineering tables, domain labels and operating
-data remain outside public documentation and fixtures. The
-[v0.9.11 comparison](validation/v0.9.11_extended_surface_hydraulics.md) uses
+Tapered geometry in v0.9.11 has the explicit, independently derived geometry
+extension above. The [v0.9.11 comparison](validation/v0.9.11_extended_surface_hydraulics.md) uses
 independent synthetic geometry and distinguishes arithmetic verification from
 experimental validation.

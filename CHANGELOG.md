@@ -5,7 +5,7 @@ All notable changes to KalKalori are documented in this file.
 The project follows **Semantic Versioning (SemVer)**:
 `MAJOR.MINOR.PATCH`.
 
-## [0.9.11] — Extended-Surface Airside Hydraulics
+## [0.9.11] — 2026-11-28 — Extended-Surface Airside Hydraulics
 
 - Verified the existing Genić 2006 equations, reference definitions, row
   normalization and explicit limits against the primary publication. Raw
@@ -16,8 +16,10 @@ The project follows **Semantic Versioning (SemVer)**:
   Existing constant-fin selectors and arithmetic remain unchanged.
 - Changed circular individual solid-fin STAGGERED hydraulic AUTO to Genić
   within its supported scalar domain. Engineering extensions require explicit
-  authorization; no applicable preferred model produces an error without
-  reference-model fallback. Robinson–Briggs remains explicitly selectable
+  authorization. If no preferred model is applicable, AUTO raises an error
+  without falling back to a reference model. Existing calculations using
+  STAGGERED AUTO can therefore produce different pressure losses or require
+  explicit authorization. Robinson–Briggs remains explicitly selectable
   with unchanged equations and numerical behavior. INLINE AUTO is unchanged.
 - Added requested/resolved hydraulic provenance and corrected known non-air
   source warnings in Briggs–Young and Robinson–Briggs dispatch. Thermal
